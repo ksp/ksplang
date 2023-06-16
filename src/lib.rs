@@ -1,3 +1,3 @@
-pub fn get_text() -> String {
-    "Hello, world!".to_string()
-}
+pub mod ops;
+pub mod vm;
+pub mod parser;
