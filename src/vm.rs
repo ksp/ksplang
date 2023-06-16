@@ -136,8 +136,21 @@ impl State {
     }
 }
 
-pub fn run_simple(ops: &[Op]) -> Option<i64> {
+pub fn run_with_empty_stack(ops: &[Op]) -> Option<i64> {
     let mut state = State::new();
+
+    for op in ops {
+        state.apply(*op)?;
+    }
+
+    state.peek()
+}
+
+pub fn run_with_stack(ops: &[Op], stack: &[i64]) -> Option<i64> {
+    let mut state = State::new();
+    for value in stack.iter().rev() {
+        state.push(*value);
+    }
 
     for op in ops {
         state.apply(*op)?;
