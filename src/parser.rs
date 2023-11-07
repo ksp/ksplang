@@ -5,39 +5,48 @@ use crate::ops::Op;
 #[derive(Debug, Error)]
 pub enum ParserError {
     #[error("Unknown operation: `{0}`.")]
-    UnknownOperation(char),
+    UnknownOperation(String),
 }
 
 pub fn parse(str: &str) -> Result<Vec<Op>, ParserError> {
     let mut ops = Vec::new();
-    for char in str.chars() {
-        match char {
-            c if c.is_whitespace() => (),
-            '0' => ops.push(Op::Const0),
-            '1' => ops.push(Op::Const1),
-            '2' => ops.push(Op::Const2),
-            '3' => ops.push(Op::Const3),
-            '4' => ops.push(Op::Const4),
-            '5' => ops.push(Op::Const5),
-            '6' => ops.push(Op::Const6),
-            '7' => ops.push(Op::Const7),
-            '8' => ops.push(Op::Const8),
-            '9' => ops.push(Op::Const9),
-            'a' => ops.push(Op::Add),
-            'c' => ops.push(Op::Copy),
-            'd' => ops.push(Op::Dup),
-            'e' => ops.push(Op::Equal),
-            'g' => ops.push(Op::Greater),
-            'k' => ops.push(Op::Count),
-            'l' => ops.push(Op::Less),
-            'm' => ops.push(Op::Mul),
-            'o' => ops.push(Op::Overwrite),
-            'p' => ops.push(Op::Pop),
-            'q' => ops.push(Op::Quotient),
-            'r' => ops.push(Op::Remainder),
-            's' => ops.push(Op::Subtract),
-            'x' => ops.push(Op::Exchange),
-            _ => return Err(ParserError::UnknownOperation(char)),
+    for word in str.split_whitespace() {
+        match word.to_lowercase().as_ref() {
+            "praise" => ops.push(Op::Praise),
+            "pop" => ops.push(Op::Pop),
+            "¬" => ops.push(Op::Pop2),
+            "pop2" => ops.push(Op::Pop2),
+            "max" => ops.push(Op::Max),
+            "l-swap" => ops.push(Op::LSwap),
+            "lroll" => ops.push(Op::LRoll),
+            "-ff" => ops.push(Op::FF),
+            "swap" => ops.push(Op::Swap),
+            "kpi" => ops.push(Op::KPi),
+            "++" => ops.push(Op::Increment),
+            "u" => ops.push(Op::Universal),
+            "rem" => ops.push(Op::Remainder),
+            "^^" => ops.push(Op::Tetration),
+            "m" => ops.push(Op::Median),
+            "cs" => ops.push(Op::DigitSum),
+            "lensum" => ops.push(Op::LenSum),
+            "bitshift" => ops.push(Op::Bitshift),
+            "Σ" => ops.push(Op::Sum),
+            "sum" => ops.push(Op::Sum),
+            "d" => ops.push(Op::GcdN),
+            "gcd" => ops.push(Op::Gcd2),
+            // TODO: Name these instructions:
+            //"?" => ops.push(Op::QuadraticEquationSolver),
+            //"?" => ops.push(Op::PrimesThingy),
+            //"?" => ops.push(Op::BulkPairwiseOfSomethingBinary),
+            "brz" => ops.push(Op::BranchIfZero),
+            // TODO: Does this take values from the stack?
+            //"call" => ops.push(Op::Call),
+            "goto" => ops.push(Op::Goto),
+            "j" => ops.push(Op::Jump),
+            "rev" => ops.push(Op::Rev),
+            "spanek" => ops.push(Op::Sleep),
+            "deez" => ops.push(Op::Deez),
+            _ => return Err(ParserError::UnknownOperation(word.to_string())),
         }
     }
     Ok(ops)
