@@ -22,8 +22,8 @@ pub enum Op {
     Sum,
     Gcd2,
     GcdN,
-    QuadraticEquationSolver,
-    PrimesThingy,
+    Qeq,
+    Funkcia,
     BulkPairwiseOfSomethingBinary,
     BranchIfZero,
     Call, // TODO: Does it have a source code argument?
