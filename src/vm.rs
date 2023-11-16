@@ -6,9 +6,10 @@ use crate::ops::Op;
 mod tests;
 
 #[derive(Clone, Debug)]
-struct State {
+struct State<'a> {
     stack: Vec<i64>,
     max_stack_size: usize,
+    pi_digits: &'a [i8],
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -31,11 +32,13 @@ pub enum OperationError {
     NotEnoughElements { stack_len: usize, required: i64 },
     #[error("Index out of range: index {index}, stack length {stack_len}")]
     IndexOutOfRange { stack_len: usize, index: i64 },
+    #[error("Sorry, not enough pi digits available: available {digits_available}, index {index}")]
+    PiOutOfRange { digits_available: usize, index: usize },
 }
 
-impl State {
-    fn new(max_stack_size: usize) -> Self {
-        State { stack: Vec::new(), max_stack_size }
+impl<'a> State<'a> {
+    fn new(max_stack_size: usize, pi_digits: &'a [i8]) -> Self {
+        State { stack: Vec::new(), max_stack_size, pi_digits }
     }
 
     fn clear(&mut self) {
@@ -163,16 +166,43 @@ impl State {
 
                 let len = self.len();
                 if i < 0 || i >= self.len() as i64 {
-                    return Err(OperationError::IndexOutOfRange {
-                        stack_len: len,
-                        index: i,
-                    });
+                    return Err(OperationError::IndexOutOfRange { stack_len: len, index: i });
                 }
 
                 self.stack.swap(i as usize, len - 1);
             }
             Op::KPi => {
-                todo!()
+                let index = self
+                    .stack
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .find(|&(i, &value)| value == i as i64)
+                    .map(|(i, _)| i);
+
+                if let Some(index) = index {
+                    let digit =
+                        self.pi_digits.get(index).copied().ok_or(OperationError::PiOutOfRange {
+                            digits_available: self.pi_digits.len(),
+                            index,
+                        })?;
+                    self.stack[index] = digit as i64;
+                } else {
+                    let len = self.len();
+                    if len > self.pi_digits.len() {
+                        return Err(OperationError::PiOutOfRange {
+                            digits_available: self.pi_digits.len(),
+                            index: self.pi_digits.len(),
+                        })?;
+                    }
+
+                    self.clear();
+
+                    // We have removed `len` elements from the stack, so we should be able
+                    // to add the same amount back even without checking for stack overflow.
+                    assert!(len <= self.max_stack_size);
+                    self.stack.extend(self.pi_digits.iter().take(len).map(|&x| x as i64));
+                }
             }
             Op::Increment => {
                 let a = self.pop()?;
@@ -386,20 +416,21 @@ impl State {
     }
 }
 
-pub struct VMOptions {
-    stack: Vec<i64>,
+pub struct VMOptions<'a> {
+    initial_stack: &'a [i64],
     max_stack_size: usize,
+    pi_digits: &'a [i8],
 }
 
-impl VMOptions {
-    pub fn new(stack: &[i64], max_stack_size: usize) -> Self {
-        Self { stack: stack.to_vec(), max_stack_size }
+impl<'a> VMOptions<'a> {
+    pub fn new(stack: &'a [i64], max_stack_size: usize, pi_digits: &'a [i8]) -> Self {
+        Self { initial_stack: stack, max_stack_size, pi_digits }
     }
 }
 
-impl Default for VMOptions {
+impl<'a> Default for VMOptions<'a> {
     fn default() -> Self {
-        Self { stack: Vec::new(), max_stack_size: usize::MAX }
+        Self { initial_stack: &[], max_stack_size: usize::MAX, pi_digits: &[] }
     }
 }
 
@@ -422,8 +453,8 @@ pub enum RunError {
 }
 
 pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
-    let mut state = State::new(options.max_stack_size);
-    state.stack = options.stack;
+    let mut state = State::new(options.max_stack_size, options.pi_digits);
+    state.stack = options.initial_stack.to_vec();
 
     let mut instructions_run = 0;
     for (i, op) in ops.iter().enumerate() {
