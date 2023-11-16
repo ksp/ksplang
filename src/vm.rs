@@ -330,6 +330,18 @@ impl<'a> State<'a> {
                 })?;
                 self.push(rem)?;
             }
+            Op::Modulo => {
+                let a = self.pop()?;
+                let b = self.pop()?;
+                let rem = a.checked_rem_euclid(b).ok_or_else(|| {
+                    if b == 0 {
+                        OperationError::DivisionByZero
+                    } else {
+                        OperationError::IntegerOverflow
+                    }
+                })?;
+                self.push(rem)?;
+            }
             Op::Tetration => {
                 let m = self.pop()?;
                 let n = self.pop()?;

@@ -25,6 +25,7 @@ pub fn parse(str: &str) -> Result<Vec<Op>, ParserError> {
             "++" => ops.push(Op::Increment),
             "u" => ops.push(Op::Universal),
             "rem" => ops.push(Op::Remainder),
+            "%" => ops.push(Op::Modulo),
             "^^" => ops.push(Op::Tetration),
             "m" => ops.push(Op::Median),
             "cs" => ops.push(Op::DigitSum),

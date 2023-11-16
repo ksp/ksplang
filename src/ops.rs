@@ -12,7 +12,7 @@ pub enum Op {
     Increment,
     Universal,
     Remainder,
-    // TODO: Modulo?
+    Modulo,
     Tetration,
     // TODO: Second tetration?
     Median,

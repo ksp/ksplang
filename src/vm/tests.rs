@@ -254,6 +254,11 @@ fn test_remainder() {
 }
 
 #[test]
+fn test_modulo() {
+    todo!()
+}
+
+#[test]
 fn test_tetration() {
     todo!()
 }
