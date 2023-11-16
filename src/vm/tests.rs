@@ -74,19 +74,6 @@ fn test_pop2() {
 }
 
 #[test]
-fn test_max() {
-    assert!(!run_op_is_ok(vec![], Op::Max));
-    assert!(!run_op_is_ok(vec![1], Op::Max));
-
-    assert_eq!(run_op(vec![0, 0], Op::Max), [0]);
-    assert_eq!(run_op(vec![1, 2], Op::Max), [2]);
-    assert_eq!(run_op(vec![2, 1], Op::Max), [2]);
-    assert_eq!(run_op(vec![1, 2, 3], Op::Max), [1, 3]);
-    assert_eq!(run_op(vec![1, 3, 2], Op::Max), [1, 3]);
-    assert_eq!(run_op(vec![i64::MIN, i64::MAX], Op::Max), [i64::MAX]);
-}
-
-#[test]
 fn test_lswap() {
     assert_eq!(run_op(vec![], Op::LSwap), []);
     assert_eq!(run_op(vec![1], Op::LSwap), [1]);
@@ -161,6 +148,20 @@ fn test_increment() {
         assert_eq!(run_op(vec![1, 2, 3, 4, i], Op::Increment), [1, 2, 3, 4, i + 1]);
     }
 }
+
+#[test]
+fn test_max() {
+    assert!(!run_op_is_ok(vec![], Op::Max));
+    assert!(!run_op_is_ok(vec![1], Op::Max));
+
+    assert_eq!(run_op(vec![0, 0], Op::Max), [0]);
+    assert_eq!(run_op(vec![1, 2], Op::Max), [2]);
+    assert_eq!(run_op(vec![2, 1], Op::Max), [2]);
+    assert_eq!(run_op(vec![1, 2, 3], Op::Max), [1, 3]);
+    assert_eq!(run_op(vec![1, 3, 2], Op::Max), [1, 3]);
+    assert_eq!(run_op(vec![i64::MIN, i64::MAX], Op::Max), [i64::MAX]);
+}
+
 
 #[test]
 fn test_universal() {
