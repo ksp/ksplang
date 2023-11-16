@@ -29,6 +29,8 @@ pub enum OperationError {
     NegativeLength { value: i64 },
     #[error("Not enough elements on the stack: {stack_len} elements, {required} required")]
     NotEnoughElements { stack_len: usize, required: i64 },
+    #[error("Index out of range: index {index}, stack length {stack_len}")]
+    IndexOutOfRange { stack_len: usize, index: i64 },
 }
 
 impl State {
@@ -157,7 +159,17 @@ impl State {
                 }
             }
             Op::Swap => {
-                todo!()
+                let i = self.pop()?;
+
+                let len = self.len();
+                if i < 0 || i >= self.len() as i64 {
+                    return Err(OperationError::IndexOutOfRange {
+                        stack_len: len,
+                        index: i,
+                    });
+                }
+
+                self.stack.swap(i as usize, len - 1);
             }
             Op::KPi => {
                 todo!()
