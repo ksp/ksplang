@@ -5,7 +5,7 @@ pub enum Op {
     Pop2,
     Max,
     LSwap,
-    LRoll,
+    Roll,
     FF,
     Swap,
     KPi,

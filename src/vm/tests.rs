@@ -91,20 +91,20 @@ fn test_lswap() {
 #[test]
 fn test_lroll() {
     // Not enough parameters
-    assert!(!run_op_is_ok(vec![], Op::LRoll));
-    assert!(!run_op_is_ok(vec![0], Op::LRoll));
+    assert!(!run_op_is_ok(vec![], Op::Roll));
+    assert!(!run_op_is_ok(vec![0], Op::Roll));
     // Not enough elements
-    assert!(!run_op_is_ok(vec![1, 1], Op::LRoll));
-    assert!(!run_op_is_ok(vec![1, 2, 3, 1, 4], Op::LRoll));
+    assert!(!run_op_is_ok(vec![1, 1], Op::Roll));
+    assert!(!run_op_is_ok(vec![1, 2, 3, 1, 4], Op::Roll));
 
-    assert_eq!(run_op(vec![0, 0], Op::LRoll), []);
-    assert_eq!(run_op(vec![1, 0], Op::LRoll), []);
-    assert_eq!(run_op(vec![1, 2, 3, 4, 1, 4], Op::LRoll), [4, 1, 2, 3]);
-    assert_eq!(run_op(vec![1, 2, 3, 4, -1, 4], Op::LRoll), [2, 3, 4, 1]);
-    assert_eq!(run_op(vec![0, 1, 2, 3, 4, 2, 4], Op::LRoll), [0, 3, 4, 1, 2]);
+    assert_eq!(run_op(vec![0, 0], Op::Roll), []);
+    assert_eq!(run_op(vec![1, 0], Op::Roll), []);
+    assert_eq!(run_op(vec![1, 2, 3, 4, 1, 4], Op::Roll), [4, 1, 2, 3]);
+    assert_eq!(run_op(vec![1, 2, 3, 4, -1, 4], Op::Roll), [2, 3, 4, 1]);
+    assert_eq!(run_op(vec![0, 1, 2, 3, 4, 2, 4], Op::Roll), [0, 3, 4, 1, 2]);
 
-    assert_eq!(run_op(vec![1, 2, 3, 4, i64::MAX, 4], Op::LRoll), [2, 3, 4, 1]);
-    assert_eq!(run_op(vec![1, 2, 3, 4, i64::MIN, 4], Op::LRoll), [1, 2, 3, 4]);
+    assert_eq!(run_op(vec![1, 2, 3, 4, i64::MAX, 4], Op::Roll), [2, 3, 4, 1]);
+    assert_eq!(run_op(vec![1, 2, 3, 4, i64::MIN, 4], Op::Roll), [1, 2, 3, 4]);
 }
 
 #[test]

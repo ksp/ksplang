@@ -18,7 +18,7 @@ pub fn parse(str: &str) -> Result<Vec<Op>, ParserError> {
             "pop2" => ops.push(Op::Pop2),
             "max" => ops.push(Op::Max),
             "l-swap" => ops.push(Op::LSwap),
-            "lroll" => ops.push(Op::LRoll),
+            "lroll" => ops.push(Op::Roll),
             "-ff" => ops.push(Op::FF),
             "swap" => ops.push(Op::Swap),
             "kpi" => ops.push(Op::KPi),

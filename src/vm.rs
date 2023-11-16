@@ -25,6 +25,10 @@ pub enum OperationError {
     DivisionByZero,
     #[error("Invalid argument for u: {argument}")]
     InvalidArgumentForUniversal { argument: i64 },
+    #[error("Negative value used as a length: {value}")]
+    NegativeLength { value: i64 },
+    #[error("Not enough elements on the stack: {stack_len} elements, {required} required")]
+    NotEnoughElements { stack_len: usize, required: i64 },
 }
 
 impl State {
@@ -112,8 +116,31 @@ impl State {
                     self.stack.swap(0, stack_len - 1);
                 }
             }
-            Op::LRoll => {
-                todo!()
+            Op::Roll => {
+                let n = self.pop()?;
+                let x = self.pop()?;
+
+                if n < 0 {
+                    return Err(OperationError::NegativeLength { value: n });
+                }
+
+                if n > self.len() as i64 {
+                    return Err(OperationError::NotEnoughElements {
+                        stack_len: self.len(),
+                        required: n,
+                    });
+                }
+
+                if n == 0 {
+                    return Ok(());
+                }
+
+                // Can only overflow is n = i64:MIN, and we do not allow negative values for n.
+                // Division by zero is not possible we return early for that case.
+                let rotate_by = x.rem_euclid(n);
+
+                let len = self.len();
+                self.stack[(len - n as usize)..len].rotate_right(rotate_by as usize);
             }
             Op::FF => {
                 todo!()
@@ -217,7 +244,9 @@ impl State {
 
                         self.push(result)?;
                     }
-                    other => return Err(OperationError::InvalidArgumentForUniversal { argument: other })
+                    other => {
+                        return Err(OperationError::InvalidArgumentForUniversal { argument: other })
+                    }
                 }
             }
             Op::DigitSum => {
