@@ -13,8 +13,8 @@ pub enum Op {
     Universal,
     Remainder,
     Modulo,
-    Tetration,
-    // TODO: Second tetration?
+    TetrationNumIters,
+    TetrationItersNum,
     Median,
     DigitSum,
     LenSum,

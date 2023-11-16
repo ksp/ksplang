@@ -275,8 +275,75 @@ fn test_modulo() {
 }
 
 #[test]
-fn test_tetration() {
-    todo!()
+fn test_tetration_num_iters() {
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::TetrationNumIters));
+    assert!(!run_op_is_ok(&[1], Op::TetrationNumIters));
+
+    // Negative iterations
+    assert!(!run_op_is_ok(&[-1, 1], Op::TetrationNumIters));
+    assert!(!run_op_is_ok(&[i64::MIN, 1], Op::TetrationNumIters));
+
+    // Overflow
+    assert!(!run_op_is_ok(&[4, 3], Op::TetrationNumIters));
+    assert!(!run_op_is_ok(&[i64::MAX, i64::MAX], Op::TetrationNumIters));
+
+    assert_eq!(run_op(&[0, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[0, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[1, 0], Op::TetrationNumIters), [0]);
+    assert_eq!(run_op(&[2, 0], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[1000, 0], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[1, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[2, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[3, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[1000, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[2, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[2, 2], Op::TetrationNumIters), [4]);
+    assert_eq!(run_op(&[2, 3], Op::TetrationNumIters), [27]);
+    assert_eq!(run_op(&[2, 4], Op::TetrationNumIters), [256]);
+    assert_eq!(run_op(&[2, 5], Op::TetrationNumIters), [3125]);
+    assert_eq!(run_op(&[2, 6], Op::TetrationNumIters), [46656]);
+    assert_eq!(run_op(&[3, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[3, 2], Op::TetrationNumIters), [16]);
+    assert_eq!(run_op(&[3, 3], Op::TetrationNumIters), [7625597484987]);
+    assert_eq!(run_op(&[4, 1], Op::TetrationNumIters), [1]);
+    assert_eq!(run_op(&[4, 2], Op::TetrationNumIters), [65536]);
+}
+
+#[test]
+fn test_tetration_iters_num() {
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::TetrationItersNum));
+    assert!(!run_op_is_ok(&[1], Op::TetrationItersNum));
+
+    // Negative iterations
+    assert!(!run_op_is_ok(&[1, -1], Op::TetrationItersNum));
+    assert!(!run_op_is_ok(&[1, i64::MIN], Op::TetrationItersNum));
+
+    // Overflow
+    assert!(!run_op_is_ok(&[3, 4], Op::TetrationItersNum));
+    assert!(!run_op_is_ok(&[i64::MAX, i64::MAX], Op::TetrationItersNum));
+
+    assert_eq!(run_op(&[1, 0], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[1, 0], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[0, 1], Op::TetrationItersNum), [0]);
+    assert_eq!(run_op(&[0, 2], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[0, 1000], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[1, 1], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[1, 2], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[1, 3], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[1, 1000], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[1, 2], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[2, 2], Op::TetrationItersNum), [4]);
+    assert_eq!(run_op(&[3, 2], Op::TetrationItersNum), [27]);
+    assert_eq!(run_op(&[4, 2], Op::TetrationItersNum), [256]);
+    assert_eq!(run_op(&[5, 2], Op::TetrationItersNum), [3125]);
+    assert_eq!(run_op(&[6, 2], Op::TetrationItersNum), [46656]);
+    assert_eq!(run_op(&[1, 3], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[2, 3], Op::TetrationItersNum), [16]);
+    assert_eq!(run_op(&[3, 3], Op::TetrationItersNum), [7625597484987]);
+    assert_eq!(run_op(&[1, 4], Op::TetrationItersNum), [1]);
+    assert_eq!(run_op(&[2, 4], Op::TetrationItersNum), [65536]);
 }
 
 #[test]

@@ -34,6 +34,8 @@ pub enum OperationError {
     IndexOutOfRange { stack_len: usize, index: i64 },
     #[error("Sorry, not enough pi digits available: available {digits_available}, index {index}")]
     PiOutOfRange { digits_available: usize, index: usize },
+    #[error("Negative iteration count: {iterations}")]
+    NegativeIterations { iterations: i64 },
 }
 
 impl<'a> State<'a> {
@@ -342,17 +344,46 @@ impl<'a> State<'a> {
                 })?;
                 self.push(rem)?;
             }
-            Op::Tetration => {
-                let m = self.pop()?;
-                let n = self.pop()?;
-                let mut result = m;
-                for _ in 1..n {
-                    result = m
-                        .checked_pow(
-                            result.try_into().map_err(|_| OperationError::IntegerOverflow)?,
-                        )
-                        .ok_or(OperationError::IntegerOverflow)?;
+            Op::TetrationNumIters => {
+                let num = self.pop()?;
+                let iters = self.pop()?;
+                if iters < 0 {
+                    return Err(OperationError::NegativeIterations { iterations: iters });
                 }
+                let result = if iters == 0 {
+                    1
+                } else {
+                    let mut result = num;
+                    for _ in 1..iters {
+                        result = num
+                            .checked_pow(
+                                result.try_into().map_err(|_| OperationError::IntegerOverflow)?,
+                            )
+                            .ok_or(OperationError::IntegerOverflow)?;
+                    }
+                    result
+                };
+                self.push(result)?;
+            }
+            Op::TetrationItersNum => {
+                let iters = self.pop()?;
+                let num = self.pop()?;
+                if iters < 0 {
+                    return Err(OperationError::NegativeIterations { iterations: iters });
+                }
+                let result = if iters == 0 {
+                    1
+                } else {
+                    let mut result = num;
+                    for _ in 1..iters {
+                        result = num
+                            .checked_pow(
+                                result.try_into().map_err(|_| OperationError::IntegerOverflow)?,
+                            )
+                            .ok_or(OperationError::IntegerOverflow)?;
+                    }
+                    result
+                };
                 self.push(result)?;
             }
             Op::Median => {
