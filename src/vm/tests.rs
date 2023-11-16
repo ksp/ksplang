@@ -162,10 +162,90 @@ fn test_max() {
     assert_eq!(run_op(&[i64::MIN, i64::MAX], Op::Max), [i64::MAX]);
 }
 
-
 #[test]
 fn test_universal() {
-    todo!()
+    assert!(!run_op_is_ok(&[], Op::Universal));
+
+    // 0 = Addition, [a, b] -> a + b
+    assert!(!run_op_is_ok(&[0], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[1, 0], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[i64::MAX, 1, 0], Op::Universal)); // Overflow
+    assert!(!run_op_is_ok(&[i64::MIN, -1, 0], Op::Universal)); // Overflow
+    assert_eq!(run_op(&[1, 2, 3, 8, 4, 0], Op::Universal), [1, 2, 3, 12]);
+    assert_eq!(run_op(&[8, 4, 0], Op::Universal), [12]);
+    assert_eq!(run_op(&[8, -9, 0], Op::Universal), [-1]);
+
+    // 1 = Subtraction (absolute value of result), [a, b] -> |b - a|
+    assert!(!run_op_is_ok(&[1], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[1, 1], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[i64::MIN, 0, 1], Op::Universal)); // Overflow
+    assert_eq!(run_op(&[1, 2, 3, 8, 4, 1], Op::Universal), [1, 2, 3, 4]);
+    assert_eq!(run_op(&[8, 4, 1], Op::Universal), [4]);
+    assert_eq!(run_op(&[4, 8, 1], Op::Universal), [4]);
+    assert_eq!(run_op(&[-4, -8, 1], Op::Universal), [4]);
+    assert_eq!(run_op(&[0, 0, 1], Op::Universal), [0]);
+    assert_eq!(run_op(&[i64::MAX, i64::MAX, 1], Op::Universal), [0]);
+    assert_eq!(run_op(&[i64::MAX, 0, 1], Op::Universal), [i64::MAX]);
+
+    // 2 = Multiplication [a, b] -> a * b
+    assert!(!run_op_is_ok(&[2], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[1, 2], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[i64::MIN, -1, 2], Op::Universal)); // Overflow
+    assert!(!run_op_is_ok(&[i64::MAX, 2, 2], Op::Universal)); // Overflow
+    assert_eq!(run_op(&[1, 2, 3, 8, 4, 2], Op::Universal), [1, 2, 3, 8 * 4]);
+    assert_eq!(run_op(&[8, 4, 2], Op::Universal), [8 * 4]);
+    assert_eq!(run_op(&[8, -4, 2], Op::Universal), [8 * -4]);
+    assert_eq!(run_op(&[-8, 4, 2], Op::Universal), [-8 * 4]);
+    assert_eq!(run_op(&[-8, -4, 2], Op::Universal), [-8 * -4]);
+    assert_eq!(run_op(&[0, 8, 2], Op::Universal), [0]);
+    assert_eq!(run_op(&[8, 0, 2], Op::Universal), [0]);
+    assert_eq!(run_op(&[i64::MAX, 0, 2], Op::Universal), [0]);
+    assert_eq!(run_op(&[i64::MAX, -1, 2], Op::Universal), [-i64::MAX]);
+    assert_eq!(run_op(&[i64::MIN, 0, 2], Op::Universal), [0]);
+
+    // 3 = Division/remainder ([a, b] -> b / a or b % a if not divisible)
+    assert!(!run_op_is_ok(&[3], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[1, 3], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[0, 1, 3], Op::Universal)); // Division by zero
+    assert!(!run_op_is_ok(&[-1, i64::MIN, 3], Op::Universal)); // Overflow
+    assert_eq!(run_op(&[1, 2, 3, 4, 8, 3], Op::Universal), [1, 2, 3, 8 / 4]);
+    assert_eq!(run_op(&[4, 8, 3], Op::Universal), [8 / 4]);
+    assert_eq!(run_op(&[8, 4, 3], Op::Universal), [4 % 8]);
+    assert_eq!(run_op(&[3, 8, 3], Op::Universal), [8 % 3]);
+    assert_eq!(run_op(&[3, -8, 3], Op::Universal), [-8 % 3]);
+    assert_eq!(run_op(&[-3, 8, 3], Op::Universal), [8 % -3]);
+
+    // 4 = Factorial of absolute value [a] -> a!
+    assert!(!run_op_is_ok(&[4], Op::Universal)); // Not enough parameters
+    assert!(!run_op_is_ok(&[21, 4], Op::Universal)); // Result too big for i64
+    assert!(!run_op_is_ok(&[i64::MAX, 4], Op::Universal)); // Result too big for i64
+    assert!(!run_op_is_ok(&[i64::MIN, 4], Op::Universal)); // Result too big for i64
+    assert_eq!(run_op(&[1, 2, 3, 6, 4], Op::Universal), [1, 2, 3, 720]);
+    assert_eq!(run_op(&[0, 4], Op::Universal), [1]);
+    assert_eq!(run_op(&[1, 4], Op::Universal), [1]);
+    assert_eq!(run_op(&[-1, 4], Op::Universal), [1]);
+    assert_eq!(run_op(&[6, 4], Op::Universal), [720]);
+    assert_eq!(run_op(&[-6, 4], Op::Universal), [720]);
+    assert_eq!(run_op(&[20, 4], Op::Universal), [2432902008176640000]);
+    assert_eq!(run_op(&[-20, 4], Op::Universal), [2432902008176640000]);
+
+    // 5 = sign
+    assert!(!run_op_is_ok(&[5], Op::Universal)); // Not enough parameters
+    assert_eq!(run_op(&[1, 2, 3, 1, 5], Op::Universal), [1, 2, 3, 1]);
+    assert_eq!(run_op(&[0, 5], Op::Universal), [0]);
+    assert_eq!(run_op(&[1, 5], Op::Universal), [1]);
+    assert_eq!(run_op(&[-1, 5], Op::Universal), [-1]);
+    assert_eq!(run_op(&[-1234, 5], Op::Universal), [-1]);
+    assert_eq!(run_op(&[1234, 5], Op::Universal), [1]);
+    assert_eq!(run_op(&[i64::MAX, 5], Op::Universal), [1]);
+    assert_eq!(run_op(&[i64::MIN, 5], Op::Universal), [-1]);
+
+    // Invalid arguments
+    assert!(!run_op_is_ok(&[1, 2, 3, 4, 6], Op::Universal));
+    assert!(!run_op_is_ok(&[1, 2, 3, 4, 7], Op::Universal));
+    assert!(!run_op_is_ok(&[1, 2, 3, 4, -1], Op::Universal));
+    assert!(!run_op_is_ok(&[1, 2, 3, 4, i64::MIN], Op::Universal));
+    assert!(!run_op_is_ok(&[1, 2, 3, 4, i64::MAX], Op::Universal));
 }
 
 #[test]
