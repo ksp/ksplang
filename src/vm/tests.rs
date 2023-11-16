@@ -148,6 +148,7 @@ fn test_kpi() {
     assert_eq!(run_op(vec![0], Op::KPi), [3]);
     assert_eq!(run_op(vec![1, 2, 3, 4, 5], Op::KPi), [3, 1, 4, 1, 5]);
     assert_eq!(run_op(vec![2, 2, 2, 2, 2], Op::KPi), [2, 2, 4, 2, 2]);
+    assert_eq!(run_op(vec![0, 1, 2, 3, 4], Op::KPi), [0, 1, 2, 3, 5]);
 }
 
 #[test]
