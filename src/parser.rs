@@ -30,7 +30,8 @@ pub fn parse(str: &str) -> Result<Vec<Op>, ParserError> {
             "cs" => ops.push(Op::DigitSum),
             "lensum" => ops.push(Op::LenSum),
             "bitshift" => ops.push(Op::Bitshift),
-            "Σ" => ops.push(Op::Sum),
+            // "Σ".to_lowercase() == "σ".
+            "σ" => ops.push(Op::Sum),
             "sum" => ops.push(Op::Sum),
             "d" => ops.push(Op::GcdN),
             "gcd" => ops.push(Op::Gcd2),
