@@ -153,7 +153,13 @@ fn test_kpi() {
 
 #[test]
 fn test_increment() {
-    todo!()
+    assert!(!run_op_is_ok(vec![], Op::Increment));
+    assert!(!run_op_is_ok(vec![i64::MAX], Op::Increment));
+
+    for i in -10..10 {
+        assert_eq!(run_op(vec![i], Op::Increment), [i + 1]);
+        assert_eq!(run_op(vec![1, 2, 3, 4, i], Op::Increment), [1, 2, 3, 4, i + 1]);
+    }
 }
 
 #[test]
