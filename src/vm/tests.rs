@@ -83,8 +83,7 @@ fn test_max() {
 
 #[test]
 fn test_lswap() {
-    assert!(!run_op_is_ok(vec![], Op::LSwap));
-
+    assert_eq!(run_op(vec![], Op::LSwap), []);
     assert_eq!(run_op(vec![1], Op::LSwap), [1]);
     assert_eq!(run_op(vec![1, 2, 3, 4], Op::LSwap), [4, 2, 3, 1]);
 }
