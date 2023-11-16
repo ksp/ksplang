@@ -107,7 +107,10 @@ impl State {
                 self.push(a.max(b))?;
             }
             Op::LSwap => {
-                todo!()
+                let stack_len = self.stack.len();
+                if stack_len > 1 {
+                    self.stack.swap(0, stack_len - 1);
+                }
             }
             Op::LRoll => {
                 todo!()
