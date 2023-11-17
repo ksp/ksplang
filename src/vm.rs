@@ -415,7 +415,17 @@ impl<'a> State<'a> {
                 self.push(result)?;
             }
             Op::LenSum => {
-                todo!()
+                let a = self.pop()?;
+                let b = self.pop()?;
+                fn len(num: i64) -> i64 {
+                    // We cannot use .abs() on i64::MIN
+                    if num == i64::MIN {
+                        return 19;
+                    }
+
+                    num.abs().checked_ilog10().map(|x| x + 1).unwrap_or(0) as i64
+                }
+                self.push(len(a) + len(b))?;
             }
             Op::Sum => {
                 let mut sum: i64 = 0;

@@ -366,7 +366,9 @@ fn test_median() {
 
 #[test]
 fn test_digitsum() {
+    // Not enough parameters
     assert!(!run_op_is_ok(&[], Op::DigitSum));
+
     assert_eq!(run_op(&[0], Op::DigitSum), [0, 0]);
     assert_eq!(run_op(&[1], Op::DigitSum), [1, 1]);
     assert_eq!(run_op(&[-1], Op::DigitSum), [-1, 1]);
@@ -380,7 +382,18 @@ fn test_digitsum() {
 
 #[test]
 fn test_lensum() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::LenSum));
+    assert!(!run_op_is_ok(&[1], Op::LenSum));
+
+    assert_eq!(run_op(&[0, 0], Op::LenSum), [0]);
+    assert_eq!(run_op(&[0, 1], Op::LenSum), [1]);
+    assert_eq!(run_op(&[9, 9], Op::LenSum), [2]);
+    assert_eq!(run_op(&[10, 9], Op::LenSum), [3]);
+    assert_eq!(run_op(&[10, 10], Op::LenSum), [4]);
+    assert_eq!(run_op(&[i64::MAX, i64::MAX], Op::LenSum), [19 + 19]);
+    assert_eq!(run_op(&[-1, -1], Op::LenSum), [2]);
+    assert_eq!(run_op(&[i64::MIN, i64::MIN], Op::LenSum), [19 + 19]);
 }
 
 #[test]
