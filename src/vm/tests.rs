@@ -348,7 +348,20 @@ fn test_tetration_iters_num() {
 
 #[test]
 fn test_median() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Median));
+    // Division by zero
+    assert!(!run_op_is_ok(&[0], Op::Median));
+    // Not enough elements
+    assert!(!run_op_is_ok(&[1, 2, 3, 5], Op::Median));
+
+    assert_eq!(run_op(&[1], Op::Median), [1, 1]);
+    assert_eq!(run_op(&[3, 1], Op::Median), [3, 1, 1]);
+    assert_eq!(run_op(&[2, 2], Op::Median), [2, 2, 2]);
+    assert_eq!(run_op(&[3, 2], Op::Median), [3, 2, 2]);
+    assert_eq!(run_op(&[4, 2], Op::Median), [4, 2, 3]);
+    assert_eq!(run_op(&[1, 2, 3, 4, 5], Op::Median), [1, 2, 3, 4, 5, 3]);
+    assert_eq!(run_op(&[4, 3, 2, 1, 5], Op::Median), [4, 3, 2, 1, 5, 3]);
 }
 
 #[test]

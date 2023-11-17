@@ -389,13 +389,26 @@ impl<'a> State<'a> {
             Op::Median => {
                 let n = self.peek()?;
                 let mut values = Vec::new();
+                if n < 0 {
+                    return Err(OperationError::NegativeLength { value: n });
+                }
+                if n == 0 {
+                    return Err(OperationError::DivisionByZero);
+                }
+                if (self.len() as i64) < n {
+                    return Err(OperationError::NotEnoughElements {
+                        stack_len: self.len(),
+                        required: n,
+                    });
+                }
+
                 for i in 0..n {
                     values.push(self.peek_n(i)?);
                 }
 
                 values.sort();
                 let result = if values.len() % 2 == 0 {
-                    (values[values.len() / 2] + values[values.len() / 2 + 1]) / 2
+                    (values[values.len() / 2 - 1] + values[values.len() / 2]) / 2
                 } else {
                     values[values.len() / 2]
                 };
