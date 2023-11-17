@@ -398,7 +398,37 @@ fn test_lensum() {
 
 #[test]
 fn test_bitshift() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Bitshift));
+    assert!(!run_op_is_ok(&[1], Op::Bitshift));
+
+    // Negative numbers are not allowed
+    assert!(!run_op_is_ok(&[1, -1], Op::Bitshift));
+    assert!(!run_op_is_ok(&[64, -1], Op::Bitshift));
+    assert!(!run_op_is_ok(&[64, i64::MIN], Op::Bitshift));
+
+    assert_eq!(run_op(&[0, 0], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[1, 0], Op::Bitshift), [1]);
+    assert_eq!(run_op(&[2, 0], Op::Bitshift), [2]);
+
+    assert_eq!(run_op(&[0, 1], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[1, 1], Op::Bitshift), [2]);
+    assert_eq!(run_op(&[2, 1], Op::Bitshift), [4]);
+    assert_eq!(run_op(&[3, 1], Op::Bitshift), [6]);
+    assert_eq!(run_op(&[i64::MAX, 1], Op::Bitshift), [-2]);
+    assert_eq!(run_op(&[i64::MIN, 1], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[-1, 1], Op::Bitshift), [-2]);
+    assert_eq!(run_op(&[0, 2], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[1, 2], Op::Bitshift), [4]);
+    assert_eq!(run_op(&[i64::MIN, 2], Op::Bitshift), [0]);
+
+
+    assert_eq!(run_op(&[0, 64], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[-1, 64], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[1, 64], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[i64::MIN, 64], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[i64::MAX, 64], Op::Bitshift), [0]);
+    assert_eq!(run_op(&[1, i64::MAX], Op::Bitshift), [0]);
 }
 
 #[test]

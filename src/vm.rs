@@ -36,6 +36,8 @@ pub enum OperationError {
     PiOutOfRange { digits_available: usize, index: usize },
     #[error("Negative iteration count: {iterations}")]
     NegativeIterations { iterations: i64 },
+    #[error("Negative bit count: {bits}")]
+    NegativeBitCount { bits: i64 },
 }
 
 impl<'a> State<'a> {
@@ -436,9 +438,19 @@ impl<'a> State<'a> {
                 self.push(sum)?;
             }
             Op::Bitshift => {
-                let a = self.pop()?;
-                let b = self.pop()?;
-                self.push(a << b)?;
+                let bits = self.pop()?;
+                let num = self.pop()?;
+                if bits < 0 {
+                    return Err(OperationError::NegativeBitCount { bits });
+                }
+
+                let result = if bits < i64::BITS as i64 {
+                    num << bits
+                } else {
+                    0
+                };
+
+                self.push(result)?;
             }
             Op::Gcd2 => {
                 todo!()
