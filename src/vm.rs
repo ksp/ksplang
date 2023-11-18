@@ -39,6 +39,8 @@ pub enum OperationError {
     NegativeIterations { iterations: i64 },
     #[error("Negative bit count: {bits}")]
     NegativeBitCount { bits: i64 },
+    #[error("Nonpositive value used as a length: {value}")]
+    NonpositiveLength { value: i64 },
 }
 
 impl<'a> State<'a> {
@@ -470,7 +472,31 @@ impl<'a> State<'a> {
                 }
             }
             Op::GcdN => {
-                todo!()
+                let n = self.pop()?;
+                if n <= 0 {
+                    return Err(OperationError::NonpositiveLength { value: n });
+                }
+                if (self.len() as i64) < n {
+                    return Err(OperationError::NotEnoughElements {
+                        stack_len: self.len(),
+                        required: n,
+                    });
+                }
+
+                let mut result = match self.pop()? {
+                    i64::MIN => return Err(OperationError::IntegerOverflow),
+                    value => value.abs(),
+                };
+
+                for _ in 1..n {
+                    let value = self.pop()?;
+                    if result == 0 && value == i64::MIN || result == i64::MIN && value == 0 {
+                        return Err(OperationError::IntegerOverflow);
+                    }
+                    result = result.gcd(&value);
+                }
+
+                self.push(result)?;
             }
             Op::Qeq => {
                 todo!()

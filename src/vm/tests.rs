@@ -254,6 +254,9 @@ fn test_remainder() {
     assert!(!run_op_is_ok(&[1], Op::Remainder));
     assert!(!run_op_is_ok(&[0, 1], Op::Remainder)); // Division by zero
     assert!(!run_op_is_ok(&[-1, i64::MIN], Op::Remainder)); // Integer overflow
+
+    assert_eq!(run_op(&[1, 2, 3, 3, 1], Op::Remainder), [1, 2, 3, 1]);
+
     assert_eq!(run_op(&[1, i64::MIN], Op::Remainder), [0]);
     assert_eq!(run_op(&[3, 1], Op::Remainder), [1]);
     assert_eq!(run_op(&[-3, 1], Op::Remainder), [1]);
@@ -267,6 +270,9 @@ fn test_modulo() {
     assert!(!run_op_is_ok(&[1], Op::Modulo));
     assert!(!run_op_is_ok(&[0, 1], Op::Modulo)); // Division by zero
     assert!(!run_op_is_ok(&[-1, i64::MIN], Op::Modulo)); // Integer overflow
+
+    assert_eq!(run_op(&[1, 2, 3, 3, 1], Op::Modulo), [1, 2, 3, 1]);
+
     assert_eq!(run_op(&[1, i64::MIN], Op::Modulo), [0]);
     assert_eq!(run_op(&[3, 1], Op::Modulo), [1]);
     assert_eq!(run_op(&[-3, 1], Op::Modulo), [1]);
@@ -287,6 +293,8 @@ fn test_tetration_num_iters() {
     // Overflow
     assert!(!run_op_is_ok(&[4, 3], Op::TetrationNumIters));
     assert!(!run_op_is_ok(&[i64::MAX, i64::MAX], Op::TetrationNumIters));
+
+    assert_eq!(run_op(&[1, 2, 3, 0, 1], Op::TetrationNumIters), [1, 2, 3, 1]);
 
     assert_eq!(run_op(&[0, 1], Op::TetrationNumIters), [1]);
     assert_eq!(run_op(&[0, 1], Op::TetrationNumIters), [1]);
@@ -324,6 +332,8 @@ fn test_tetration_iters_num() {
     assert!(!run_op_is_ok(&[3, 4], Op::TetrationItersNum));
     assert!(!run_op_is_ok(&[i64::MAX, i64::MAX], Op::TetrationItersNum));
 
+    assert_eq!(run_op(&[1, 2, 3, 1, 0], Op::TetrationItersNum), [1, 2, 3, 1]);
+
     assert_eq!(run_op(&[1, 0], Op::TetrationItersNum), [1]);
     assert_eq!(run_op(&[1, 0], Op::TetrationItersNum), [1]);
     assert_eq!(run_op(&[0, 1], Op::TetrationItersNum), [0]);
@@ -354,6 +364,8 @@ fn test_median() {
     assert!(!run_op_is_ok(&[0], Op::Median));
     // Not enough elements
     assert!(!run_op_is_ok(&[1, 2, 3, 5], Op::Median));
+
+    assert_eq!(run_op(&[1, 2, 3, 2, 2], Op::Median), [1, 2, 3, 2, 2, 2]);
 
     assert_eq!(run_op(&[1], Op::Median), [1, 1]);
     assert_eq!(run_op(&[3, 1], Op::Median), [3, 1, 1]);
@@ -386,6 +398,8 @@ fn test_lensum() {
     assert!(!run_op_is_ok(&[], Op::LenSum));
     assert!(!run_op_is_ok(&[1], Op::LenSum));
 
+    assert_eq!(run_op(&[1, 2, 3, 0, 0], Op::LenSum), [1, 2, 3, 0]);
+
     assert_eq!(run_op(&[0, 0], Op::LenSum), [0]);
     assert_eq!(run_op(&[0, 1], Op::LenSum), [1]);
     assert_eq!(run_op(&[9, 9], Op::LenSum), [2]);
@@ -406,6 +420,8 @@ fn test_bitshift() {
     assert!(!run_op_is_ok(&[1, -1], Op::Bitshift));
     assert!(!run_op_is_ok(&[64, -1], Op::Bitshift));
     assert!(!run_op_is_ok(&[64, i64::MIN], Op::Bitshift));
+
+    assert_eq!(run_op(&[1, 2, 3, 1, 1], Op::Bitshift), [1, 2, 3, 2]);
 
     assert_eq!(run_op(&[0, 0], Op::Bitshift), [0]);
     assert_eq!(run_op(&[1, 0], Op::Bitshift), [1]);
@@ -452,7 +468,10 @@ fn test_gcd2() {
     assert!(!run_op_is_ok(&[], Op::Gcd2));
     assert!(!run_op_is_ok(&[1], Op::Gcd2));
 
+    // Integer overflow
     assert!(!run_op_is_ok(&[0, i64::MIN], Op::Gcd2));
+
+    assert_eq!(run_op(&[1, 2, 3, 3, 7], Op::Gcd2), [1, 2, 3, 1]);
 
     assert_eq!(run_op(&[3, 7], Op::Gcd2), [1]);
     assert_eq!(run_op(&[3, 21], Op::Gcd2), [3]);
@@ -466,7 +485,30 @@ fn test_gcd2() {
 
 #[test]
 fn test_gcdn() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::GcdN));
+    // Zero elements is not valid
+    assert!(!run_op_is_ok(&[0], Op::GcdN));
+    // Not enough elements
+    assert!(!run_op_is_ok(&[1], Op::GcdN));
+
+    // Integer overflow
+    assert!(!run_op_is_ok(&[0, i64::MIN, 2], Op::GcdN));
+    assert!(!run_op_is_ok(&[0, 0, i64::MIN, 3], Op::GcdN));
+    assert!(!run_op_is_ok(&[0, i64::MIN, 0, 3], Op::GcdN));
+    assert!(!run_op_is_ok(&[i64::MIN, 1], Op::GcdN));
+
+    assert_eq!(run_op(&[1, 2, 3, 1, 1, 2], Op::GcdN), [1, 2, 3, 1]);
+
+    assert_eq!(run_op(&[0, 1], Op::GcdN), [0]);
+    assert_eq!(run_op(&[5, 1], Op::GcdN), [5]);
+    assert_eq!(run_op(&[-5, 1], Op::GcdN), [5]);
+    assert_eq!(run_op(&[i64::MAX, 1], Op::GcdN), [i64::MAX]);
+    assert_eq!(run_op(&[3, 7, 2], Op::GcdN), [1]);
+    assert_eq!(run_op(&[3, 7, 1, 3], Op::GcdN), [1]);
+    assert_eq!(run_op(&[21, 21, 21, 3], Op::GcdN), [21]);
+    assert_eq!(run_op(&[21, 7, 14, 3], Op::GcdN), [7]);
+    assert_eq!(run_op(&[21, 54, 6, 3], Op::GcdN), [3]);
 }
 
 #[test]
