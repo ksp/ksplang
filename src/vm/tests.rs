@@ -433,7 +433,17 @@ fn test_bitshift() {
 
 #[test]
 fn test_sum() {
-    todo!()
+    assert_eq!(run_op(&[], Op::Sum), [0]);
+    assert_eq!(run_op(&[0], Op::Sum), [0]);
+    assert_eq!(run_op(&[1], Op::Sum), [1]);
+    assert_eq!(run_op(&[1, -2], Op::Sum), [-1]);
+    assert_eq!(run_op(&[1, i64::MIN], Op::Sum), [i64::MIN + 1]);
+    // Intermediate results here would overflow an i64. We still support that.
+    assert_eq!(run_op(&[i64::MAX, i64::MAX, i64::MIN, i64::MIN], Op::Sum), [-2]);
+
+    // Integer overflow
+    assert!(!run_op_is_ok(&[i64::MAX, 1], Op::Sum));
+    assert!(!run_op_is_ok(&[i64::MIN, -1], Op::Sum));
 }
 
 #[test]

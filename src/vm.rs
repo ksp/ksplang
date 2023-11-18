@@ -1,3 +1,4 @@
+use num_integer::Integer;
 use thiserror::Error;
 
 use crate::ops::Op;
@@ -429,14 +430,6 @@ impl<'a> State<'a> {
                 }
                 self.push(len(a) + len(b))?;
             }
-            Op::Sum => {
-                let mut sum: i64 = 0;
-                for value in &self.stack {
-                    sum = sum.checked_add(*value).ok_or(OperationError::IntegerOverflow)?;
-                }
-                self.clear();
-                self.push(sum)?;
-            }
             Op::Bitshift => {
                 let bits = self.pop()?;
                 let num = self.pop()?;
@@ -451,6 +444,17 @@ impl<'a> State<'a> {
                 };
 
                 self.push(result)?;
+            }
+            Op::Sum => {
+                let mut sum: i128 = 0;
+                for value in &self.stack {
+                    // Integer overflow never happen here unless we are summing
+                    // more values than can fit in any real RAM.
+                    sum = sum.checked_add(*value as i128).ok_or(OperationError::IntegerOverflow)?;
+                }
+                self.clear();
+
+                self.push(sum.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
             }
             Op::Gcd2 => {
                 todo!()
