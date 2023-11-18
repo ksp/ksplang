@@ -448,7 +448,20 @@ fn test_sum() {
 
 #[test]
 fn test_gcd2() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Gcd2));
+    assert!(!run_op_is_ok(&[1], Op::Gcd2));
+
+    assert!(!run_op_is_ok(&[0, i64::MIN], Op::Gcd2));
+
+    assert_eq!(run_op(&[3, 7], Op::Gcd2), [1]);
+    assert_eq!(run_op(&[3, 21], Op::Gcd2), [3]);
+    assert_eq!(run_op(&[18, 21], Op::Gcd2), [3]);
+    assert_eq!(run_op(&[-18, 21], Op::Gcd2), [3]);
+    assert_eq!(run_op(&[18, -21], Op::Gcd2), [3]);
+    assert_eq!(run_op(&[-18, -21], Op::Gcd2), [3]);
+    assert_eq!(run_op(&[0, 0], Op::Gcd2), [0]);
+    assert_eq!(run_op(&[0, i64::MAX], Op::Gcd2), [i64::MAX]);
 }
 
 #[test]

@@ -457,7 +457,17 @@ impl<'a> State<'a> {
                 self.push(sum.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
             }
             Op::Gcd2 => {
-                todo!()
+                let a = self.pop()?;
+                let b = self.pop()?;
+
+                // If a or b is i64::MIN and the other value 0, then the result ends up being
+                // i64::MAX+1, which overflows, or panics in debug mode.
+                // See also https://github.com/rust-num/num-integer/issues/55
+                if a == 0 && b == i64::MIN || b == 0 && a == i64::MIN {
+                    return Err(OperationError::IntegerOverflow);
+                } else {
+                    self.push(a.gcd(&b))?;
+                }
             }
             Op::GcdN => {
                 todo!()
