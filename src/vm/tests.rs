@@ -565,7 +565,14 @@ fn test_call() {
 
 #[test]
 fn test_goto() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Goto));
+    // Index too large
+    assert!(!run_is_ok(&[5], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+    // Negative index
+    assert!(!run_is_ok(&[-1], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+    assert_eq!(run(&[1, 2, 3, 4], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), [1, 2, 3]);
+    assert_eq!(run(&[1, 2, 3], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), [1]);
 }
 
 #[test]

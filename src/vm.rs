@@ -560,7 +560,18 @@ impl<'a> State<'a> {
                 todo!()
             }
             Op::Goto => {
-                todo!()
+                let i = self.peek()?;
+
+                if i < 0 {
+                    return Err(OperationError::NegativeInstructionIndex { index: i });
+                }
+
+                // The try_into() should only fail in case when usize has a smaller range
+                // than i64, in which case this is the correct behavior - we cannot have this
+                // amount of instructions anyway.
+                return Ok(Effect::SetInstructionPointer(
+                    i.try_into().map_err(|_| OperationError::InstructionOutOfRange { index: i })?,
+                ));
             }
             Op::Jump => {
                 todo!()
