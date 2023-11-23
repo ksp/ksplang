@@ -1,4 +1,4 @@
-use num_integer::Integer;
+use num_integer::{Integer, Roots};
 use thiserror::Error;
 
 use crate::ops::Op;
@@ -499,7 +499,30 @@ impl<'a> State<'a> {
                 self.push(result)?;
             }
             Op::Qeq => {
-                todo!()
+                let a = self.pop()? as i128;
+                let b = self.pop()? as i128;
+                let c = self.pop()? as i128;
+
+                // Solve the quadratic equation ax^2+bx+c=0 and put integer results on the stack.
+
+                let discriminant = b * b - 4 * a * c;
+                if discriminant < 0 {
+                    return Ok(());
+                }
+
+                let discriminant_sqrt = discriminant.sqrt();
+                if discriminant_sqrt * discriminant_sqrt != discriminant {
+                    return Ok(());
+                }
+
+                if (-b - discriminant_sqrt) % (2 * a) == 0 {
+                    let result = (-b - discriminant_sqrt) / (2 * a);
+                    self.push(result.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
+                }
+                if discriminant != 0 && (-b + discriminant_sqrt) % (2 * a) == 0 {
+                    let result = (-b + discriminant_sqrt) / (2 * a);
+                    self.push(result.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
+                }
             }
             Op::Funkcia => {
                 todo!()

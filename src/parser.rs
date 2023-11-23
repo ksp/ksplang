@@ -37,8 +37,8 @@ pub fn parse(str: &str) -> Result<Vec<Op>, ParserError> {
             "sum" => ops.push(Op::Sum),
             "d" => ops.push(Op::GcdN),
             "gcd" => ops.push(Op::Gcd2),
+            "qeq" => ops.push(Op::Qeq),
             // TODO: Name these instructions:
-            //"?" => ops.push(Op::QuadraticEquationSolver),
             //"?" => ops.push(Op::PrimesThingy),
             //"?" => ops.push(Op::BulkPairwiseOfSomethingBinary),
             "brz" => ops.push(Op::BranchIfZero),

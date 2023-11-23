@@ -513,7 +513,23 @@ fn test_gcdn() {
 
 #[test]
 fn test_qeq() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Qeq));
+    assert!(!run_op_is_ok(&[1], Op::Qeq));
+    assert!(!run_op_is_ok(&[1, 2], Op::Qeq));
+
+    // Integer overflow (results are -1, 2^63)
+    assert!(!run_op_is_ok(&[i64::MIN, i64::MIN+1, 1], Op::Qeq));
+
+    // (x+5)(x-8) = x^2 - 3x - 40
+    assert_eq!(run_op(&[-40, -3, 1], Op::Qeq), [-5, 8]);
+    // (x-3)(x-3) = x^2 - 6x + 9
+    assert_eq!(run_op(&[9, -6, 1], Op::Qeq), [3]);
+    // 2 non-integer solutions
+    assert_eq!(run_op(&[-7, 3, 1], Op::Qeq), []);
+
+    assert_eq!(run_op(&[0, i64::MIN + 1, 1], Op::Qeq), [0, i64::MAX]);
+    assert_eq!(run_op(&[0, i64::MAX, 1], Op::Qeq), [i64::MIN + 1, 0]);
 }
 
 #[test]
