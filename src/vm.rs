@@ -50,6 +50,7 @@ pub enum OperationError {
 enum Effect {
     None,
     SetInstructionPointer(usize),
+    AddInstructionPointer(i64),
 }
 
 impl<'a> State<'a> {
@@ -574,7 +575,8 @@ impl<'a> State<'a> {
                 ));
             }
             Op::Jump => {
-                todo!()
+                let i = self.peek()?;
+                return Ok(Effect::AddInstructionPointer(i));
             }
             Op::Rev => {
                 todo!()
@@ -655,6 +657,19 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
                         });
                     }
                     ip = new_ip;
+                }
+                Ok(Effect::AddInstructionPointer(offset)) => {
+                    let new_ip = ip as i64 + 1 + offset;
+
+                    if new_ip < 0 || new_ip >= ops.len() as i64 {
+                        return Err(RunError::InstructionFailed {
+                            instruction: *op,
+                            index: ip,
+                            instruction_counter: instructions_run,
+                            error: OperationError::InstructionOutOfRange { index: new_ip},
+                        });
+                    }
+                    ip = new_ip as usize;
                 }
             }
 

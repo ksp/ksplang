@@ -577,7 +577,16 @@ fn test_goto() {
 
 #[test]
 fn test_jump() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Jump));
+    // Index too large
+    assert!(!run_is_ok(&[5], &[Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+    assert!(!run_is_ok(&[4], &[Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+    // Negative index
+    assert!(!run_is_ok(&[-2], &[Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+
+    // Pop, pop, jump back to start, two more pops, then jump to the last pop.
+    assert_eq!(run(&[3, 0, -3, 0, 0], &[Op::Pop, Op::Pop, Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), []);
 }
 
 #[test]
