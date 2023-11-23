@@ -50,6 +50,7 @@ pub enum OperationError {
 enum Effect {
     None,
     SetInstructionPointer(usize),
+    SaveAndSetInstructionPointer(usize),
     AddInstructionPointer(i64),
 }
 
@@ -103,6 +104,7 @@ impl<'a> State<'a> {
 
     fn apply(&mut self, op: Op) -> Result<Effect, OperationError> {
         match op {
+            Op::Nop => {}
             Op::Praise => {
                 let n = self.pop()?;
                 for _ in 0..n {
@@ -558,7 +560,18 @@ impl<'a> State<'a> {
                 ));
             }
             Op::Call => {
-                todo!()
+                let i = self.peek()?;
+
+                if i < 0 {
+                    return Err(OperationError::NegativeInstructionIndex { index: i });
+                }
+
+                // The try_into() should only fail in case when usize has a smaller range
+                // than i64, in which case this is the correct behavior - we cannot have this
+                // amount of instructions anyway.
+                return Ok(Effect::SaveAndSetInstructionPointer(
+                    i.try_into().map_err(|_| OperationError::InstructionOutOfRange { index: i })?,
+                ));
             }
             Op::Goto => {
                 let i = self.peek()?;
@@ -670,6 +683,23 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
                         });
                     }
                     ip = new_ip as usize;
+                }
+                Ok(Effect::SaveAndSetInstructionPointer(new_ip)) => {
+                    let build_err = |error| {
+                        RunError::InstructionFailed {
+                            instruction: *op,
+                            index: ip,
+                            instruction_counter: instructions_run,
+                            error
+                        }
+                    };
+
+                    if new_ip >= ops.len() {
+                        return Err(build_err(OperationError::InstructionOutOfRange { index: new_ip as i64 }));
+                    }
+                    let saved_ip = (ip as i64).checked_add(1).ok_or(build_err(OperationError::IntegerOverflow))?;
+                    state.push(saved_ip).map_err(build_err)?;
+                    ip = new_ip;
                 }
             }
 

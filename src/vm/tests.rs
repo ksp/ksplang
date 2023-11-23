@@ -58,6 +58,12 @@ fn test_praise() {
 }
 
 #[test]
+fn test_nop() {
+    assert_eq!(run_op(&[], Op::Nop), &[]);
+    assert_eq!(run_op(&[1, 2, 3], Op::Nop), &[1, 2, 3]);
+}
+
+#[test]
 fn test_pop() {
     assert!(!run_op_is_ok(&[], Op::Pop));
 
@@ -560,7 +566,15 @@ fn test_branchifzero() {
 
 #[test]
 fn test_call() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Call));
+    // Index too large
+    assert!(!run_is_ok(&[5], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]));
+    // Negative index
+    assert!(!run_is_ok(&[-1], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]));
+    assert_eq!(run(&[1, 2, 3, 4], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]), [1, 2, 3, 4, 1]);
+    assert_eq!(run(&[1, 2, 3], &[Op::Nop, Op::Call, Op::Nop, Op::Nop, Op::Nop]), [1, 2, 3, 2]);
+    assert_eq!(run(&[1, 2, 3], &[Op::Nop, Op::Nop, Op::Nop, Op::Nop, Op::Call, Op::Nop]), [1, 2, 3, 5, 5]);
 }
 
 #[test]

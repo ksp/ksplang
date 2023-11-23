@@ -1,5 +1,6 @@
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Op {
+    Nop,
     Praise,
     Pop,
     Pop2,
@@ -26,7 +27,7 @@ pub enum Op {
     Funkcia,
     BulkPairwiseOfSomethingBinary,
     BranchIfZero,
-    Call, // TODO: Does it have a source code argument?
+    Call,
     Goto,
     Jump,
     Rev,

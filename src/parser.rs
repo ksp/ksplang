@@ -12,6 +12,7 @@ pub fn parse(str: &str) -> Result<Vec<Op>, ParserError> {
     let mut ops = Vec::new();
     for word in str.split_whitespace() {
         match word.to_lowercase().as_ref() {
+            // Note that while Op::Nop exists, it is not a part of the language.
             "praise" => ops.push(Op::Praise),
             "pop" => ops.push(Op::Pop),
             "¬" => ops.push(Op::Pop2),
