@@ -41,6 +41,15 @@ pub enum OperationError {
     NegativeBitCount { bits: i64 },
     #[error("Nonpositive value used as a length: {value}")]
     NonpositiveLength { value: i64 },
+    #[error("Negative value used as instruction index: {index}")]
+    NegativeInstructionIndex { index: i64 },
+    #[error("Value used as instruction index is too large: {index}")]
+    InstructionOutOfRange { index: i64 },
+}
+
+enum Effect {
+    None,
+    SetInstructionPointer(usize),
 }
 
 impl<'a> State<'a> {
@@ -91,7 +100,7 @@ impl<'a> State<'a> {
         self.stack.get(index).copied()
     }
 
-    fn apply(&mut self, op: Op) -> Result<(), OperationError> {
+    fn apply(&mut self, op: Op) -> Result<Effect, OperationError> {
         match op {
             Op::Praise => {
                 let n = self.pop()?;
@@ -144,7 +153,7 @@ impl<'a> State<'a> {
                 }
 
                 if n == 0 {
-                    return Ok(());
+                    return Ok(Effect::None);
                 }
 
                 // Can only overflow is n = i64:MIN, and we do not allow negative values for n.
@@ -439,18 +448,14 @@ impl<'a> State<'a> {
                     return Err(OperationError::NegativeBitCount { bits });
                 }
 
-                let result = if bits < i64::BITS as i64 {
-                    num << bits
-                } else {
-                    0
-                };
+                let result = if bits < i64::BITS as i64 { num << bits } else { 0 };
 
                 self.push(result)?;
             }
             Op::Sum => {
                 let mut sum: i128 = 0;
                 for value in &self.stack {
-                    // Integer overflow never happen here unless we are summing
+                    // Integer overflow can never happen here unless we are summing
                     // more values than can fit in any real RAM.
                     sum = sum.checked_add(*value as i128).ok_or(OperationError::IntegerOverflow)?;
                 }
@@ -490,6 +495,7 @@ impl<'a> State<'a> {
 
                 for _ in 1..n {
                     let value = self.pop()?;
+                    // See note on Gcd2 for reasoning why this check is necessary.
                     if result == 0 && value == i64::MIN || result == i64::MIN && value == 0 {
                         return Err(OperationError::IntegerOverflow);
                     }
@@ -507,12 +513,12 @@ impl<'a> State<'a> {
 
                 let discriminant = b * b - 4 * a * c;
                 if discriminant < 0 {
-                    return Ok(());
+                    return Ok(Effect::None);
                 }
 
                 let discriminant_sqrt = discriminant.sqrt();
                 if discriminant_sqrt * discriminant_sqrt != discriminant {
-                    return Ok(());
+                    return Ok(Effect::None);
                 }
 
                 if (-b - discriminant_sqrt) % (2 * a) == 0 {
@@ -531,7 +537,24 @@ impl<'a> State<'a> {
                 todo!()
             }
             Op::BranchIfZero => {
-                todo!()
+                let c = self.peek()?;
+
+                if c != 0 {
+                    return Ok(Effect::None);
+                }
+
+                let i = self.peek_n(1)?;
+
+                if i < 0 {
+                    return Err(OperationError::NegativeInstructionIndex { index: i });
+                }
+
+                // The try_into() should only fail in case when usize has a smaller range
+                // than i64, in which case this is the correct behavior - we cannot have this
+                // amount of instructions anyway.
+                return Ok(Effect::SetInstructionPointer(
+                    i.try_into().map_err(|_| OperationError::InstructionOutOfRange { index: i })?,
+                ));
             }
             Op::Call => {
                 todo!()
@@ -553,7 +576,7 @@ impl<'a> State<'a> {
             }
         }
 
-        Ok(())
+        Ok(Effect::None)
     }
 }
 
@@ -598,19 +621,38 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
     state.stack = options.initial_stack.to_vec();
 
     let mut instructions_run = 0;
-    for (i, op) in ops.iter().enumerate() {
-        if let Err(error) = state.apply(*op) {
-            return Err(RunError::InstructionFailed {
-                instruction: *op,
-                index: i,
-                instruction_counter: instructions_run,
-                error,
-            });
-        }
+    let mut ip = 0;
+    loop {
+        if let Some(op) = ops.get(ip) {
+            match state.apply(*op) {
+                Err(error) => {
+                    return Err(RunError::InstructionFailed {
+                        instruction: *op,
+                        index: ip,
+                        instruction_counter: instructions_run,
+                        error,
+                    });
+                }
+                Ok(Effect::None) => ip += 1,
+                Ok(Effect::SetInstructionPointer(new_ip)) => {
+                    if new_ip >= ops.len() {
+                        return Err(RunError::InstructionFailed {
+                            instruction: *op,
+                            index: ip,
+                            instruction_counter: instructions_run,
+                            error: OperationError::InstructionOutOfRange { index: new_ip as i64 },
+                        });
+                    }
+                    ip = new_ip;
+                }
+            }
 
-        // Sanity check; instructions should be doing their own checking.
-        if state.stack.len() > options.max_stack_size {
-            return Err(RunError::StackOverflow);
+            // Sanity check; instructions should be doing their own checking.
+            if state.stack.len() > options.max_stack_size {
+                return Err(RunError::StackOverflow);
+            }
+        } else {
+            break;
         }
 
         instructions_run += 1;

@@ -544,7 +544,18 @@ fn test_bulkpairwiseofsomethingbinary() {
 
 #[test]
 fn test_branchifzero() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::BranchIfZero));
+    assert!(!run_op_is_ok(&[0], Op::BranchIfZero));
+
+    // Index too large
+    assert!(!run_is_ok(&[5, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+    // Negative index
+    assert!(!run_is_ok(&[-1, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+
+    assert_eq!(run(&[4, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), [4]);
+    assert_eq!(run(&[3, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), []);
+    assert_eq!(run(&[1, 2, 3, 4], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), []);
 }
 
 #[test]
