@@ -8,50 +8,56 @@ pub enum ParserError {
     UnknownOperation(String),
 }
 
-pub fn parse(str: &str) -> Result<Vec<Op>, ParserError> {
+pub fn parse_word(word: &str) -> Result<Op, ParserError> {
+    assert!(!word.contains(|c: char| c.is_whitespace()));
+    let op = match word.to_lowercase().as_ref() {
+        // Note that while Op::Nop exists, it is not a part of the language.
+        "praise" => Op::Praise,
+        "pop" => Op::Pop,
+        "¬" => Op::Pop2,
+        "pop2" => Op::Pop2,
+        "max" => Op::Max,
+        "l-swap" => Op::LSwap,
+        "lroll" => Op::Roll,
+        "-ff" => Op::FF,
+        "swap" => Op::Swap,
+        "kpi" => Op::KPi,
+        "++" => Op::Increment,
+        "u" => Op::Universal,
+        "rem" => Op::Remainder,
+        "%" => Op::Modulo,
+        "tetr" => Op::TetrationNumIters,
+        "^^" => Op::TetrationItersNum,
+        "m" => Op::Median,
+        "cs" => Op::DigitSum,
+        "lensum" => Op::LenSum,
+        "bitshift" => Op::Bitshift,
+        // "Σ".to_lowercase() == "σ".
+        "σ" => Op::Sum,
+        "sum" => Op::Sum,
+        "d" => Op::GcdN,
+        "gcd" => Op::Gcd2,
+        "qeq" => Op::Qeq,
+        // TODO: Name these instructions:
+        //"?" => Op::PrimesThingy,
+        //"?" => Op::BulkPairwiseOfSomethingBinary,
+        "brz" => Op::BranchIfZero,
+        "call" => Op::Call,
+        "goto" => Op::Goto,
+        "j" => Op::Jump,
+        "rev" => Op::Rev,
+        "spanek" => Op::Sleep,
+        "deez" => Op::Deez,
+        _ => return Err(ParserError::UnknownOperation(word.to_string())),
+    };
+
+    return Ok(op);
+}
+
+pub fn parse_program(str: &str) -> Result<Vec<Op>, ParserError> {
     let mut ops = Vec::new();
     for word in str.split_whitespace() {
-        match word.to_lowercase().as_ref() {
-            // Note that while Op::Nop exists, it is not a part of the language.
-            "praise" => ops.push(Op::Praise),
-            "pop" => ops.push(Op::Pop),
-            "¬" => ops.push(Op::Pop2),
-            "pop2" => ops.push(Op::Pop2),
-            "max" => ops.push(Op::Max),
-            "l-swap" => ops.push(Op::LSwap),
-            "lroll" => ops.push(Op::Roll),
-            "-ff" => ops.push(Op::FF),
-            "swap" => ops.push(Op::Swap),
-            "kpi" => ops.push(Op::KPi),
-            "++" => ops.push(Op::Increment),
-            "u" => ops.push(Op::Universal),
-            "rem" => ops.push(Op::Remainder),
-            "%" => ops.push(Op::Modulo),
-            "tetr" => ops.push(Op::TetrationNumIters),
-            "^^" => ops.push(Op::TetrationItersNum),
-            "m" => ops.push(Op::Median),
-            "cs" => ops.push(Op::DigitSum),
-            "lensum" => ops.push(Op::LenSum),
-            "bitshift" => ops.push(Op::Bitshift),
-            // "Σ".to_lowercase() == "σ".
-            "σ" => ops.push(Op::Sum),
-            "sum" => ops.push(Op::Sum),
-            "d" => ops.push(Op::GcdN),
-            "gcd" => ops.push(Op::Gcd2),
-            "qeq" => ops.push(Op::Qeq),
-            // TODO: Name these instructions:
-            //"?" => ops.push(Op::PrimesThingy),
-            //"?" => ops.push(Op::BulkPairwiseOfSomethingBinary),
-            "brz" => ops.push(Op::BranchIfZero),
-            // TODO: Does this take values from the stack?
-            //"call" => ops.push(Op::Call),
-            "goto" => ops.push(Op::Goto),
-            "j" => ops.push(Op::Jump),
-            "rev" => ops.push(Op::Rev),
-            "spanek" => ops.push(Op::Sleep),
-            "deez" => ops.push(Op::Deez),
-            _ => return Err(ParserError::UnknownOperation(word.to_string())),
-        }
+        ops.push(parse_word(word)?);
     }
     Ok(ops)
 }

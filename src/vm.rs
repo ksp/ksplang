@@ -251,7 +251,6 @@ impl<'a> State<'a> {
                         self.push(a.checked_mul(b).ok_or(OperationError::IntegerOverflow)?)?;
                     }
                     3 => {
-                        // TODO: document this is rem, not rem_euclid
                         let a = self.pop()?;
                         let b = self.pop()?;
                         let rem = a.checked_rem(b).ok_or_else(|| {
