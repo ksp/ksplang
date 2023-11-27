@@ -2,6 +2,7 @@ use num_integer::{Integer, Roots};
 use thiserror::Error;
 
 use crate::ops::Op;
+use crate::vm::RunError::RunTooLong;
 
 #[cfg(test)]
 mod tests;
@@ -609,17 +610,18 @@ pub struct VMOptions<'a> {
     initial_stack: &'a [i64],
     max_stack_size: usize,
     pi_digits: &'a [i8],
+    max_op_count: u64,
 }
 
 impl<'a> VMOptions<'a> {
-    pub fn new(stack: &'a [i64], max_stack_size: usize, pi_digits: &'a [i8]) -> Self {
-        Self { initial_stack: stack, max_stack_size, pi_digits }
+    pub fn new(stack: &'a [i64], max_stack_size: usize, pi_digits: &'a [i8], max_op_count: u64) -> Self {
+        Self { initial_stack: stack, max_stack_size, pi_digits, max_op_count }
     }
 }
 
 impl<'a> Default for VMOptions<'a> {
     fn default() -> Self {
-        Self { initial_stack: &[], max_stack_size: usize::MAX, pi_digits: &[] }
+        Self { initial_stack: &[], max_stack_size: usize::MAX, pi_digits: &[], max_op_count: u64::MAX }
     }
 }
 
@@ -635,9 +637,14 @@ pub enum RunError {
         index: usize,
         /// The number of instructions which have been run before this one
         /// May differ from index in case of loops/jumps being present.
-        instruction_counter: usize,
+        instruction_counter: u64,
         /// The specific error within the instruction.
         error: OperationError,
+    },
+    #[error("The program ran for too long ({instruction_counter} instructions had been run).")]
+    RunTooLong {
+        /// The number of instructions which have been run
+        instruction_counter: u64,
     },
 }
 
@@ -645,7 +652,7 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
     let mut state = State::new(options.max_stack_size, options.pi_digits);
     state.stack = options.initial_stack.to_vec();
 
-    let mut instructions_run = 0;
+    let mut instructions_run = 0u64;
     let mut ip = 0;
     loop {
         if let Some(op) = ops.get(ip) {
@@ -711,6 +718,9 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
         }
 
         instructions_run += 1;
+        if instructions_run >= options.max_op_count {
+            return Err(RunTooLong { instruction_counter: instructions_run });
+        }
     }
 
     Ok(state.stack)

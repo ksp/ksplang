@@ -6,11 +6,11 @@ const PI_TEST_VALUES: [i8; 42] = [
 ];
 
 fn run(initial_stack: &[i64], ops: &[Op]) -> Vec<i64> {
-    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES)).unwrap()
+    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX)).unwrap()
 }
 
 fn run_is_ok(initial_stack: &[i64], ops: &[Op]) -> bool {
-    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES)).is_ok()
+    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX)).is_ok()
 }
 
 fn run_op(initial_stack: &[i64], op: Op) -> Vec<i64> {
@@ -42,7 +42,7 @@ fn test_praise() {
         initial_stack: &[i64],
         stack_size: usize,
     ) -> Result<Vec<i64>, RunError> {
-        super::run(&[Op::Praise], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES))
+        super::run(&[Op::Praise], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX))
     }
 
     // 1 -> 11 chars
@@ -108,7 +108,7 @@ fn test_lroll() {
 #[test]
 fn test_ff() {
     fn run_ff(initial_stack: &[i64], stack_size: usize) -> Vec<i64> {
-        super::run(&[Op::FF], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES)).unwrap()
+        super::run(&[Op::FF], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX)).unwrap()
     }
 
     assert!(!run_op_is_ok(&[], Op::FF));

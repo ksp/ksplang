@@ -38,8 +38,8 @@ pub fn parse_word(word: &str) -> Result<Op, ParserError> {
         "d" => Op::GcdN,
         "gcd" => Op::Gcd2,
         "qeq" => Op::Qeq,
-        // TODO: Name these instructions:
-        //"?" => Op::PrimesThingy,
+        "funkcia" => Op::Funkcia,
+        // TODO: Name this instruction:
         //"?" => Op::BulkPairwiseOfSomethingBinary,
         "brz" => Op::BranchIfZero,
         "call" => Op::Call,
