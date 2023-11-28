@@ -114,9 +114,13 @@ fn test_ff() {
     assert!(!run_op_is_ok(&[], Op::FF));
     assert!(!run_op_is_ok(&[1], Op::FF));
 
-    assert_eq!(run_ff(&[1, 2, 3, 4, 5], 1000), [1, 2, 3, 4, 5]);
-    assert_eq!(run_ff(&[4, 2], 8), &[i64::MIN; 8]);
-    assert_eq!(run_ff(&[1, 2, 3, 4, 2], 8), &[i64::MIN; 8]);
+    assert_eq!(run_ff(&[1, 2], 8), &[i64::MIN; 8]);
+    assert_eq!(run_ff(&[0; 8], 8), &[i64::MIN; 8]);
+    assert_eq!(run_ff(&[i64::MIN; 8], 8), &[i64::MIN; 8]);
+    assert_eq!(run_ff(&[i64::MAX; 8], 8), &[i64::MIN; 8]);
+    assert_eq!(run_ff(&[1, 2, 3, 4, 5], 8), &[i64::MIN; 8]);
+    assert_eq!(run_ff(&[4, 2], 8), &[4, 2]);
+    assert_eq!(run_ff(&[1, 2, 3, 4, 2], 8), [1, 2, 3, 4, 2]);
 }
 
 #[test]

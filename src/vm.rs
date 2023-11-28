@@ -172,13 +172,13 @@ impl<'a> State<'a> {
                 let b = self.pop()?;
 
                 if a == 2 && b == 4 {
+                    self.push(b)?;
+                    self.push(a)?;
+                } else {
                     self.clear();
                     while self.stack.len() < self.max_stack_size {
                         self.stack.push(i64::MIN);
                     }
-                } else {
-                    self.push(b)?;
-                    self.push(a)?;
                 }
             }
             Op::Swap => {
