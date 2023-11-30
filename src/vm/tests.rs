@@ -655,7 +655,8 @@ fn test_rev() {
 
 #[test]
 fn test_sleep() {
-    todo!()
+    assert!(!run_op_is_ok(&[], Op::Sleep));
+    assert!(!run_op_is_ok(&[1, 2, 3], Op::Sleep));
 }
 
 #[test]

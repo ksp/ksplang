@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::ops::Op;
-use crate::vm::RunError::RunTooLong;
 
 #[cfg(test)]
 mod tests;
@@ -54,6 +53,7 @@ enum Effect {
     SetInstructionPointer(usize),
     SaveAndSetInstructionPointer(usize),
     AddInstructionPointer(i64),
+    Timeout,
 }
 
 impl<'a> State<'a> {
@@ -661,9 +661,7 @@ impl<'a> State<'a> {
             Op::Rev => {
                 todo!()
             }
-            Op::Sleep => {
-                todo!()
-            }
+            Op::Sleep => return Ok(Effect::Timeout),
             Op::Deez => {
                 todo!()
             }
@@ -786,6 +784,9 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
                     state.push(saved_ip).map_err(build_err)?;
                     ip = new_ip;
                 }
+                Ok(Effect::Timeout) => {
+                    return Err(RunError::RunTooLong { instruction_counter: instructions_run + 1 });
+                }
             }
 
             // Sanity check; instructions should be doing their own checking.
@@ -798,7 +799,7 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
 
         instructions_run += 1;
         if instructions_run >= options.max_op_count {
-            return Err(RunTooLong { instruction_counter: instructions_run });
+            return Err(RunError::RunTooLong { instruction_counter: instructions_run });
         }
     }
 
