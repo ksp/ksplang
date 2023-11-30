@@ -597,7 +597,7 @@ impl<'a> State<'a> {
             }
             Op::BulkXor => {
                 let n = self.pop()?;
-                if self.len() < 2 * n as usize {
+                if (self.len() as i64) < 2 * n {
                     return Err(OperationError::NotEnoughElements {
                         stack_len: self.len(),
                         required: 2 * n,
