@@ -328,7 +328,10 @@ impl<'a> State<'a> {
             Op::DigitSum => {
                 let a = self.peek()?;
                 fn digit_sum(num: i64) -> i64 {
-                    // TODO: fix overflow with i64::MIN
+                    // This is a workaround for i64::MIN.abs() not being a valid i64 value.
+                    if num == i64::MIN {
+                        return 89;
+                    }
                     let mut num = num.abs();
                     let mut sum = 0;
                     while num > 0 {
