@@ -32,6 +32,7 @@ pub fn parse_word(word: &str) -> Result<Op, ParserError> {
         "cs" => Op::DigitSum,
         "lensum" => Op::LenSum,
         "bitshift" => Op::Bitshift,
+        "and" => Op::And,
         // "Σ".to_lowercase() == "σ".
         "σ" => Op::Sum,
         "sum" => Op::Sum,

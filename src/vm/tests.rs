@@ -459,6 +459,22 @@ fn test_bitshift() {
 }
 
 #[test]
+fn test_and() {
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::And));
+    assert!(!run_op_is_ok(&[1], Op::And));
+
+    assert_eq!(run_op(&[1, 2, 3, 5, 3], Op::And), [1, 2, 3, 1]);
+
+    assert_eq!(run_op(&[0, 0], Op::And), [0]);
+    assert_eq!(run_op(&[0, 1], Op::And), [0]);
+    assert_eq!(run_op(&[1, 1], Op::And), [1]);
+    assert_eq!(run_op(&[5, 3], Op::And), [1]);
+    assert_eq!(run_op(&[i64::MAX, i64::MAX], Op::And), [i64::MAX]);
+    assert_eq!(run_op(&[i64::MIN, i64::MIN], Op::And), [i64::MIN]);
+}
+
+#[test]
 fn test_sum() {
     assert_eq!(run_op(&[], Op::Sum), [0]);
     assert_eq!(run_op(&[0], Op::Sum), [0]);
@@ -665,9 +681,9 @@ fn test_deez() {
     // Not enough parameters
     assert!(!run_op_is_ok(&[], Op::Deez));
     // 2 instructions
-    // 19: sum (creates 0 on an empty stack)
+    // 20: sum (creates 0 on an empty stack)
     // 9: ++ 0 -> 1
     // resulting stack: [1]
     // that is translated back into pop and added to the end of the program
-    assert_eq!(run_op(&[1, 2, 3, 9, 19, 2], Op::Deez), [1, 2]);
+    assert_eq!(run_op(&[1, 2, 3, 9, 20, 2], Op::Deez), [1, 2]);
 }

@@ -459,6 +459,11 @@ impl<'a> State<'a> {
 
                 self.push(result)?;
             }
+            Op::And => {
+                let a = self.pop()?;
+                let b = self.pop()?;
+                self.push(a & b)?;
+            }
             Op::Sum => {
                 let mut sum: i128 = 0;
                 for value in &self.stack {
