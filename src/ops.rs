@@ -38,6 +38,46 @@ pub enum Op {
     // TODO: not/shift/or/and/eval/ding
 }
 
+impl Op {
+    pub const fn by_id(id: usize) -> Option<Op> {
+        match id {
+            0 => Some(Op::Praise),
+            1 => Some(Op::Pop),
+            2 => Some(Op::Pop2),
+            3 => Some(Op::Max),
+            4 => Some(Op::LSwap),
+            5 => Some(Op::Roll),
+            6 => Some(Op::FF),
+            7 => Some(Op::Swap),
+            8 => Some(Op::KPi),
+            9 => Some(Op::Increment),
+            10 => Some(Op::Universal),
+            11 => Some(Op::Remainder),
+            12 => Some(Op::Modulo),
+            13 => Some(Op::TetrationNumIters),
+            14 => Some(Op::TetrationItersNum),
+            15 => Some(Op::Median),
+            16 => Some(Op::DigitSum),
+            17 => Some(Op::LenSum),
+            18 => Some(Op::Bitshift),
+            19 => Some(Op::Sum),
+            20 => Some(Op::Gcd2),
+            21 => Some(Op::GcdN),
+            22 => Some(Op::Qeq),
+            23 => Some(Op::Funkcia),
+            24 => Some(Op::BulkXor),
+            25 => Some(Op::BranchIfZero),
+            26 => Some(Op::Call),
+            27 => Some(Op::Goto),
+            28 => Some(Op::Jump),
+            29 => Some(Op::Rev),
+            30 => Some(Op::Sleep),
+            31 => Some(Op::Deez),
+            _ => None,
+        }
+    }
+}
+
 impl Display for Op {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let name = match self {
@@ -73,7 +113,7 @@ impl Display for Op {
             Op::Jump => "j",
             Op::Rev => "rev",
             Op::Sleep => "SPANEK",
-            Op::Deez => "deez"
+            Op::Deez => "deez",
         };
         write!(f, "{}", name)
     }

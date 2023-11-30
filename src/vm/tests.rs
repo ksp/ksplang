@@ -6,7 +6,7 @@ const PI_TEST_VALUES: [i8; 42] = [
 ];
 
 fn run(initial_stack: &[i64], ops: &[Op]) -> Vec<i64> {
-    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX)).unwrap()
+    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX)).unwrap().stack
 }
 
 fn run_is_ok(initial_stack: &[i64], ops: &[Op]) -> bool {
@@ -43,6 +43,7 @@ fn test_praise() {
         stack_size: usize,
     ) -> Result<Vec<i64>, RunError> {
         super::run(&[Op::Praise], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX))
+            .map(|x| x.stack)
     }
 
     // 1 -> 11 chars
@@ -108,7 +109,7 @@ fn test_lroll() {
 #[test]
 fn test_ff() {
     fn run_ff(initial_stack: &[i64], stack_size: usize) -> Vec<i64> {
-        super::run(&[Op::FF], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX)).unwrap()
+        super::run(&[Op::FF], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX)).unwrap().stack
     }
 
     assert!(!run_op_is_ok(&[], Op::FF));
@@ -661,5 +662,12 @@ fn test_sleep() {
 
 #[test]
 fn test_deez() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Deez));
+    // 2 instructions
+    // 19: sum (creates 0 on an empty stack)
+    // 9: ++ 0 -> 1
+    // resulting stack: [1]
+    // that is translated back into pop and added to the end of the program
+    assert_eq!(run_op(&[1, 2, 3, 9, 19, 2], Op::Deez), [1, 2]);
 }

@@ -46,6 +46,8 @@ pub enum OperationError {
     NegativeInstructionIndex { index: i64 },
     #[error("Value used as instruction index is too large: {index}")]
     InstructionOutOfRange { index: i64 },
+    #[error("Value is not a valid instruction id: {id}")]
+    InvalidInstructionId { id: i64 },
 }
 
 enum Effect {
@@ -54,6 +56,7 @@ enum Effect {
     SaveAndSetInstructionPointer(usize),
     AddInstructionPointer(i64),
     Timeout,
+    RunSubprogramAndAppendResult(Vec<Op>),
 }
 
 impl<'a> State<'a> {
@@ -663,7 +666,29 @@ impl<'a> State<'a> {
             }
             Op::Sleep => return Ok(Effect::Timeout),
             Op::Deez => {
-                todo!()
+                let n = self.pop()?;
+                if n < 0 {
+                    return Err(OperationError::NegativeLength { value: n });
+                }
+                if (self.len() as i64) < n {
+                    return Err(OperationError::NotEnoughElements {
+                        stack_len: self.len(),
+                        required: n,
+                    });
+                }
+                let mut ops = Vec::new();
+
+                for _ in 0..n {
+                    let id = self.pop()?;
+                    if id < 0 {
+                        return Err(OperationError::InvalidInstructionId { id });
+                    }
+                    let op = Op::by_id(id as usize)
+                        .ok_or(OperationError::InvalidInstructionId { id })?;
+                    ops.push(op);
+                }
+
+                return Ok(Effect::RunSubprogramAndAppendResult(ops));
             }
         }
 
@@ -723,32 +748,36 @@ pub enum RunError {
     },
 }
 
-pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
+#[derive(Debug, Clone)]
+pub struct RunResult {
+    pub stack: Vec<i64>,
+    pub instruction_counter: u64,
+}
+
+pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
     let mut state = State::new(options.max_stack_size, options.pi_digits);
     state.stack = options.initial_stack.to_vec();
+
+    let mut ops = ops.to_vec();
 
     let mut instructions_run = 0u64;
     let mut ip = 0;
     loop {
-        if let Some(op) = ops.get(ip) {
-            match state.apply(*op) {
-                Err(error) => {
-                    return Err(RunError::InstructionFailed {
-                        instruction: *op,
-                        index: ip,
-                        instruction_counter: instructions_run,
-                        error,
-                    });
-                }
+        if let Some(&op) = ops.get(ip) {
+            let build_err = |error| RunError::InstructionFailed {
+                instruction: op,
+                index: ip,
+                instruction_counter: instructions_run,
+                error,
+            };
+            match state.apply(op) {
+                Err(error) => return Err(build_err(error)),
                 Ok(Effect::None) => ip += 1,
                 Ok(Effect::SetInstructionPointer(new_ip)) => {
                     if new_ip >= ops.len() {
-                        return Err(RunError::InstructionFailed {
-                            instruction: *op,
-                            index: ip,
-                            instruction_counter: instructions_run,
-                            error: OperationError::InstructionOutOfRange { index: new_ip as i64 },
-                        });
+                        return Err(build_err(OperationError::InstructionOutOfRange {
+                            index: new_ip as i64,
+                        }));
                     }
                     ip = new_ip;
                 }
@@ -756,23 +785,13 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
                     let new_ip = ip as i64 + 1 + offset;
 
                     if new_ip < 0 || new_ip >= ops.len() as i64 {
-                        return Err(RunError::InstructionFailed {
-                            instruction: *op,
-                            index: ip,
-                            instruction_counter: instructions_run,
-                            error: OperationError::InstructionOutOfRange { index: new_ip },
-                        });
+                        return Err(build_err(OperationError::InstructionOutOfRange {
+                            index: new_ip,
+                        }));
                     }
                     ip = new_ip as usize;
                 }
                 Ok(Effect::SaveAndSetInstructionPointer(new_ip)) => {
-                    let build_err = |error| RunError::InstructionFailed {
-                        instruction: *op,
-                        index: ip,
-                        instruction_counter: instructions_run,
-                        error,
-                    };
-
                     if new_ip >= ops.len() {
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: new_ip as i64,
@@ -786,6 +805,25 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
                 }
                 Ok(Effect::Timeout) => {
                     return Err(RunError::RunTooLong { instruction_counter: instructions_run + 1 });
+                }
+                Ok(Effect::RunSubprogramAndAppendResult(subprogram_ops)) => {
+                    let remaining_ops = options.max_op_count - instructions_run;
+                    let result = run(
+                        &subprogram_ops,
+                        VMOptions {
+                            initial_stack: &[],
+                            max_stack_size: options.max_stack_size,
+                            pi_digits: options.pi_digits,
+                            max_op_count: remaining_ops,
+                        },
+                    )?;
+                    for value in result.stack {
+                        let op = Op::by_id(value as usize)
+                            .ok_or(build_err(OperationError::InvalidInstructionId { id: value }))?;
+                        ops.push(op);
+                    }
+                    instructions_run += result.instruction_counter;
+                    ip += 1;
                 }
             }
 
@@ -803,5 +841,5 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
         }
     }
 
-    Ok(state.stack)
+    Ok(RunResult { stack: state.stack, instruction_counter: instructions_run })
 }
