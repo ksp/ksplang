@@ -1,4 +1,5 @@
 use num_integer::{Integer, Roots};
+use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::ops::Op;
@@ -534,7 +535,57 @@ impl<'a> State<'a> {
                 }
             }
             Op::Funkcia => {
-                todo!()
+                const MOD: i64 = 1_000_000_007;
+
+                let a = self.pop()?;
+                let b = self.pop()?;
+
+                fn factorize(mut a: i64) -> HashMap<i64, usize> {
+                    let mut counts_by_divisor = HashMap::new();
+                    let mut i = 2;
+                    while (i * i) as i128 <= a as i128 {
+                        while a % i == 0 {
+                            counts_by_divisor.entry(i).and_modify(|x| *x += 1).or_insert(1);
+                            a /= i;
+                        }
+
+                        i += 1;
+                    }
+                    if a > 1 {
+                        counts_by_divisor.entry(a).and_modify(|x| *x += 1).or_insert(1);
+                    }
+                    counts_by_divisor
+                }
+
+                let a_factors = factorize(a);
+                let b_factors = factorize(b);
+
+                let mut result = 1i64;
+                let mut apply_factors = |factors: &HashMap<i64, usize>,
+                                         the_other_factors: &HashMap<i64, usize>|
+                 -> Result<(), OperationError> {
+                    for (factor, count) in factors {
+                        if the_other_factors.contains_key(&factor) {
+                            continue;
+                        }
+                        for _ in 0..*count {
+                            result = (result
+                                .checked_mul(factor % MOD)
+                                .ok_or(OperationError::IntegerOverflow)?
+                                % MOD)
+                                % MOD;
+                        }
+                    }
+                    Ok(())
+                };
+
+                apply_factors(&a_factors, &b_factors)?;
+                apply_factors(&b_factors, &a_factors)?;
+
+                if result == 1 {
+                    result = 0
+                }
+                self.push(result)?;
             }
             Op::BulkPairwiseOfSomethingBinary => {
                 todo!()
@@ -614,14 +665,24 @@ pub struct VMOptions<'a> {
 }
 
 impl<'a> VMOptions<'a> {
-    pub fn new(stack: &'a [i64], max_stack_size: usize, pi_digits: &'a [i8], max_op_count: u64) -> Self {
+    pub fn new(
+        stack: &'a [i64],
+        max_stack_size: usize,
+        pi_digits: &'a [i8],
+        max_op_count: u64,
+    ) -> Self {
         Self { initial_stack: stack, max_stack_size, pi_digits, max_op_count }
     }
 }
 
 impl<'a> Default for VMOptions<'a> {
     fn default() -> Self {
-        Self { initial_stack: &[], max_stack_size: usize::MAX, pi_digits: &[], max_op_count: u64::MAX }
+        Self {
+            initial_stack: &[],
+            max_stack_size: usize::MAX,
+            pi_digits: &[],
+            max_op_count: u64::MAX,
+        }
     }
 }
 
@@ -685,25 +746,27 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<Vec<i64>, RunError> {
                             instruction: *op,
                             index: ip,
                             instruction_counter: instructions_run,
-                            error: OperationError::InstructionOutOfRange { index: new_ip},
+                            error: OperationError::InstructionOutOfRange { index: new_ip },
                         });
                     }
                     ip = new_ip as usize;
                 }
                 Ok(Effect::SaveAndSetInstructionPointer(new_ip)) => {
-                    let build_err = |error| {
-                        RunError::InstructionFailed {
-                            instruction: *op,
-                            index: ip,
-                            instruction_counter: instructions_run,
-                            error
-                        }
+                    let build_err = |error| RunError::InstructionFailed {
+                        instruction: *op,
+                        index: ip,
+                        instruction_counter: instructions_run,
+                        error,
                     };
 
                     if new_ip >= ops.len() {
-                        return Err(build_err(OperationError::InstructionOutOfRange { index: new_ip as i64 }));
+                        return Err(build_err(OperationError::InstructionOutOfRange {
+                            index: new_ip as i64,
+                        }));
                     }
-                    let saved_ip = (ip as i64).checked_add(1).ok_or(build_err(OperationError::IntegerOverflow))?;
+                    let saved_ip = (ip as i64)
+                        .checked_add(1)
+                        .ok_or(build_err(OperationError::IntegerOverflow))?;
                     state.push(saved_ip).map_err(build_err)?;
                     ip = new_ip;
                 }

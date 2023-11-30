@@ -544,7 +544,25 @@ fn test_qeq() {
 
 #[test]
 fn test_funkcia() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Funkcia));
+    assert!(!run_op_is_ok(&[1], Op::Funkcia));
+
+    assert_eq!(run_op(&[100, 54], Op::Funkcia), [675]);
+    assert_eq!(run_op(&[54, 100], Op::Funkcia), [675]);
+
+    const MOD: i64 = 1_000_000_007;
+
+    assert_eq!(run_op(&[-1, -1], Op::Funkcia), [0]);
+    assert_eq!(run_op(&[1, 0], Op::Funkcia), [0]);
+    assert_eq!(run_op(&[1, 1], Op::Funkcia), [0]);
+    assert_eq!(run_op(&[1, 2], Op::Funkcia), [2]);
+    assert_eq!(run_op(&[2, 2], Op::Funkcia), [0]);
+    assert_eq!(run_op(&[i64::MAX, 0], Op::Funkcia), [i64::MAX % MOD]);
+    assert_eq!(run_op(&[0, i64::MAX], Op::Funkcia), [i64::MAX % MOD]);
+    assert_eq!(run_op(&[i64::MAX, 0], Op::Funkcia), [i64::MAX % MOD]);
+    assert_eq!(run_op(&[0, MOD], Op::Funkcia), [0]);
+    assert_eq!(run_op(&[0, MOD - 1], Op::Funkcia), [MOD - 1]);
 }
 
 #[test]
