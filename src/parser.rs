@@ -39,8 +39,7 @@ pub fn parse_word(word: &str) -> Result<Op, ParserError> {
         "gcd" => Op::Gcd2,
         "qeq" => Op::Qeq,
         "funkcia" => Op::Funkcia,
-        // TODO: Name this instruction:
-        //"?" => Op::BulkPairwiseOfSomethingBinary,
+        "bulkxor" => Op::BulkXor,
         "brz" => Op::BranchIfZero,
         "call" => Op::Call,
         "goto" => Op::Goto,

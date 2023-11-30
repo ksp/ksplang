@@ -587,8 +587,24 @@ impl<'a> State<'a> {
                 }
                 self.push(result)?;
             }
-            Op::BulkPairwiseOfSomethingBinary => {
-                todo!()
+            Op::BulkXor => {
+                let n = self.pop()?;
+                if self.len() < 2 * n as usize {
+                    return Err(OperationError::NotEnoughElements {
+                        stack_len: self.len(),
+                        required: 2 * n,
+                    });
+                }
+                let mut xors = Vec::new();
+                for _ in 0..n {
+                    let a = if self.pop()? > 0 { 1 } else { 0 };
+                    let b = if self.pop()? > 0 { 1 } else { 0 };
+                    xors.push(a ^ b);
+                }
+
+                for xor in xors.iter().rev() {
+                    self.push(*xor)?;
+                }
             }
             Op::BranchIfZero => {
                 let c = self.peek()?;

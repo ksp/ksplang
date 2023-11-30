@@ -548,6 +548,8 @@ fn test_funkcia() {
     assert!(!run_op_is_ok(&[], Op::Funkcia));
     assert!(!run_op_is_ok(&[1], Op::Funkcia));
 
+    assert_eq!(run_op(&[1, 2, 3, 100, 54], Op::Funkcia), [1, 2, 3, 675]);
+
     assert_eq!(run_op(&[100, 54], Op::Funkcia), [675]);
     assert_eq!(run_op(&[54, 100], Op::Funkcia), [675]);
 
@@ -566,8 +568,29 @@ fn test_funkcia() {
 }
 
 #[test]
-fn test_bulkpairwiseofsomethingbinary() {
-    todo!()
+fn test_bulkxor() {
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::BulkXor));
+    // Not enough values
+    assert!(!run_op_is_ok(&[1, 1], Op::BulkXor));
+    // Not enough values
+    assert!(!run_op_is_ok(&[1, 2, 3, 2], Op::BulkXor));
+
+    assert_eq!(run_op(&[1, 2, 3, 1, 1, 1], Op::BulkXor), [1, 2, 3, 0]);
+
+    assert_eq!(run_op(&[1, 1, 1], Op::BulkXor), [0]);
+    assert_eq!(run_op(&[0, 1, 1], Op::BulkXor), [1]);
+    assert_eq!(run_op(&[1, 0, 1], Op::BulkXor), [1]);
+    assert_eq!(run_op(&[0, 0, 1], Op::BulkXor), [0]);
+    assert_eq!(run_op(&[-1, -1, 1], Op::BulkXor), [0]);
+    assert_eq!(run_op(&[-1, 0, 1], Op::BulkXor), [0]);
+    assert_eq!(run_op(&[i64::MIN, 0, 1], Op::BulkXor), [0]);
+    assert_eq!(run_op(&[i64::MAX, 0, 1], Op::BulkXor), [1]);
+    assert_eq!(run_op(&[i64::MAX, i64::MIN, 1], Op::BulkXor), [1]);
+    assert_eq!(run_op(&[0, 0, 1, 0, 2], Op::BulkXor), [0, 1]);
+    assert_eq!(run_op(&[1, 0, 1, 0, 2], Op::BulkXor), [1, 1]);
+    assert_eq!(run_op(&[1, 0, 0, 0, 2], Op::BulkXor), [1, 0]);
+    assert_eq!(run_op(&[0, 0, 0, 0, 2], Op::BulkXor), [0, 0]);
 }
 
 #[test]
