@@ -436,8 +436,11 @@ impl<'a> State<'a> {
                 }
 
                 values.sort();
-                let result = if values.len() % 2 == 0 {
-                    (values[values.len() / 2 - 1] + values[values.len() / 2]) / 2
+                let result: i64 = if values.len() % 2 == 0 {
+                    ((values[values.len() / 2 - 1] as i128 + (values[values.len() / 2] as i128))
+                        / 2)
+                    .try_into()
+                    .map_err(|_| OperationError::IntegerOverflow)?
                 } else {
                     values[values.len() / 2]
                 };

@@ -386,6 +386,7 @@ fn test_median() {
     assert_eq!(run_op(&[4, 2], Op::Median), [4, 2, 3]);
     assert_eq!(run_op(&[1, 2, 3, 4, 5], Op::Median), [1, 2, 3, 4, 5, 3]);
     assert_eq!(run_op(&[4, 3, 2, 1, 5], Op::Median), [4, 3, 2, 1, 5, 3]);
+    assert_eq!(run_op(&[i64::MAX - 4, i64::MAX - 5, i64::MAX, 4], Op::Median), [i64::MAX - 4, i64::MAX - 5, i64::MAX, 4, i64::MAX - 5]);
 }
 
 #[test]
