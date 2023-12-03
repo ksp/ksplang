@@ -48,6 +48,8 @@ pub enum OperationError {
     InstructionOutOfRange { index: i64 },
     #[error("Value is not a valid instruction id: {id}")]
     InvalidInstructionId { id: i64 },
+    #[error("Negative praise count: {praises}. You should praise KSP more!")]
+    NegativePraiseCount { praises: i64 },
 }
 
 enum Effect {
@@ -73,7 +75,7 @@ impl<'a> State<'a> {
     }
 
     fn push(&mut self, value: i64) -> Result<(), OperationError> {
-        if self.stack.len() >= self.max_stack_size - 1 {
+        if self.stack.len() >= self.max_stack_size {
             return Err(OperationError::PushFailed);
         }
 
@@ -112,6 +114,9 @@ impl<'a> State<'a> {
             Op::Nop => {}
             Op::Praise => {
                 let n = self.pop()?;
+                if n < 0 {
+                    return Err(OperationError::NegativePraiseCount { praises: n });
+                }
                 for _ in 0..n {
                     self.push(77)?;
                     self.push(225)?;

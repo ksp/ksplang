@@ -1,3 +1,4 @@
+use crate::vm::RunError::InstructionFailed;
 use super::*;
 
 const PI_TEST_VALUES: [i8; 42] = [
@@ -48,14 +49,14 @@ fn test_praise() {
 
     // 1 -> 11 chars
     assert_eq!(run_praise_with_stack_size(&[1], 11), Ok(i_like_ksp.repeat(1)));
-    assert_eq!(run_praise_with_stack_size(&[1], 10), Err(RunError::StackOverflow));
+    assert!(matches!(run_praise_with_stack_size(&[1], 10), Err(InstructionFailed { error: OperationError::PushFailed, .. })));
 
     // 9091 -> 100001 chars
     assert_eq!(run_praise_with_stack_size(&[9091], 100001), Ok(i_like_ksp.repeat(9091)));
-    assert_eq!(run_praise_with_stack_size(&[9091], 100000), Err(RunError::StackOverflow));
+    assert!(matches!(run_praise_with_stack_size(&[9091], 100000), Err(InstructionFailed { error: OperationError::PushFailed, .. })));
 
     // This should fail in reasonable time.
-    assert_eq!(run_praise_with_stack_size(&[i64::MAX], 10), Err(RunError::StackOverflow));
+    assert!(matches!(run_praise_with_stack_size(&[i64::MAX], 10), Err(InstructionFailed { error: OperationError::PushFailed, .. })));
 }
 
 #[test]
