@@ -418,11 +418,8 @@ impl<'a> State<'a> {
             Op::Median => {
                 let n = self.peek()?;
                 let mut values = Vec::new();
-                if n < 0 {
-                    return Err(OperationError::NegativeLength { value: n });
-                }
-                if n == 0 {
-                    return Err(OperationError::DivisionByZero);
+                if n <= 0 {
+                    return Err(OperationError::NonpositiveLength { value: n });
                 }
                 if (self.len() as i64) < n {
                     return Err(OperationError::NotEnoughElements {
