@@ -552,6 +552,10 @@ fn test_qeq() {
 
     // Integer overflow (results are -1, 2^63)
     assert!(!run_op_is_ok(&[i64::MIN, i64::MIN+1, 1], Op::Qeq));
+    // Integer overflow (linear equation; result is 2^63)
+    assert!(!run_op_is_ok(&[i64::MIN, 1, 0], Op::Qeq));
+    // Too many results (all integers are a valid solution of 0 = 0)
+    assert!(!run_op_is_ok(&[0, 0, 0], Op::Qeq));
 
     // (x+5)(x-8) = x^2 - 3x - 40
     assert_eq!(run_op(&[-40, -3, 1], Op::Qeq), [-5, 8]);
@@ -562,6 +566,14 @@ fn test_qeq() {
 
     assert_eq!(run_op(&[0, i64::MIN + 1, 1], Op::Qeq), [0, i64::MAX]);
     assert_eq!(run_op(&[0, i64::MAX, 1], Op::Qeq), [i64::MIN + 1, 0]);
+
+    // Linear equations:
+    // 2x+4 = 0 -> x = -2
+    assert_eq!(run_op(&[4, 2, 0], Op::Qeq), [-2]);
+    // 2x+3 = 0 -> x is not integer
+    assert_eq!(run_op(&[3, 2, 0], Op::Qeq), []);
+    // constant = 0 -> x is not integer
+    assert_eq!(run_op(&[4, 0, 0], Op::Qeq), []);
 }
 
 #[test]

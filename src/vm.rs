@@ -50,6 +50,8 @@ pub enum OperationError {
     InvalidInstructionId { id: i64 },
     #[error("Negative praise count: {praises}. You should praise KSP more!")]
     NegativePraiseCount { praises: i64 },
+    #[error("Qeq tried to solve 0 = 0. Too many solutions, giving up.")]
+    QeqZeroEqualsZero,
 }
 
 enum Effect {
@@ -521,8 +523,26 @@ impl<'a> State<'a> {
                 let b = self.pop()? as i128;
                 let c = self.pop()? as i128;
 
-                // Solve the quadratic equation ax^2+bx+c=0 and put integer results on the stack.
+                // This is a c == 0 equation.
+                if a == 0 && b == 0 {
+                    // For c == 0, this is true for any x. We generate an error outright
+                    // as it would produce too many values.
+                    if c == 0 {
+                        return Err(OperationError::QeqZeroEqualsZero);
+                    }
+                    // For c != 0, this is false for any x, so we add nothing.
+                    return Ok(Effect::None);
+                }
+                // If a is zero, this is a linear equation and we need to calculate it differently.
+                if a == 0 {
+                    if -c % b == 0 {
+                        let result = (-c / b).try_into().map_err(|_| OperationError::IntegerOverflow)?;
+                        self.push(result)?;
+                    }
+                    return Ok(Effect::None);
+                }
 
+                // Solve the quadratic equation ax^2+bx+c=0 and put integer results on the stack.
                 let discriminant = b * b - 4 * a * c;
                 if discriminant < 0 {
                     return Ok(Effect::None);
