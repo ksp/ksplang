@@ -499,6 +499,7 @@ fn test_gcd2() {
 
     // Integer overflow
     assert!(!run_op_is_ok(&[0, i64::MIN], Op::Gcd2));
+    assert!(!run_op_is_ok(&[i64::MIN, i64::MIN], Op::Gcd2));
 
     assert_eq!(run_op(&[1, 2, 3, 3, 7], Op::Gcd2), [1, 2, 3, 1]);
 
@@ -510,6 +511,7 @@ fn test_gcd2() {
     assert_eq!(run_op(&[-18, -21], Op::Gcd2), [3]);
     assert_eq!(run_op(&[0, 0], Op::Gcd2), [0]);
     assert_eq!(run_op(&[0, i64::MAX], Op::Gcd2), [i64::MAX]);
+    assert_eq!(run_op(&[i64::MIN, 6], Op::Gcd2), [2]);
 }
 
 #[test]
@@ -538,6 +540,7 @@ fn test_gcdn() {
     assert_eq!(run_op(&[21, 21, 21, 3], Op::GcdN), [21]);
     assert_eq!(run_op(&[21, 7, 14, 3], Op::GcdN), [7]);
     assert_eq!(run_op(&[21, 54, 6, 3], Op::GcdN), [3]);
+    assert_eq!(run_op(&[i64::MIN, 6, i64::MIN, i64::MIN, 4], Op::GcdN), [2]);
 }
 
 #[test]
