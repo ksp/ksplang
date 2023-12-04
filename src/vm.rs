@@ -742,7 +742,7 @@ impl<'a> Default for VMOptions<'a> {
 pub enum RunError {
     #[error("Stack Overflow")]
     StackOverflow,
-    #[error("Instruction {index:?} ({instruction:?}) failed (instruction counter {instruction_counter:?}): {error}")]
+    #[error("Instruction {index} ({instruction}) failed (instruction counter {instruction_counter}): {error}")]
     InstructionFailed {
         /// The instruction which failed
         instruction: Op,
