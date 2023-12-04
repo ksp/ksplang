@@ -484,17 +484,15 @@ impl<'a> State<'a> {
                 self.push(sum.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
             }
             Op::Gcd2 => {
-                let a = self.pop()?;
-                let b = self.pop()?;
-
-                // If a or b is i64::MIN and the other value 0, then the result ends up being
+                // If a or b is i64::MIN, then the result can end up being
                 // i64::MAX+1, which overflows, or panics in debug mode.
                 // See also https://github.com/rust-num/num-integer/issues/55
-                if a == 0 && b == i64::MIN || b == 0 && a == i64::MIN {
-                    return Err(OperationError::IntegerOverflow);
-                } else {
-                    self.push(a.gcd(&b))?;
-                }
+                // To avoid this, compute gcd in unsigned numbers
+                let a = self.pop()?.unsigned_abs();
+                let b = self.pop()?.unsigned_abs();
+
+                let result = a.gcd(&b);
+                self.push(result.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
             }
             Op::GcdN => {
                 let n = self.pop()?;
@@ -508,21 +506,15 @@ impl<'a> State<'a> {
                     });
                 }
 
-                let mut result = match self.pop()? {
-                    i64::MIN => return Err(OperationError::IntegerOverflow),
-                    value => value.abs(),
-                };
+                // See note on Gcd2 for why we need unsigned_abs.
+                let mut result = self.pop()?.unsigned_abs();
 
                 for _ in 1..n {
-                    let value = self.pop()?;
-                    // See note on Gcd2 for reasoning why this check is necessary.
-                    if result == 0 && value == i64::MIN || result == i64::MIN && value == 0 {
-                        return Err(OperationError::IntegerOverflow);
-                    }
+                    let value = self.pop()?.unsigned_abs();
                     result = result.gcd(&value);
                 }
 
-                self.push(result)?;
+                self.push(result.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
             }
             Op::Qeq => {
                 let a = self.pop()? as i128;
