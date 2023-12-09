@@ -684,7 +684,39 @@ fn test_jump() {
 
 #[test]
 fn test_rev() {
-    todo!()
+    // Not enough parameters
+    assert!(!run_op_is_ok(&[], Op::Rev));
+    assert!(!run_op_is_ok(&[1], Op::Rev));
+    assert!(!run_op_is_ok(&[0, 1], Op::Rev));
+
+    // Negative parameters are not allowed, even if it makes sense.
+    assert!(!run_is_ok(&[-1, 0], &[Op::Nop, Op::Nop, Op::Rev, Op::Nop, Op::Nop]));
+
+    // Return index out of range
+    assert!(!run_op_is_ok(&[0, 0], Op::Rev));
+
+    // Jump index out of range
+    assert!(!run_op_is_ok(&[1, 0], Op::Rev));
+
+    // Essentially a nop
+    assert_eq!(run(&[1, 2, 3, 4, 0, 0], &[Op::Rev, Op::Nop]), [1, 2, 3, 4]);
+
+    // Essentially a nop with a quadratic equation (x = -2 and x = 0)
+    assert_eq!(run(&[1, 2, 3, 4, 0, 2, 1], &[Op::Rev, Op::Nop]), [1, 2, 3, 4]);
+
+    // rev 2 forward, stack is rotated to [4, 3, 2, 1], pop twice, return to nop
+    assert_eq!(run(&[1, 2, 3, 4, 2, 0], &[Op::Rev, Op::Pop, Op::Pop, Op::Nop]), [3, 4]);
+
+    // Leaves the program in reverse by jumping over the rev.
+    assert_eq!(run(&[0, 1, 2, 3, 2, 0], &[Op::Nop, Op::Rev, Op::Goto, Op::Nop, Op::Nop]), [3, 2, 1, 0]);
+    // Leaves the program in reverse; jumps onto another jump directly
+    assert_eq!(run(&[0, 1, 2, 3, 1, 0], &[Op::Nop, Op::Rev, Op::Goto, Op::Nop]), [3, 2, 1, 0]);
+
+    // Two revs nested
+    // -1 gets popped
+    assert_eq!(run(&[-1, 0, 2, -1, 10, 11, 12, -1, -1, 5, 0], &[Op::Rev, Op::Pop, Op::Pop, Op::Pop, Op::Rev, Op::Pop, Op::Nop]), [10, 11, 12]);
+    // Rev returning directly onto the outer rev
+    assert_eq!(run(&[-1, 0, 2, 10, 11, 12, -1, -1, 4, 0, -1], &[Op::Pop, Op::Rev, Op::Pop, Op::Pop, Op::Rev, Op::Pop, Op::Nop]), [10, 11, 12]);
 }
 
 #[test]

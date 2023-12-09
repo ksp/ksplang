@@ -46,12 +46,20 @@ pub enum OperationError {
     NegativeInstructionIndex { index: i64 },
     #[error("Value used as instruction index is too large: {index}")]
     InstructionOutOfRange { index: i64 },
+    #[error("Return instruction index of a `rev` instruction is too large: {index}")]
+    RevReturnInstructionOutOfRange { index: i64 },
     #[error("Value is not a valid instruction id: {id}")]
     InvalidInstructionId { id: i64 },
     #[error("Negative praise count: {praises}. You should praise KSP more!")]
     NegativePraiseCount { praises: i64 },
     #[error("Qeq tried to solve 0 = 0. Too many solutions, giving up.")]
     QeqZeroEqualsZero,
+    #[error("Argument `a` must be non-negative, it was {value}")]
+    ArgumentAMustBeNonNegative { value: i64 },
+    #[error("Argument `b` must be non-negative, it was {value}")]
+    ArgumentBMustBeNonNegative { value: i64 },
+    #[error("Argument `c` must be non-negative, it was {value}")]
+    ArgumentCMustBeNonNegative { value: i64 },
 }
 
 enum Effect {
@@ -61,6 +69,50 @@ enum Effect {
     AddInstructionPointer(i64),
     Timeout,
     RunSubprogramAndAppendResult(Vec<Op>),
+    TemporaryReverse(i64),
+}
+
+enum QuadraticEquationResult {
+    None,
+    One(i64),
+    Two(i64, i64),
+}
+
+/// Solve the quadratic equation ax^2+bx+c=0 and return
+/// integer results sorted from smallest to largest.
+fn solve_quadratic_equation(
+    a: i128,
+    b: i128,
+    c: i128,
+) -> Result<QuadraticEquationResult, OperationError> {
+    let discriminant = b * b - 4 * a * c;
+    if discriminant < 0 {
+        return Ok(QuadraticEquationResult::None);
+    }
+
+    let discriminant_sqrt = discriminant.sqrt();
+    if discriminant_sqrt * discriminant_sqrt != discriminant {
+        return Ok(QuadraticEquationResult::None);
+    }
+
+    let mut result1 = None;
+    let mut result2 = None;
+
+    if (-b - discriminant_sqrt) % (2 * a) == 0 {
+        let result = (-b - discriminant_sqrt) / (2 * a);
+        result1 = Some(result.try_into().map_err(|_| OperationError::IntegerOverflow)?);
+    }
+    if discriminant != 0 && (-b + discriminant_sqrt) % (2 * a) == 0 {
+        let result = (-b + discriminant_sqrt) / (2 * a);
+        result2 = Some(result.try_into().map_err(|_| OperationError::IntegerOverflow)?);
+    }
+
+    match (result1, result2) {
+        (Some(result1), Some(result2)) => Ok(QuadraticEquationResult::Two(result1, result2)),
+        (Some(result1), None) => Ok(QuadraticEquationResult::One(result1)),
+        (None, Some(result2)) => Ok(QuadraticEquationResult::One(result2)),
+        (None, None) => Ok(QuadraticEquationResult::None),
+    }
 }
 
 impl<'a> State<'a> {
@@ -536,30 +588,21 @@ impl<'a> State<'a> {
                 // If a is zero, this is a linear equation and we need to calculate it differently.
                 if a == 0 {
                     if -c % b == 0 {
-                        let result = (-c / b).try_into().map_err(|_| OperationError::IntegerOverflow)?;
+                        let result =
+                            (-c / b).try_into().map_err(|_| OperationError::IntegerOverflow)?;
                         self.push(result)?;
                     }
                     return Ok(Effect::None);
                 }
 
                 // Solve the quadratic equation ax^2+bx+c=0 and put integer results on the stack.
-                let discriminant = b * b - 4 * a * c;
-                if discriminant < 0 {
-                    return Ok(Effect::None);
-                }
-
-                let discriminant_sqrt = discriminant.sqrt();
-                if discriminant_sqrt * discriminant_sqrt != discriminant {
-                    return Ok(Effect::None);
-                }
-
-                if (-b - discriminant_sqrt) % (2 * a) == 0 {
-                    let result = (-b - discriminant_sqrt) / (2 * a);
-                    self.push(result.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
-                }
-                if discriminant != 0 && (-b + discriminant_sqrt) % (2 * a) == 0 {
-                    let result = (-b + discriminant_sqrt) / (2 * a);
-                    self.push(result.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
+                match solve_quadratic_equation(a, b, c)? {
+                    QuadraticEquationResult::None => {}
+                    QuadraticEquationResult::One(result) => self.push(result)?,
+                    QuadraticEquationResult::Two(result1, result2) => {
+                        self.push(result1)?;
+                        self.push(result2)?;
+                    }
                 }
             }
             Op::Funkcia => {
@@ -684,10 +727,36 @@ impl<'a> State<'a> {
             }
             Op::Jump => {
                 let i = self.peek()?;
-                return Ok(Effect::AddInstructionPointer(i));
+                return Ok(Effect::AddInstructionPointer(i + 1));
             }
             Op::Rev => {
-                todo!()
+                let a = self.pop()?;
+                if a < 0 {
+                    return Err(OperationError::ArgumentAMustBeNonNegative { value: a });
+                }
+                let b = self.pop()?;
+                if b < 0 {
+                    return Err(OperationError::ArgumentBMustBeNonNegative { value: b });
+                }
+
+                let offset = if a == 0 {
+                    b
+                } else {
+                    let c = self.pop()?;
+                    if c < 0 {
+                        return Err(OperationError::ArgumentCMustBeNonNegative { value: c });
+                    }
+                    match solve_quadratic_equation(a as i128, b as i128, c as i128)? {
+                        QuadraticEquationResult::None => b,
+                        QuadraticEquationResult::One(x) => x,
+                        QuadraticEquationResult::Two(smaller, larger) => {
+                            assert!(smaller < larger);
+                            larger
+                        }
+                    }
+                };
+
+                return Ok(Effect::TemporaryReverse(offset));
             }
             Op::Sleep => return Ok(Effect::Timeout),
             Op::Deez => {
@@ -785,9 +854,30 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
 
     let mut ops = ops.to_vec();
 
+    let mut reverse_undo_stack = Vec::new();
+
     let mut instructions_run = 0u64;
-    let mut ip = 0;
+    let mut ip = 0usize;
+    let mut reversed = false;
+
+    enum IPChange {
+        Increment,
+        Set(usize),
+        Add(i64),
+    }
+
     loop {
+        while let Some((reverse_ip, return_ip)) = reverse_undo_stack.last() {
+            if *reverse_ip == ip {
+                reversed = !reversed;
+                ip = *return_ip;
+                state.stack.reverse();
+                reverse_undo_stack.pop();
+            } else {
+                break
+            }
+        }
+
         if let Some(&op) = ops.get(ip) {
             let build_err = |error| RunError::InstructionFailed {
                 instruction: op,
@@ -795,38 +885,18 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
                 instruction_counter: instructions_run,
                 error,
             };
-            match state.apply(op) {
-                Err(error) => return Err(build_err(error)),
-                Ok(Effect::None) => ip += 1,
-                Ok(Effect::SetInstructionPointer(new_ip)) => {
-                    if new_ip >= ops.len() {
-                        return Err(build_err(OperationError::InstructionOutOfRange {
-                            index: new_ip as i64,
-                        }));
-                    }
-                    ip = new_ip;
-                }
-                Ok(Effect::AddInstructionPointer(offset)) => {
-                    let new_ip = ip as i64 + 1 + offset;
 
-                    if new_ip < 0 || new_ip >= ops.len() as i64 {
-                        return Err(build_err(OperationError::InstructionOutOfRange {
-                            index: new_ip,
-                        }));
-                    }
-                    ip = new_ip as usize;
-                }
+            let (ip_change, instruction_counter_change) = match state.apply(op) {
+                Err(error) => return Err(build_err(error)),
+                Ok(Effect::None) => (IPChange::Increment, 1),
+                Ok(Effect::SetInstructionPointer(new_ip)) => (IPChange::Set(new_ip), 1),
+                Ok(Effect::AddInstructionPointer(offset)) => (IPChange::Add(offset), 1),
                 Ok(Effect::SaveAndSetInstructionPointer(new_ip)) => {
-                    if new_ip >= ops.len() {
-                        return Err(build_err(OperationError::InstructionOutOfRange {
-                            index: new_ip as i64,
-                        }));
-                    }
-                    let saved_ip = (ip as i64)
-                        .checked_add(1)
-                        .ok_or(build_err(OperationError::IntegerOverflow))?;
+                    // This should never overflow for any realistically
+                    // possible amount of instructions.
+                    let saved_ip = ip as i64 + if reversed { -1 } else { 1 };
                     state.push(saved_ip).map_err(build_err)?;
-                    ip = new_ip;
+                    (IPChange::Set(new_ip), 1)
                 }
                 Ok(Effect::Timeout) => {
                     return Err(RunError::RunTooLong { instruction_counter: instructions_run + 1 });
@@ -847,9 +917,75 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
                             .ok_or(build_err(OperationError::InvalidInstructionId { id: value }))?;
                         ops.push(op);
                     }
-                    instructions_run += result.instruction_counter;
-                    ip += 1;
+                    (IPChange::Increment, 1 + result.instruction_counter)
                 }
+                Ok(Effect::TemporaryReverse(offset)) => {
+                    let return_ip = if reversed {
+                        (ip as i64)
+                            .checked_sub(offset + 1)
+                            .ok_or(build_err(OperationError::IntegerOverflow))?
+                    } else {
+                        (ip as i64)
+                            .checked_add(offset + 1)
+                            .ok_or(build_err(OperationError::IntegerOverflow))?
+                    };
+
+                    if return_ip < 0 || return_ip >= ops.len() as i64 {
+                        return Err(build_err(OperationError::InstructionOutOfRange {
+                            index: return_ip,
+                        }));
+                    }
+
+                    reversed = !reversed;
+                    reverse_undo_stack.push((ip, return_ip as usize));
+                    state.stack.reverse();
+                    (IPChange::Add(-offset), 1)
+                }
+            };
+
+            match ip_change {
+                IPChange::Increment => {
+                    if reversed {
+                        if ip == 0 {
+                            ip = usize::MAX;
+                        } else {
+                            ip -= 1;
+                        }
+                    } else {
+                        ip += 1;
+                    }
+                }
+                IPChange::Set(new_ip) => {
+                    if new_ip >= ops.len() {
+                        return Err(build_err(OperationError::InstructionOutOfRange {
+                            index: new_ip as i64,
+                        }));
+                    }
+                    ip = new_ip;
+                }
+                IPChange::Add(offset) => {
+                    let new_ip = if reversed {
+                        (ip as i64)
+                            .checked_sub(offset)
+                            .ok_or(build_err(OperationError::IntegerOverflow))?
+                    } else {
+                        (ip as i64)
+                            .checked_add(offset)
+                            .ok_or(build_err(OperationError::IntegerOverflow))?
+                    };
+
+                    if new_ip < 0 || new_ip >= ops.len() as i64 {
+                        return Err(build_err(OperationError::InstructionOutOfRange {
+                            index: new_ip,
+                        }));
+                    }
+                    ip = new_ip as usize;
+                }
+            }
+
+            instructions_run += instruction_counter_change;
+            if instructions_run >= options.max_op_count {
+                return Err(RunError::RunTooLong { instruction_counter: instructions_run });
             }
 
             // Sanity check; instructions should be doing their own checking.
@@ -858,11 +994,6 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
             }
         } else {
             break;
-        }
-
-        instructions_run += 1;
-        if instructions_run >= options.max_op_count {
-            return Err(RunError::RunTooLong { instruction_counter: instructions_run });
         }
     }
 
