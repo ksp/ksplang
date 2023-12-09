@@ -158,11 +158,6 @@ impl<'a> State<'a> {
         self.stack.get(index as usize).copied().ok_or(OperationError::PeekFailed { index })
     }
 
-    /// Indexed from the bottom of the stack
-    fn get(&self, index: usize) -> Option<i64> {
-        self.stack.get(index).copied()
-    }
-
     fn apply(&mut self, op: Op) -> Result<Effect, OperationError> {
         match op {
             Op::Nop => {}
