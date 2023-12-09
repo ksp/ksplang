@@ -103,7 +103,7 @@ impl Display for Op {
             Op::LenSum => "lensum",
             Op::Bitshift => "bitshift",
             Op::And => "And",
-            Op::Sum => "Σ",
+            Op::Sum => "sum",
             Op::Gcd2 => "gcd",
             Op::GcdN => "d",
             Op::Qeq => "qeq",
