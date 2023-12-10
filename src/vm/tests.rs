@@ -574,6 +574,19 @@ fn test_qeq() {
     assert_eq!(run_op(&[3, 2, 0], Op::Qeq), []);
     // constant = 0 -> x is not integer
     assert_eq!(run_op(&[4, 0, 0], Op::Qeq), []);
+    // MIN x + MIN = 0 -> x = -1
+    assert_eq!(run_op(&[i64::MIN, i64::MIN, 0], Op::Qeq), [-1]);
+
+    // Internal overflow:
+    // highest possible discriminant
+    assert_eq!(run_op(&[i64::MAX, i64::MIN, i64::MIN], Op::Qeq), []);
+    // lowest possible discriminant
+    assert_eq!(run_op(&[i64::MIN, 0, i64::MIN], Op::Qeq), []);
+    // discriminant overflows i128 but equation has two small integer solutions
+    let multiplier = i64::MIN / -2;
+    assert_eq!(run_op(&[-2 * multiplier, -1 * multiplier, 1 * multiplier], Op::Qeq), [-1, 2]);
+    // discriminant overflows, one integer solution
+    assert_eq!(run_op(&[i64::MIN, -1, i64::MAX], Op::Qeq), [-1]);
 }
 
 #[test]
