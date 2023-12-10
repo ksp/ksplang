@@ -81,37 +81,89 @@ enum QuadraticEquationResult {
 /// Solve the quadratic equation ax^2+bx+c=0 and return
 /// integer results sorted from smallest to largest.
 fn solve_quadratic_equation(
-    a: i128,
-    b: i128,
-    c: i128,
+    a: i64,
+    b: i64,
+    c: i64,
 ) -> Result<QuadraticEquationResult, OperationError> {
-    let discriminant = b * b - 4 * a * c;
-    if discriminant < 0 {
-        return Ok(QuadraticEquationResult::None);
+    let a = a as i128;
+    let b = b as i128;
+    let c = c as i128;
+
+    fn compute_discriminant(a: i128, b: i128, c: i128) -> Option<i128> {
+        Some(b.checked_mul(b)?.checked_sub(a.checked_mul(c)?.checked_mul(4)?)?)
     }
 
-    let discriminant_sqrt = discriminant.sqrt();
-    if discriminant_sqrt * discriminant_sqrt != discriminant {
-        return Ok(QuadraticEquationResult::None);
-    }
+    let results: [Option<i64>; 2] = match compute_discriminant(a, b, c) {
+        Some(discriminant) => {
+            if discriminant < 0 {
+                return Ok(QuadraticEquationResult::None);
+            }
 
-    let mut result1 = None;
-    let mut result2 = None;
+            let discriminant_sqrt = discriminant.sqrt();
+            if discriminant_sqrt * discriminant_sqrt != discriminant {
+                return Ok(QuadraticEquationResult::None);
+            }
 
-    if (-b - discriminant_sqrt) % (2 * a) == 0 {
-        let result = (-b - discriminant_sqrt) / (2 * a);
-        result1 = Some(result.try_into().map_err(|_| OperationError::IntegerOverflow)?);
-    }
-    if discriminant != 0 && (-b + discriminant_sqrt) % (2 * a) == 0 {
-        let result = (-b + discriminant_sqrt) / (2 * a);
-        result2 = Some(result.try_into().map_err(|_| OperationError::IntegerOverflow)?);
-    }
+            let mut result1 = None;
+            let mut result2 = None;
 
-    match (result1, result2) {
-        (Some(result1), Some(result2)) => Ok(QuadraticEquationResult::Two(result1, result2)),
-        (Some(result1), None) => Ok(QuadraticEquationResult::One(result1)),
-        (None, Some(result2)) => Ok(QuadraticEquationResult::One(result2)),
-        (None, None) => Ok(QuadraticEquationResult::None),
+            if (-b - discriminant_sqrt) % (2 * a) == 0 {
+                let result = (-b - discriminant_sqrt) / (2 * a);
+                result1 = Some(result.try_into().map_err(|_| OperationError::IntegerOverflow)?);
+            }
+            if discriminant != 0 && (-b + discriminant_sqrt) % (2 * a) == 0 {
+                let result = (-b + discriminant_sqrt) / (2 * a);
+                result2 = Some(result.try_into().map_err(|_| OperationError::IntegerOverflow)?);
+            }
+            [result1, result2]
+        }
+        None => {
+            // discriminant overflow
+
+            // b and c fit into i64, so we have:
+            // c.abs() <= (1 << 63)
+            // b.abs() <= (1 << 63)
+            // b * b <= (1 << 126)
+            //
+            // discriminant = b * b - 4 * a * c
+            //              <= b * b + 4 * a.abs() * c.abs()
+            //              <= (1 << 126) + 4 * a.abs() * (1 << 63)
+            //              = (1 << 126) + a.abs() * (1 << 65)
+            //
+            // discriminant overflowed, so if it's nonnegative, we have:
+            // discriminant >= (1 << 127)
+            //
+            // a.abs() * (1 << 65) >= (1 << 127) - (1 << 126) = (1 << 126)
+            // a.abs() >= (1 << 61)
+            //
+            // b.abs() / (2 * a.abs()) <= (1 << 63) / (2 * (1 << 61)) = 2
+            //
+            // discriminant / (2 * a.abs())^2 <= (b * b + 4 * a.abs() * c.abs()) / (2 * a.abs())^2
+            //                                = (b.abs() / (2 * a.abs()))^2 + c.abs() / a.abs()
+            //                                <= 2^2 + (1 << 63) / (1 << 61)
+            //                                = 8
+            //
+            // result.abs() <= (b.abs() + discriminant.sqrt()) / (2 * a.abs())
+            //              = b.abs() / (2 * a.abs()) + discriminant.sqrt() / (2 * a.abs())
+            //              = b.abs() / (2 * a.abs()) + (discriminant / (2 * a.abs())^2).sqrt()
+            //              <= 2 + 8.sqrt()
+            //              < 4.9
+            //
+            // This means that all roots are in the interval (-4.9, 4.9), we can try them all
+
+            let mut roots = (-4..5).filter(|&x| {
+                let x = x as i128;
+                a * x * x + b * x + c == 0
+            });
+            [roots.next(), roots.next()]
+        }
+    };
+
+    match results {
+        [Some(result1), Some(result2)] => Ok(QuadraticEquationResult::Two(result1, result2)),
+        [Some(result1), None] => Ok(QuadraticEquationResult::One(result1)),
+        [None, Some(result2)] => Ok(QuadraticEquationResult::One(result2)),
+        [None, None] => Ok(QuadraticEquationResult::None),
     }
 }
 
@@ -566,9 +618,9 @@ impl<'a> State<'a> {
                 self.push(result.try_into().map_err(|_| OperationError::IntegerOverflow)?)?;
             }
             Op::Qeq => {
-                let a = self.pop()? as i128;
-                let b = self.pop()? as i128;
-                let c = self.pop()? as i128;
+                let a = self.pop()?;
+                let b = self.pop()?;
+                let c = self.pop()?;
 
                 // This is a c == 0 equation.
                 if a == 0 && b == 0 {
@@ -582,6 +634,9 @@ impl<'a> State<'a> {
                 }
                 // If a is zero, this is a linear equation and we need to calculate it differently.
                 if a == 0 {
+                    let b = b as i128;
+                    let c = c as i128;
+
                     if -c % b == 0 {
                         let result =
                             (-c / b).try_into().map_err(|_| OperationError::IntegerOverflow)?;
@@ -741,7 +796,7 @@ impl<'a> State<'a> {
                     if c < 0 {
                         return Err(OperationError::ArgumentCMustBeNonNegative { value: c });
                     }
-                    match solve_quadratic_equation(a as i128, b as i128, c as i128)? {
+                    match solve_quadratic_equation(a, b, c)? {
                         QuadraticEquationResult::None => b,
                         QuadraticEquationResult::One(x) => x,
                         QuadraticEquationResult::Two(smaller, larger) => {
