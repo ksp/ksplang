@@ -890,6 +890,8 @@ pub enum RunError {
         /// The number of instructions which have been run
         instruction_counter: u64,
     },
+    #[error("The program ran for too long.")]
+    Timeout,
 }
 
 #[derive(Debug, Clone)]
