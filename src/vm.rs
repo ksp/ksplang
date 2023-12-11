@@ -951,7 +951,7 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
                     (IPChange::Set(new_ip), 1)
                 }
                 Ok(Effect::Timeout) => {
-                    return Err(RunError::RunTooLong { instruction_counter: instructions_run + 1 });
+                    return Err(RunError::Timeout);
                 }
                 Ok(Effect::RunSubprogramAndAppendResult(subprogram_ops)) => {
                     let remaining_ops = options.max_op_count - instructions_run;
