@@ -845,6 +845,7 @@ pub struct VMOptions<'a> {
     max_stack_size: usize,
     pi_digits: &'a [i8],
     max_op_count: u64,
+    stop_after: u64,
 }
 
 impl<'a> VMOptions<'a> {
@@ -853,8 +854,9 @@ impl<'a> VMOptions<'a> {
         max_stack_size: usize,
         pi_digits: &'a [i8],
         max_op_count: u64,
+        stop_after: u64,
     ) -> Self {
-        Self { initial_stack: stack, max_stack_size, pi_digits, max_op_count }
+        Self { initial_stack: stack, max_stack_size, pi_digits, max_op_count, stop_after }
     }
 }
 
@@ -865,6 +867,7 @@ impl<'a> Default for VMOptions<'a> {
             max_stack_size: usize::MAX,
             pi_digits: &[],
             max_op_count: u64::MAX,
+            stop_after: u64::MAX,
         }
     }
 }
@@ -898,6 +901,8 @@ pub enum RunError {
 pub struct RunResult {
     pub stack: Vec<i64>,
     pub instruction_counter: u64,
+    pub instruction_pointer: usize,
+    pub reversed: bool
 }
 
 pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
@@ -928,6 +933,10 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
             } else {
                 break
             }
+        }
+
+        if instructions_run >= options.stop_after {
+            return Ok(RunResult { stack: state.stack, instruction_pointer: ip, instruction_counter: instructions_run, reversed });
         }
 
         if let Some(&op) = ops.get(ip) {
@@ -962,6 +971,7 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
                             max_stack_size: options.max_stack_size,
                             pi_digits: options.pi_digits,
                             max_op_count: remaining_ops,
+                            stop_after: options.stop_after - instructions_run,
                         },
                     )?;
                     for value in result.stack {
@@ -1049,5 +1059,5 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
         }
     }
 
-    Ok(RunResult { stack: state.stack, instruction_counter: instructions_run })
+    Ok(RunResult { stack: state.stack, instruction_pointer: ip, instruction_counter: instructions_run, reversed })
 }
