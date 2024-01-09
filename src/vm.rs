@@ -660,6 +660,10 @@ impl<'a> State<'a> {
 
                 let a = self.pop()?;
                 let b = self.pop()?;
+                if a == b || (a < 2 && b < 2) {
+                    self.push(0)?;
+                    return Ok(Effect::None);
+                }
 
                 fn factorize(mut a: i64) -> HashMap<i64, usize> {
                     let mut counts_by_divisor = HashMap::new();
