@@ -7,11 +7,27 @@ use crate::ops::Op;
 #[cfg(test)]
 mod tests;
 
+#[derive(Default)]
+pub struct NoStats {}
+
+impl StateStats for NoStats {
+    #[inline(always)]
+    fn push(&self, _: i64) {}
+    #[inline(always)]
+    fn pop(&self) {}
+}
+
+pub trait StateStats : Default {
+    fn push(&self, value: i64);
+    fn pop(&self);
+}
+
 #[derive(Clone, Debug)]
-struct State<'a> {
+struct State<'a, TStats: StateStats> {
     stack: Vec<i64>,
     max_stack_size: usize,
     pi_digits: &'a [i8],
+    stats: TStats,
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -167,9 +183,9 @@ fn solve_quadratic_equation(
     }
 }
 
-impl<'a> State<'a> {
+impl<'a, TStats: StateStats> State<'a, TStats> {
     fn new(max_stack_size: usize, pi_digits: &'a [i8]) -> Self {
-        State { stack: Vec::new(), max_stack_size, pi_digits }
+        State { stack: Vec::new(), max_stack_size, pi_digits, stats: Default::default() }
     }
 
     fn clear(&mut self) {
@@ -177,6 +193,7 @@ impl<'a> State<'a> {
     }
 
     fn pop(&mut self) -> Result<i64, OperationError> {
+        self.stats.pop();
         self.stack.pop().ok_or(OperationError::PopFailed)
     }
 
@@ -186,6 +203,7 @@ impl<'a> State<'a> {
         }
 
         self.stack.push(value);
+        self.stats.push(value);
         Ok(())
     }
 
@@ -286,8 +304,8 @@ impl<'a> State<'a> {
                     self.push(a)?;
                 } else {
                     self.clear();
-                    while self.stack.len() < self.max_stack_size {
-                        self.stack.push(i64::MIN);
+                    while self.len() < self.max_stack_size {
+                        self.push(i64::MIN)?;
                     }
                 }
             }
@@ -902,15 +920,20 @@ pub enum RunError {
 }
 
 #[derive(Debug, Clone)]
-pub struct RunResult {
+pub struct RunResult<T: StateStats> {
     pub stack: Vec<i64>,
     pub instruction_counter: u64,
     pub instruction_pointer: usize,
-    pub reversed: bool
+    pub reversed: bool,
+    pub stats: T
 }
 
-pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
-    let mut state = State::new(options.max_stack_size, options.pi_digits);
+pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult<NoStats>, RunError> {
+    run_with_stats::<NoStats>(ops, options)
+}
+
+pub fn run_with_stats<T: StateStats>(ops: &[Op], options: VMOptions) -> Result<RunResult<T>, RunError> {
+    let mut state: State<T> = State::new(options.max_stack_size, options.pi_digits);
     state.stack = options.initial_stack.to_vec();
 
     let mut ops = ops.to_vec();
@@ -935,12 +958,18 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
                 state.stack.reverse();
                 reverse_undo_stack.pop();
             } else {
-                break
+                break;
             }
         }
 
         if instructions_run >= options.stop_after {
-            return Ok(RunResult { stack: state.stack, instruction_pointer: ip, instruction_counter: instructions_run, reversed });
+            return Ok(RunResult {
+                stack: state.stack,
+                instruction_pointer: ip,
+                instruction_counter: instructions_run,
+                reversed,
+                stats: state.stats,
+            });
         }
 
         if let Some(&op) = ops.get(ip) {
@@ -1063,5 +1092,11 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult, RunError> {
         }
     }
 
-    Ok(RunResult { stack: state.stack, instruction_pointer: ip, instruction_counter: instructions_run, reversed })
+    Ok(RunResult {
+        stack: state.stack,
+        instruction_pointer: ip,
+        instruction_counter: instructions_run,
+        reversed,
+        stats: state.stats
+    })
 }
