@@ -12,14 +12,14 @@ pub struct NoStats {}
 
 impl StateStats for NoStats {
     #[inline(always)]
-    fn push(&self, _: i64) {}
+    fn push(&mut self, _: i64) {}
     #[inline(always)]
-    fn pop(&self) {}
+    fn pop(&mut self) {}
 }
 
 pub trait StateStats : Default {
-    fn push(&self, value: i64);
-    fn pop(&self);
+    fn push(&mut self, value: i64);
+    fn pop(&mut self);
 }
 
 #[derive(Clone, Debug)]
