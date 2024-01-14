@@ -17,7 +17,7 @@ impl StateStats for NoStats {
     fn pop(&mut self) {}
 }
 
-pub trait StateStats : Default {
+pub trait StateStats: Default {
     fn push(&mut self, value: i64);
     fn pop(&mut self);
 }
@@ -502,12 +502,24 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
                     1
                 } else {
                     let mut result = num;
-                    for _ in 1..iters {
-                        result = num
-                            .checked_pow(
-                                result.try_into().map_err(|_| OperationError::IntegerOverflow)?,
-                            )
-                            .ok_or(OperationError::IntegerOverflow)?;
+                    if num == 0 {
+                        if iters == 1 {
+                            result = 0;
+                        } else {
+                            result = 1;
+                        }
+                    } else if num == 1 {
+                        result = 1;
+                    } else {
+                        for _ in 1..iters {
+                            result = num
+                                .checked_pow(
+                                    result
+                                        .try_into()
+                                        .map_err(|_| OperationError::IntegerOverflow)?,
+                                )
+                                .ok_or(OperationError::IntegerOverflow)?;
+                        }
                     }
                     result
                 };
@@ -523,12 +535,24 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
                     1
                 } else {
                     let mut result = num;
-                    for _ in 1..iters {
-                        result = num
-                            .checked_pow(
-                                result.try_into().map_err(|_| OperationError::IntegerOverflow)?,
-                            )
-                            .ok_or(OperationError::IntegerOverflow)?;
+                    if num == 0 {
+                        if iters == 1 {
+                            result = 0;
+                        } else {
+                            result = 1;
+                        }
+                    } else if num == 1 {
+                        result = 1;
+                    } else {
+                        for _ in 1..iters {
+                            result = num
+                                .checked_pow(
+                                    result
+                                        .try_into()
+                                        .map_err(|_| OperationError::IntegerOverflow)?,
+                                )
+                                .ok_or(OperationError::IntegerOverflow)?;
+                        }
                     }
                     result
                 };
@@ -925,14 +949,17 @@ pub struct RunResult<T: StateStats> {
     pub instruction_counter: u64,
     pub instruction_pointer: usize,
     pub reversed: bool,
-    pub stats: T
+    pub stats: T,
 }
 
 pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult<NoStats>, RunError> {
     run_with_stats::<NoStats>(ops, options)
 }
 
-pub fn run_with_stats<T: StateStats>(ops: &[Op], options: VMOptions) -> Result<RunResult<T>, RunError> {
+pub fn run_with_stats<T: StateStats>(
+    ops: &[Op],
+    options: VMOptions,
+) -> Result<RunResult<T>, RunError> {
     let mut state: State<T> = State::new(options.max_stack_size, options.pi_digits);
     state.stack = options.initial_stack.to_vec();
 
@@ -1097,6 +1124,6 @@ pub fn run_with_stats<T: StateStats>(ops: &[Op], options: VMOptions) -> Result<R
         instruction_pointer: ip,
         instruction_counter: instructions_run,
         reversed,
-        stats: state.stats
+        stats: state.stats,
     })
 }
