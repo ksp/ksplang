@@ -1,5 +1,5 @@
-use crate::vm::RunError::InstructionFailed;
 use super::*;
+use crate::vm::RunError::InstructionFailed;
 
 const PI_TEST_VALUES: [i8; 42] = [
     3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3, 2, 3, 8, 4, 6, 2, 6, 4, 3, 3, 8, 3, 2, 7, 9, 5,
@@ -7,11 +7,14 @@ const PI_TEST_VALUES: [i8; 42] = [
 ];
 
 fn run(initial_stack: &[i64], ops: &[Op]) -> Vec<i64> {
-    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX, u64::MAX)).unwrap().stack
+    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX, u64::MAX))
+        .unwrap()
+        .stack
 }
 
 fn run_is_ok(initial_stack: &[i64], ops: &[Op]) -> bool {
-    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX, u64::MAX)).is_ok()
+    super::run(ops, VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX, u64::MAX))
+        .is_ok()
 }
 
 fn run_op(initial_stack: &[i64], op: Op) -> Vec<i64> {
@@ -43,20 +46,32 @@ fn test_praise() {
         initial_stack: &[i64],
         stack_size: usize,
     ) -> Result<Vec<i64>, RunError> {
-        super::run(&[Op::Praise], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX, u64::MAX))
-            .map(|x| x.stack)
+        super::run(
+            &[Op::Praise],
+            VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX, u64::MAX),
+        )
+        .map(|x| x.stack)
     }
 
     // 1 -> 11 chars
     assert_eq!(run_praise_with_stack_size(&[1], 11), Ok(i_like_ksp.repeat(1)));
-    assert!(matches!(run_praise_with_stack_size(&[1], 10), Err(InstructionFailed { error: OperationError::PushFailed, .. })));
+    assert!(matches!(
+        run_praise_with_stack_size(&[1], 10),
+        Err(InstructionFailed { error: OperationError::PushFailed, .. })
+    ));
 
     // 9091 -> 100001 chars
     assert_eq!(run_praise_with_stack_size(&[9091], 100001), Ok(i_like_ksp.repeat(9091)));
-    assert!(matches!(run_praise_with_stack_size(&[9091], 100000), Err(InstructionFailed { error: OperationError::PushFailed, .. })));
+    assert!(matches!(
+        run_praise_with_stack_size(&[9091], 100000),
+        Err(InstructionFailed { error: OperationError::PushFailed, .. })
+    ));
 
     // This should fail in reasonable time.
-    assert!(matches!(run_praise_with_stack_size(&[i64::MAX], 10), Err(InstructionFailed { error: OperationError::PushFailed, .. })));
+    assert!(matches!(
+        run_praise_with_stack_size(&[i64::MAX], 10),
+        Err(InstructionFailed { error: OperationError::PushFailed, .. })
+    ));
 }
 
 #[test]
@@ -110,7 +125,12 @@ fn test_lroll() {
 #[test]
 fn test_ff() {
     fn run_ff(initial_stack: &[i64], stack_size: usize) -> Vec<i64> {
-        super::run(&[Op::FF], VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX, u64::MAX)).unwrap().stack
+        super::run(
+            &[Op::FF],
+            VMOptions::new(&initial_stack, stack_size, &PI_TEST_VALUES, u64::MAX, u64::MAX),
+        )
+        .unwrap()
+        .stack
     }
 
     assert!(!run_op_is_ok(&[], Op::FF));
@@ -386,7 +406,10 @@ fn test_median() {
     assert_eq!(run_op(&[4, 2], Op::Median), [4, 2, 3]);
     assert_eq!(run_op(&[1, 2, 3, 4, 5], Op::Median), [1, 2, 3, 4, 5, 3]);
     assert_eq!(run_op(&[4, 3, 2, 1, 5], Op::Median), [4, 3, 2, 1, 5, 3]);
-    assert_eq!(run_op(&[i64::MAX - 4, i64::MAX - 5, i64::MAX, 4], Op::Median), [i64::MAX - 4, i64::MAX - 5, i64::MAX, 4, i64::MAX - 5]);
+    assert_eq!(
+        run_op(&[i64::MAX - 4, i64::MAX - 5, i64::MAX, 4], Op::Median),
+        [i64::MAX - 4, i64::MAX - 5, i64::MAX, 4, i64::MAX - 5]
+    );
 }
 
 #[test]
@@ -450,7 +473,6 @@ fn test_bitshift() {
     assert_eq!(run_op(&[0, 2], Op::Bitshift), [0]);
     assert_eq!(run_op(&[1, 2], Op::Bitshift), [4]);
     assert_eq!(run_op(&[i64::MIN, 2], Op::Bitshift), [0]);
-
 
     assert_eq!(run_op(&[0, 64], Op::Bitshift), [0]);
     assert_eq!(run_op(&[-1, 64], Op::Bitshift), [0]);
@@ -551,7 +573,7 @@ fn test_qeq() {
     assert!(!run_op_is_ok(&[1, 2], Op::Qeq));
 
     // Integer overflow (results are -1, 2^63)
-    assert!(!run_op_is_ok(&[i64::MIN, i64::MIN+1, 1], Op::Qeq));
+    assert!(!run_op_is_ok(&[i64::MIN, i64::MIN + 1, 1], Op::Qeq));
     // Integer overflow (linear equation; result is 2^63)
     assert!(!run_op_is_ok(&[i64::MIN, 1, 0], Op::Qeq));
     // Too many results (all integers are a valid solution of 0 = 0)
@@ -664,9 +686,15 @@ fn test_call() {
     assert!(!run_is_ok(&[5], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]));
     // Negative index
     assert!(!run_is_ok(&[-1], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]));
-    assert_eq!(run(&[1, 2, 3, 4], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]), [1, 2, 3, 4, 1]);
+    assert_eq!(
+        run(&[1, 2, 3, 4], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]),
+        [1, 2, 3, 4, 1]
+    );
     assert_eq!(run(&[1, 2, 3], &[Op::Nop, Op::Call, Op::Nop, Op::Nop, Op::Nop]), [1, 2, 3, 2]);
-    assert_eq!(run(&[1, 2, 3], &[Op::Nop, Op::Nop, Op::Nop, Op::Nop, Op::Call, Op::Nop]), [1, 2, 3, 5, 5]);
+    assert_eq!(
+        run(&[1, 2, 3], &[Op::Nop, Op::Nop, Op::Nop, Op::Nop, Op::Call, Op::Nop]),
+        [1, 2, 3, 5, 5]
+    );
 }
 
 #[test]
@@ -692,7 +720,10 @@ fn test_jump() {
     assert!(!run_is_ok(&[-2], &[Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
 
     // Pop, pop, jump back to start, two more pops, then jump to the last pop.
-    assert_eq!(run(&[3, 0, -3, 0, 0], &[Op::Pop, Op::Pop, Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), []);
+    assert_eq!(
+        run(&[3, 0, -3, 0, 0], &[Op::Pop, Op::Pop, Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]),
+        []
+    );
 }
 
 #[test]
@@ -721,15 +752,30 @@ fn test_rev() {
     assert_eq!(run(&[1, 2, 3, 4, 2, 0], &[Op::Rev, Op::Pop, Op::Pop, Op::Nop]), [3, 4]);
 
     // Leaves the program in reverse by jumping over the rev.
-    assert_eq!(run(&[0, 1, 2, 3, 2, 0], &[Op::Nop, Op::Rev, Op::Goto, Op::Nop, Op::Nop]), [3, 2, 1, 0]);
+    assert_eq!(
+        run(&[0, 1, 2, 3, 2, 0], &[Op::Nop, Op::Rev, Op::Goto, Op::Nop, Op::Nop]),
+        [3, 2, 1, 0]
+    );
     // Leaves the program in reverse; jumps onto another jump directly
     assert_eq!(run(&[0, 1, 2, 3, 1, 0], &[Op::Nop, Op::Rev, Op::Goto, Op::Nop]), [3, 2, 1, 0]);
 
     // Two revs nested
     // -1 gets popped
-    assert_eq!(run(&[-1, 0, 2, -1, 10, 11, 12, -1, -1, 5, 0], &[Op::Rev, Op::Pop, Op::Pop, Op::Pop, Op::Rev, Op::Pop, Op::Nop]), [10, 11, 12]);
+    assert_eq!(
+        run(
+            &[-1, 0, 2, -1, 10, 11, 12, -1, -1, 5, 0],
+            &[Op::Rev, Op::Pop, Op::Pop, Op::Pop, Op::Rev, Op::Pop, Op::Nop]
+        ),
+        [10, 11, 12]
+    );
     // Rev returning directly onto the outer rev
-    assert_eq!(run(&[-1, 0, 2, 10, 11, 12, -1, -1, 4, 0, -1], &[Op::Pop, Op::Rev, Op::Pop, Op::Pop, Op::Rev, Op::Pop, Op::Nop]), [10, 11, 12]);
+    assert_eq!(
+        run(
+            &[-1, 0, 2, 10, 11, 12, -1, -1, 4, 0, -1],
+            &[Op::Pop, Op::Rev, Op::Pop, Op::Pop, Op::Rev, Op::Pop, Op::Nop]
+        ),
+        [10, 11, 12]
+    );
 }
 
 #[test]
