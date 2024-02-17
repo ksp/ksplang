@@ -5,25 +5,17 @@ use ksplang::vm::VMOptions;
 use std::io::{BufRead, Read};
 use std::time::Duration;
 
-fn get_pi_digits() -> Vec<i8> {
-    include_str!("../../pi-10million.txt")
-        .chars()
-        .filter(|&x| x.is_digit(10))
-        .map(|x| x.to_digit(10).unwrap() as i8)
-        .collect()
-}
-
 /// Run a ksplang program.
 #[derive(Parser, Debug)]
 #[command()]
 struct Args {
     /// File containing a ksplang program.
     #[arg()]
-    file: String,
+    ksplang_file: String,
     /// Maximum stack size.
     #[arg(long, short = 'm', default_value_t = 2097152)]
     max_stack_size: usize,
-    /// A limit for the number of executed operations.
+    /// A limit for the number of executed instructions.
     /// If the limit is reached, the program will be stopped with an error.
     #[arg(long, short = 'l')]
     op_limit: Option<u64>,
@@ -39,6 +31,12 @@ struct Args {
     /// Read the stack as text (interpret Unicode code points as numbers).
     #[arg(long)]
     text_input: bool,
+    /// Optional file containing pi digits; required only when using the kPi
+    /// instruction with more than 10 million digits.
+    ///
+    /// The file should contain ASCII digits 0-9 (other characters are ignored) and should start with 3.
+    #[arg(long)]
+    pi_digit_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,14 +50,16 @@ fn main() -> anyhow::Result<()> {
 
     let input_encoding =
         if args.text || args.text_input { StackEncoding::Text } else { StackEncoding::Numbers };
-
     let output_encoding =
         if args.text || args.text_output { StackEncoding::Text } else { StackEncoding::Numbers };
 
-    let ops: Vec<Op> = read_program_from_file(&args.file)?;
+    let ops: Vec<Op> = read_program_from_file(&args.ksplang_file)?;
     let stack: Vec<i64> = read_stack_from_stdin(input_encoding)?;
 
-    let pi_digits = get_pi_digits();
+    let pi_digits = match args.pi_digit_file {
+        Some(file) => get_pi_digits_from_file(&file)?,
+        None => get_builtin_pi_digits(),
+    };
     let options = VMOptions::new(
         &stack,
         args.max_stack_size,
@@ -143,4 +143,27 @@ fn print_stats(instruction_counter: u64, elapsed: Duration) {
             n => format!("{:.1}", n),
         }
     );
+}
+
+fn get_builtin_pi_digits() -> Vec<i8> {
+    include_str!("../../pi-10million.txt")
+        .chars()
+        .filter(|&x| x.is_digit(10))
+        .map(|x| x.to_digit(10).unwrap() as i8)
+        .collect()
+}
+
+fn get_pi_digits_from_file(file: &str) -> Result<Vec<i8>, anyhow::Error> {
+    let file = std::fs::File::open(file)?;
+    let reader = std::io::BufReader::new(file);
+    let mut digits: Vec<i8> = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        for c in line.chars() {
+            if c.is_digit(10) {
+                digits.push(c.to_digit(10).unwrap() as i8);
+            }
+        }
+    }
+    Ok(digits)
 }
