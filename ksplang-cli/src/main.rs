@@ -2,7 +2,7 @@ use clap::Parser;
 use ksplang::ops::Op;
 use ksplang::parser;
 use ksplang::vm::VMOptions;
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::time::Duration;
 
 fn get_pi_digits() -> Vec<i8> {
@@ -30,37 +30,34 @@ struct Args {
     /// Print statistics after running the program.
     #[arg(long, short = 's')]
     stats: bool,
+    /// A shorthand for setting both `--text-input` and `--text-output`.
+    #[arg(long, short = 't')]
+    text: bool,
+    /// Print the stack as text (interpret numbers as Unicode code points).
+    #[arg(long)]
+    text_output: bool,
+    /// Read the stack as text (interpret Unicode code points as numbers).
+    #[arg(long)]
+    text_input: bool,
 }
 
-fn read_program_from_file(file: &str) -> Result<Vec<Op>, anyhow::Error> {
-    let file = std::fs::File::open(file)?;
-    let reader = std::io::BufReader::new(file);
-    let mut ops: Vec<Op> = Vec::new();
-    for line in reader.lines() {
-        let line = line?;
-        for word in line.split_whitespace() {
-            ops.push(parser::parse_word(&word)?);
-        }
-    }
-    Ok(ops)
-}
-
-fn read_stack_from_stdin() -> Result<Vec<i64>, anyhow::Error> {
-    let mut stack: Vec<i64> = Vec::new();
-    for line in std::io::stdin().lock().lines() {
-        let line = line?;
-        for word in line.split_whitespace() {
-            stack.push(word.parse()?);
-        }
-    }
-    Ok(stack)
+#[derive(Debug, Clone, Copy)]
+enum StackEncoding {
+    Numbers,
+    Text,
 }
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
+    let input_encoding =
+        if args.text || args.text_input { StackEncoding::Text } else { StackEncoding::Numbers };
+
+    let output_encoding =
+        if args.text || args.text_output { StackEncoding::Text } else { StackEncoding::Numbers };
+
     let ops: Vec<Op> = read_program_from_file(&args.file)?;
-    let stack: Vec<i64> = read_stack_from_stdin()?;
+    let stack: Vec<i64> = read_stack_from_stdin(input_encoding)?;
 
     let pi_digits = get_pi_digits();
     let options = VMOptions::new(
@@ -79,11 +76,59 @@ fn main() -> anyhow::Result<()> {
         print_stats(result.instruction_counter, elapsed);
     }
 
-    for &value in result.stack.iter() {
-        println!("{}", value);
-    }
+    print_output(&result.stack, output_encoding);
 
     Ok(())
+}
+
+fn read_program_from_file(file: &str) -> Result<Vec<Op>, anyhow::Error> {
+    let file = std::fs::File::open(file)?;
+    let reader = std::io::BufReader::new(file);
+    let mut ops: Vec<Op> = Vec::new();
+    for line in reader.lines() {
+        let line = line?;
+        for word in line.split_whitespace() {
+            ops.push(parser::parse_word(&word)?);
+        }
+    }
+    Ok(ops)
+}
+
+fn read_stack_from_stdin(encoding: StackEncoding) -> Result<Vec<i64>, anyhow::Error> {
+    let mut stack: Vec<i64> = Vec::new();
+    match encoding {
+        StackEncoding::Numbers => {
+            for line in std::io::stdin().lock().lines() {
+                let line = line?;
+                for word in line.split_whitespace() {
+                    stack.push(word.parse()?);
+                }
+            }
+        }
+        StackEncoding::Text => {
+            let mut string = String::new();
+            std::io::stdin().lock().read_to_string(&mut string)?;
+            for c in string.chars() {
+                stack.push(c as i64);
+            }
+        }
+    }
+    Ok(stack)
+}
+
+fn print_output(stack: &[i64], encoding: StackEncoding) {
+    match encoding {
+        StackEncoding::Numbers => {
+            for &value in stack {
+                println!("{}", value);
+            }
+        }
+        StackEncoding::Text => {
+            for &value in stack {
+                print!("{}", value as u8 as char);
+            }
+        }
+    }
 }
 
 fn print_stats(instruction_counter: u64, elapsed: Duration) {
