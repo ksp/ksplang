@@ -2,6 +2,12 @@
 name = "ksplang"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+keywords = ["ksplang", "interpreter", "esolang"]
+description = "A ksplang interpreter"
+homepage = "https://ksp.mff.cuni.cz/viz/ksplang"
+repository = "https://github.com/ksp/ksplang"
+categories = ["compilers"]
 
 [dependencies]
 thiserror = "1.0.40"
