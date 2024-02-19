@@ -1,3 +1,4 @@
+//! Functions for executing ksplang programs.
 use num_integer::{Integer, Roots};
 use std::collections::HashMap;
 use thiserror::Error;
@@ -7,6 +8,10 @@ use crate::ops::Op;
 #[cfg(test)]
 mod tests;
 
+/// An implementation of `StateStats` that does not track any statistics.
+///
+/// This is the best choice if you do not need track anything while the
+/// program is executed.
 #[derive(Default)]
 pub struct NoStats {}
 
@@ -17,11 +22,16 @@ impl StateStats for NoStats {
     fn pop(&mut self) {}
 }
 
+/// A trait for tracking statistics about the state of the VM.
+/// Can also be used to track pushed and popped values.
+///
+/// You can implement this trait to track any statistics you need.
 pub trait StateStats: Default {
     fn push(&mut self, value: i64);
     fn pop(&mut self);
 }
 
+/// The internal state of the VM.
 #[derive(Clone, Debug)]
 struct State<'a, TStats: StateStats> {
     stack: Vec<i64>,
@@ -30,6 +40,7 @@ struct State<'a, TStats: StateStats> {
     stats: TStats,
 }
 
+/// An error that can occur during the execution of ksplang instructions.
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum OperationError {
     #[error("Removing from an empty stack")]
@@ -886,15 +897,28 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
     }
 }
 
+/// Options for the ksplang virtual machine.
 pub struct VMOptions<'a> {
+    /// The initial stack of the program.
     initial_stack: &'a [i64],
+    /// The maximum size of the stack.
     max_stack_size: usize,
+    /// The pi digits to use for the [`Op::KPi`] instruction.
     pi_digits: &'a [i8],
+    /// The maximum number of operations to run, if this is reached,
+    /// the program will stop with an error.
+    ///
+    /// Set to [`u64::MAX`] to disable this limit.
     max_op_count: u64,
+    /// The maximum number of instructions to run, if this is reached,
+    /// the program will stop with a success.
+    ///
+    /// Set to [`u64::MAX`] to disable this limit.
     stop_after: u64,
 }
 
 impl<'a> VMOptions<'a> {
+    /// Create a new set of VM options.
     pub fn new(
         stack: &'a [i64],
         max_stack_size: usize,
@@ -918,10 +942,17 @@ impl<'a> Default for VMOptions<'a> {
     }
 }
 
+/// An error that happened while running a ksplang program.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RunError {
+    /// The stack overflowed. This error should generally not happen,
+    /// as this will usually happen within an instruction and trigger
+    /// a [`RunError::InstructionFailed`] error instead.
+    ///
+    /// This is can only be triggered if the sanity check between instruction fails.
     #[error("Stack Overflow")]
     StackOverflow,
+    /// A specific instruction failed.
     #[error("Instruction {index} ({instruction}) failed (instruction counter {instruction_counter}): {error}")]
     InstructionFailed {
         /// The instruction which failed
@@ -934,28 +965,55 @@ pub enum RunError {
         /// The specific error within the instruction.
         error: OperationError,
     },
+    /// The program executed more instructions than the maximum instruction limit specified within [`VMOptions`].
     #[error("The program ran for too long ({instruction_counter} instructions had been run).")]
     RunTooLong {
         /// The number of instructions which have been run
         instruction_counter: u64,
     },
+    /// The program ran for too long (this is a result of the [`Op::Sleep`] instruction).
     #[error("The program ran for too long.")]
     Timeout,
 }
 
+/// The succesful result of running a ksplang program.
 #[derive(Debug, Clone)]
 pub struct RunResult<T: StateStats> {
+    /// The resulting stack after the program has finished.
     pub stack: Vec<i64>,
+    /// The number of instructions which have been run.
     pub instruction_counter: u64,
+    /// The instruction pointer at the end of the program.
     pub instruction_pointer: usize,
+    /// Whether the program was reversed at the end (due to [`Op::Rev`]).
     pub reversed: bool,
+    /// The internal VM statistics.
     pub stats: T,
 }
 
+/// Run a ksplang program with the given options.
+///
+/// # Example
+/// ```
+/// use ksplang::ops::Op;
+/// use ksplang::vm::{NoStats, run, VMOptions};
+/// use ksplang::vm::RunError;
+///
+/// let ops = vec![Op::Pop, Op::Increment];
+/// let stack = vec![1, 4];
+/// let options = VMOptions::new(&stack, 10_000, &[3, 1, 4], u64::MAX, u64::MAX);
+/// let result = run(&ops, options);
+/// assert!(result.is_ok());
+/// assert_eq!(result.unwrap().stack, vec![2]);
 pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult<NoStats>, RunError> {
     run_with_stats::<NoStats>(ops, options)
 }
 
+/// Run a ksplang program with the given options and collect statistics.
+/// If you do not need statistics, use the [`run`] function instead.
+///
+/// This may be useful if you want to collect statistics about the state of the program
+/// during execution.
 pub fn run_with_stats<T: StateStats>(
     ops: &[Op],
     options: VMOptions,

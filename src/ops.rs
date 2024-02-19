@@ -1,7 +1,10 @@
+//! ksplang instructions.
 use std::fmt::{Display, Formatter};
 
+/// A ksplang instruction.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Op {
+    /// Not a real ksplang instruction, only used internally for tests.
     Nop,
     Praise,
     Pop,
@@ -39,6 +42,14 @@ pub enum Op {
 }
 
 impl Op {
+    /// Returns the instruction with the given id, or `None` if the id is invalid.
+    ///
+    /// # Example
+    /// ```
+    /// use ksplang::ops::Op;
+    /// assert_eq!(Op::by_id(0), Some(Op::Praise));
+    /// assert_eq!(Op::by_id(33), None);
+    /// ```
     pub const fn by_id(id: usize) -> Option<Op> {
         match id {
             0 => Some(Op::Praise),
