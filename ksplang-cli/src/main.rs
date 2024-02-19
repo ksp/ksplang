@@ -125,7 +125,7 @@ fn print_output(stack: &[i64], encoding: StackEncoding) {
         }
         StackEncoding::Text => {
             for &value in stack {
-                print!("{}", value as u8 as char);
+                print!("{}", std::char::from_u32(value as u32).unwrap_or(char::REPLACEMENT_CHARACTER));
             }
         }
     }
