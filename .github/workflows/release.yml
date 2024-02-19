@@ -1,0 +1,42 @@
+name: Prepare CLI release
+
+# Only do the release on x.y.z tags.
+on:
+  push:
+    tags:
+    - "[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+        - original_name: ksplang-cli.exe
+          fixed_name: ksplang.exe
+          os: windows-latest
+        - original_name: ksplang-cli
+          fixed_name: ksplang
+          os: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build -p ksplang-cli --verbose --release
+    - name: Run library tests
+      run: cargo test --verbose
+    - name: Run CLI tests
+      run: cargo test -p ksplang-cli --verbose
+    - name: Rename executable
+      run: |
+          mv target/release/${{ matrix.original_name }} target/release/${{ matrix.fixed_name }}
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        draft: true
+        files: target/release/${{ matrix.fixed_name }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
