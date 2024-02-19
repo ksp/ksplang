@@ -77,4 +77,4 @@ or the descriptions, feel free to create an issue or a pull request.
 No changes to the language are allowed as the language is perfect.
 
 ## License
-TODO (MIT license)
+This code is available under the MIT License. See the [LICENSE](LICENSE) file for details.
