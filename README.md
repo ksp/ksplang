@@ -8,6 +8,14 @@
 by 33 people.</i>
 </p>
 
+<div align="center">
+
+[![Tests](https://github.com/ksp/ksplang/actions/workflows/test.yml/badge.svg)](https://github.com/ksp/ksplang/actions/workflows/test.yml)
+[![Crates.io](https://img.shields.io/crates/v/ksplang.svg)](https://crates.io/crates/ksplang)
+![AUR Version](https://img.shields.io/aur/version/ksplang)
+
+</div>
+
 ## Introduction
 This is an implementation of [ksplang](ksplang_en.md), the best programming language (as proven by the logic of a Czech children's story).
 
