@@ -1,0 +1,194 @@
+use std::collections::HashMap;
+use std::cmp::max;
+
+use crate::vm::OperationError;
+
+const MOD: i64 = 1_000_000_007; // must be prime
+
+#[inline]
+pub fn funkcia(a: i64, b: i64) -> i64 {
+    if a == b || (a <= 1 && b <= 1) {
+        return 0;
+    }
+    if a <= 1 || b <= 1 {
+        return max(a, b) % MOD;
+    }
+
+    // Odoberie 2 čísla zo zásobníka a obe rozloží na prvočísla. Následne z rozkladov zmaže všetky prvočísla, ktoré delia obe dve čísla.
+    // Výsledkom je súčin všetkých ostatných prvočísel vrátane exponentov, modulo 1 000 000 007. Pokiaľ je množina prvočísel prázdna, výsledkom je nula.
+    
+    // Faster approach:
+    // * get common set of primes in the form of gcd(a, b)
+    //   - we don't have the primes individually, so we must work with that
+    //   - we special case 2, it makes the numbers smaller and we get rid of special case checks in the modulo-less GCD
+
+    let prime_2 = extract_unique_prime2(a, b);
+    
+    let a = a >> a.trailing_zeros();
+    let b = b >> b.trailing_zeros();
+    debug_assert!(a % 2 == 1 && b % 2 == 1);
+
+    let g = gcd(a, b);
+    debug_assert!(g % 2 == 1);
+
+    debug_assert!(a % g == 0);
+    debug_assert!(b % g == 0);
+    let mut a2 = a / g; // common factors are removed, but a2 might still contain primes with higher exponent than in g
+    let mut b2 = b / g;
+    debug_assert!(a2 % 2 == 1 && b2 % 2 == 1);
+
+    loop {
+        let a_rem = gcd(a2, g); // <- remaining primes of a
+        if a_rem == 1 {
+            break;
+        }
+        debug_assert!(a2 % a_rem == 0);
+        a2 /= a_rem;
+    }
+    loop {
+        let b_rem = gcd(b2, g); // <- remaining primes of b
+        if b_rem == 1 {
+            break;
+        }
+        debug_assert!(b2 % b_rem == 0);
+        b2 /= b_rem;
+    }
+
+    debug_assert!(gcd(a2, b2) == 1);
+    if a2 == b2 && prime_2 == 0 {
+        return 0; // Pokiaľ je množina prvočísel prázdna, výsledkom je nula
+    }
+
+    if let Some(result) = a2.checked_mul(b2) {
+        if result < MOD >> prime_2 {
+            // no overflow
+            debug_assert!(result.checked_mul(1 << prime_2).unwrap() < MOD);
+            result << prime_2
+        } else if prime_2 < 30 {
+            debug_assert!((result % MOD).checked_mul(1 << prime_2).is_some());
+            ((result % MOD) << prime_2) % MOD
+        } else {
+            (result % MOD).checked_mul((1 << prime_2) % MOD).unwrap() % MOD
+        }
+    } else {
+        let a2 = a2 % MOD;
+        let b2 = b2 % MOD;
+        debug_assert!(a2.checked_mul(b2).is_some());
+        (((a2 * b2) % MOD) * ((1 << prime_2) % MOD)) % MOD
+    }
+
+}
+
+/// Exponent of the prime 2 in the factorization setdiff of a, b
+fn extract_unique_prime2(a: i64, b: i64) -> u32 {
+    let a_ = a ^ (a - 1);
+    let b_ = b ^ (b - 1);
+    let mask = (a_ ^ b_) >> 1;
+    mask.trailing_ones()
+}
+
+fn gcd(mut a: i64, mut b: i64) -> i64 {
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+/// slow reference implementation
+#[cfg(test)]
+fn funkcia_reference(a: i64, b: i64) -> Result<i64, OperationError> {
+    if a == b || (a < 2 && b < 2) {
+        return Ok(0);
+    }
+    fn factorize(mut a: i64) -> HashMap<i64, usize> {
+        let mut counts_by_divisor = HashMap::new();
+        let mut i = 2;
+        while (i * i) as i128 <= a as i128 {
+            while a % i == 0 {
+                counts_by_divisor.entry(i).and_modify(|x| *x += 1).or_insert(1);
+                a /= i;
+            }
+
+            i += 1;
+        }
+        if a > 1 {
+            counts_by_divisor.entry(a).and_modify(|x| *x += 1).or_insert(1);
+        }
+        counts_by_divisor
+    }
+
+    let a_factors = factorize(a);
+    let b_factors = factorize(b);
+
+    let mut result = 1i64;
+    let mut is_empty = true;
+    let mut apply_factors = |factors: &HashMap<i64, usize>,
+                                the_other_factors: &HashMap<i64, usize>|
+        -> Result<(), OperationError> {
+        for (factor, count) in factors {
+            if the_other_factors.contains_key(&factor) {
+                continue;
+            }
+            is_empty = false;
+            for _ in 0..*count {
+                result = (result
+                    .checked_mul(factor % MOD)
+                    .ok_or(OperationError::IntegerOverflow)?
+                    % MOD)
+                    % MOD;
+            }
+        }
+        Ok(())
+    };
+
+    apply_factors(&a_factors, &b_factors)?;
+    apply_factors(&b_factors, &a_factors)?;
+
+    if is_empty {
+        result = 0
+    };
+    Ok(result)
+}
+
+#[test]
+fn extract_unique_prime2_test() {
+    let odd_values = [3, 5, 7, 9, 101, 1001, 10001, 100001, 100000001, 1000000000001, 12345676543, i64::MAX, i64::MAX - 2, i64::MAX - 4, i64::MAX - 6, i64::MAX - 8];
+    for &a in &odd_values {
+        for &b in &odd_values {
+            assert_eq!(extract_unique_prime2(a, b), 0, "a = {a}, b = {b}");
+            assert_eq!(extract_unique_prime2(a, b - 1), (b - 1).trailing_zeros(), "a = {a}, b = {b}");
+            assert_eq!(extract_unique_prime2(a - 1, b - 1), 0, "a = {a}, b = {b}");
+
+            for pow2 in 1..60 {
+                if let Some(a_even) = a.checked_mul(1i64 << pow2) {
+                    assert_eq!(extract_unique_prime2(a_even, b), pow2, "a = {a}, b = {b}, pow2 = {pow2}");
+                    assert_eq!(extract_unique_prime2(a_even, b - 1), 0, "a = {a}, b = {b}, pow2 = {pow2}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn funcia_reference_debuggable_test() {
+    let a = 3;
+    let b = 90000;
+    let result = funkcia(a, b);
+    let expected = funkcia_reference(a, b).unwrap();
+    assert_eq!(result, expected);
+}
+
+#[test]
+fn funcia_reference_test() {
+    let values = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 16, 32, 24, 614889782588491410, 307444891294245705, 204963260862830470, 1000, 1001, 1000_000_007, 1000_000_006, 1000_000_008, 1000_000_009, 125000001, 500000004, 1000_000_000_007, 1000_000_000_000_007, 1000_000_000_000_000_007, i64::MAX, 1 << 62, 1 << 61, 1 << 61 + 1, 3 << 62, 5 << 62, 7 << 61, i32::MAX as i64];
+    for &a in &values {
+        for &b in &values {
+            let result = funkcia(a, b);
+            let expected = funkcia_reference(a, b).unwrap();
+            assert_eq!(result, expected, "a = {a}, b = {b}");
+        }
+    }
+}
+
