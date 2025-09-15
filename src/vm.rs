@@ -711,7 +711,7 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
             Op::Funkcia => {
                 let a = self.pop()?;
                 let b = self.pop()?;
-                let result = funkcia::funkcia(a, b);
+                let result = funkcia::funkcia(a, b) as i64;
                 self.push(result)?;
             }
             Op::BulkXor => {

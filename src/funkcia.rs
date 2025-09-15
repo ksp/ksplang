@@ -3,16 +3,19 @@ use std::cmp::max;
 
 use crate::vm::OperationError;
 
-const MOD: i64 = 1_000_000_007; // must be prime
+const MOD: u64 = 1_000_000_007; // must be prime
 
 #[inline]
-pub fn funkcia(a: i64, b: i64) -> i64 {
+pub fn funkcia(a: i64, b: i64) -> u64 {
     if a == b || (a <= 1 && b <= 1) {
         return 0;
     }
     if a <= 1 || b <= 1 {
-        return max(a, b) % MOD;
+        return (max(a, b) as u64) % MOD;
     }
+
+    let mut a = a as u64;
+    let mut b = b as u64;
 
     // Odoberie 2 čísla zo zásobníka a obe rozloží na prvočísla. Následne z rozkladov zmaže všetky prvočísla, ktoré delia obe dve čísla.
     // Výsledkom je súčin všetkých ostatných prvočísel vrátane exponentov, modulo 1 000 000 007. Pokiaľ je množina prvočísel prázdna, výsledkom je nula.
@@ -24,42 +27,44 @@ pub fn funkcia(a: i64, b: i64) -> i64 {
 
     let prime_2 = extract_unique_prime2(a, b);
     
-    let a = a >> a.trailing_zeros();
-    let b = b >> b.trailing_zeros();
+    a = a >> a.trailing_zeros();
+    b = b >> b.trailing_zeros();
     debug_assert!(a % 2 == 1 && b % 2 == 1);
 
-    let g = gcd(a, b);
+    let g = gcd_nodiv(a, b);
     debug_assert!(g % 2 == 1);
 
-    debug_assert!(a % g == 0);
-    debug_assert!(b % g == 0);
-    let mut a2 = a / g; // common factors are removed, but a2 might still contain primes with higher exponent than in g
-    let mut b2 = b / g;
-    debug_assert!(a2 % 2 == 1 && b2 % 2 == 1);
+    if g > 1 {
+        debug_assert!(a % g == 0);
+        debug_assert!(b % g == 0);
+        a = a / g; // common factors are removed, but a2 might still contain primes with higher exponent than in g
+        b = b / g;
+        debug_assert!(a % 2 == 1 && b % 2 == 1);
 
-    loop {
-        let a_rem = gcd(a2, g); // <- remaining primes of a
-        if a_rem == 1 {
-            break;
+        loop {
+            let a_rem = gcd_nodiv(a, g); // <- remaining primes of a
+            if a_rem == 1 {
+                break;
+            }
+            debug_assert!(a % a_rem == 0);
+            a /= a_rem;
         }
-        debug_assert!(a2 % a_rem == 0);
-        a2 /= a_rem;
-    }
-    loop {
-        let b_rem = gcd(b2, g); // <- remaining primes of b
-        if b_rem == 1 {
-            break;
+        loop {
+            let b_rem = gcd_nodiv(b, g); // <- remaining primes of b
+            if b_rem == 1 {
+                break;
+            }
+            debug_assert!(b % b_rem == 0);
+            b /= b_rem;
         }
-        debug_assert!(b2 % b_rem == 0);
-        b2 /= b_rem;
     }
 
-    debug_assert!(gcd(a2, b2) == 1);
-    if a2 == b2 && prime_2 == 0 {
+    debug_assert!(gcd(a, b) == 1);
+    if a == b && prime_2 == 0 {
         return 0; // Pokiaľ je množina prvočísel prázdna, výsledkom je nula
     }
 
-    if let Some(result) = a2.checked_mul(b2) {
+    if let Some(result) = a.checked_mul(b) {
         if result < MOD >> prime_2 {
             // no overflow
             debug_assert!(result.checked_mul(1 << prime_2).unwrap() < MOD);
@@ -71,8 +76,8 @@ pub fn funkcia(a: i64, b: i64) -> i64 {
             (result % MOD).checked_mul((1 << prime_2) % MOD).unwrap() % MOD
         }
     } else {
-        let a2 = a2 % MOD;
-        let b2 = b2 % MOD;
+        let a2 = a % MOD;
+        let b2 = b % MOD;
         debug_assert!(a2.checked_mul(b2).is_some());
         (((a2 * b2) % MOD) * ((1 << prime_2) % MOD)) % MOD
     }
@@ -80,14 +85,40 @@ pub fn funkcia(a: i64, b: i64) -> i64 {
 }
 
 /// Exponent of the prime 2 in the factorization setdiff of a, b
-fn extract_unique_prime2(a: i64, b: i64) -> u32 {
+fn extract_unique_prime2(a: u64, b: u64) -> u32 {
     let a_ = a ^ (a - 1);
     let b_ = b ^ (b - 1);
     let mask = (a_ ^ b_) >> 1;
     mask.trailing_ones()
 }
 
-fn gcd(mut a: i64, mut b: i64) -> i64 {
+#[inline]
+fn gcd_nodiv(mut a: u64, mut b: u64) -> u64 {
+    debug_assert!(a % 2 == 1 && b % 2 == 1);
+    let a_orig = a;
+    let b_orig = b;
+
+    loop {
+        b >>= b.trailing_zeros();
+        if a > b {
+            let temp = a;
+            a = b;
+            b = temp;
+        }
+
+        b -= a;
+
+        if b == 0 { break; }
+    }
+
+    debug_assert_eq!(a, gcd(a_orig, b_orig), "a_orig = {a_orig}, b_orig = {b_orig}");
+
+    a
+}
+
+#[inline]
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    debug_assert!(a > 0 && b > 0, "a = {a}, b = {b}");
     while b != 0 {
         let t = b;
         b = a % b;
@@ -97,8 +128,7 @@ fn gcd(mut a: i64, mut b: i64) -> i64 {
 }
 
 /// slow reference implementation
-#[cfg(test)]
-fn funkcia_reference(a: i64, b: i64) -> Result<i64, OperationError> {
+pub fn funkcia_reference(a: i64, b: i64) -> Result<i64, OperationError> {
     if a == b || (a < 2 && b < 2) {
         return Ok(0);
     }
@@ -134,10 +164,10 @@ fn funkcia_reference(a: i64, b: i64) -> Result<i64, OperationError> {
             is_empty = false;
             for _ in 0..*count {
                 result = (result
-                    .checked_mul(factor % MOD)
+                    .checked_mul(factor % (MOD as i64))
                     .ok_or(OperationError::IntegerOverflow)?
-                    % MOD)
-                    % MOD;
+                    % (MOD as i64))
+                    % (MOD as i64);
             }
         }
         Ok(())
@@ -154,7 +184,8 @@ fn funkcia_reference(a: i64, b: i64) -> Result<i64, OperationError> {
 
 #[test]
 fn extract_unique_prime2_test() {
-    let odd_values = [3, 5, 7, 9, 101, 1001, 10001, 100001, 100000001, 1000000000001, 12345676543, i64::MAX, i64::MAX - 2, i64::MAX - 4, i64::MAX - 6, i64::MAX - 8];
+    let m = i64::MAX as u64;
+    let odd_values = [3, 5, 7, 9, 101, 1001, 10001, 100001, 100000001, 1000000000001, 12345676543, m, m - 2, m - 4, m - 6, m - 8];
     for &a in &odd_values {
         for &b in &odd_values {
             assert_eq!(extract_unique_prime2(a, b), 0, "a = {a}, b = {b}");
@@ -162,7 +193,7 @@ fn extract_unique_prime2_test() {
             assert_eq!(extract_unique_prime2(a - 1, b - 1), 0, "a = {a}, b = {b}");
 
             for pow2 in 1..60 {
-                if let Some(a_even) = a.checked_mul(1i64 << pow2) {
+                if let Some(a_even) = a.checked_mul(1u64 << pow2) {
                     assert_eq!(extract_unique_prime2(a_even, b), pow2, "a = {a}, b = {b}, pow2 = {pow2}");
                     assert_eq!(extract_unique_prime2(a_even, b - 1), 0, "a = {a}, b = {b}, pow2 = {pow2}");
                 }
@@ -177,7 +208,8 @@ fn funcia_reference_debuggable_test() {
     let b = 90000;
     let result = funkcia(a, b);
     let expected = funkcia_reference(a, b).unwrap();
-    assert_eq!(result, expected);
+    assert!(result <= i64::MAX as u64);
+    assert_eq!(result as i64, expected);
 }
 
 #[test]
@@ -187,7 +219,9 @@ fn funcia_reference_test() {
         for &b in &values {
             let result = funkcia(a, b);
             let expected = funkcia_reference(a, b).unwrap();
-            assert_eq!(result, expected, "a = {a}, b = {b}");
+            assert!(result <= i64::MAX as u64);
+
+            assert_eq!(result as i64, expected, "a = {a}, b = {b}");
         }
     }
 }

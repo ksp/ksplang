@@ -20,4 +20,4 @@
 pub mod ops;
 pub mod parser;
 pub mod vm;
-mod funkcia;
+pub mod funkcia;

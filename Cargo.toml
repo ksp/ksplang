@@ -18,3 +18,14 @@ members = [
 	"ksplang-cli",
 	"."
 ]
+
+[lib]
+bench = false
+
+[dev-dependencies]
+# Criterion is used only for benchmarks
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "funkcia_bench"
+harness = false
