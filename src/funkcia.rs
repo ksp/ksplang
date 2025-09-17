@@ -36,52 +36,38 @@ pub fn funkcia(a: i64, b: i64) -> u64 {
     let g = gcd_nodiv(a, b);
     debug_assert!(g % 2 == 1);
 
-    if g > 1 {
-        debug_assert!(a % g == 0);
-        debug_assert!(b % g == 0);
-        // remove common factors with exponent 1
-        a = a / g;
-        b = b / g;
-        debug_assert!(a % 2 == 1 && b % 2 == 1);
-
-        // if factor in a has higher exponent than in b, we need to divide a again by that factor
-        // so we find the remaining common prime factors in a, and divide them out
-        loop {
-            let a_rem = gcd_nodiv(a, g); // get remaining prime factors of a
-            if a_rem == 1 {
-                break;
-            }
-            debug_assert!(a % a_rem == 0);
-            a /= a_rem;
-        }
-        // and the same for b
-        loop {
-            let b_rem = gcd_nodiv(b, g); // get remaining prime factors of b
-            if b_rem == 1 {
-                break;
-            }
-            debug_assert!(b % b_rem == 0);
-            b /= b_rem;
-        }
+    // g contains all common factors multiplied together (with some exponent)
+    // we need to repeatedly divide `a` by the remaining factors from `g`
+    // the remaining factors are found by `gcd(a / g, g)`
+    let mut a_rem = g;
+    while a_rem > 1 {
+        a = a / a_rem;
+        a_rem = gcd_nodiv(a, a_rem); // get remaining prime factors of a
+    }
+    // and the same for b
+    let mut b_rem = g;
+    while b_rem > 1 {
+        b /= b_rem;
+        b_rem = gcd_nodiv(b, b_rem); // get remaining prime factors of b
     }
 
     debug_assert!(gcd(a, b) == 1);
-    if a == b && prime_2_exp == 0 {
+    if a == b && prime_2_exp == 0 { // a == b means that both are 1, because they cannot have common divisors
         return 0; // Pokiaľ je množina prvočísel prázdna, výsledkom je nula
     }
 
     // Result is simply (a * b * 2^prime_2_exp) % MOD
     // We just need to be careful about i64 overflow (and minimizing number of modulos)
     if let Some(result) = a.checked_mul(b) {
-        if result < MOD >> prime_2_exp {
+        if result < (MOD >> prime_2_exp) {
             // no overflow
             debug_assert!(result.checked_mul(1 << prime_2_exp).unwrap() < MOD);
             result << prime_2_exp
-        } else if prime_2_exp < 30 {
+        } else if prime_2_exp < MOD.leading_zeros() {
             debug_assert!((result % MOD).checked_mul(1 << prime_2_exp).is_some());
             ((result % MOD) << prime_2_exp) % MOD
         } else {
-            (result % MOD).checked_mul((1 << prime_2_exp) % MOD).unwrap() % MOD
+            ((result % MOD) * ((1 << prime_2_exp) % MOD)) % MOD
         }
     } else {
         let a2 = a % MOD;
@@ -123,6 +109,7 @@ fn gcd_nodiv(mut a: u64, mut b: u64) -> u64 {
     }
 
     debug_assert_eq!(a, gcd(a_orig, b_orig), "a_orig = {a_orig}, b_orig = {b_orig}");
+    debug_assert!(a_orig % a ==  0);
 
     a
 }
