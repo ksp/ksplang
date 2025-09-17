@@ -1,6 +1,5 @@
 //! Functions for executing ksplang programs.
 use num_integer::{Integer, Roots};
-use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::{funkcia, ops::Op};

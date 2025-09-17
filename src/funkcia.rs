@@ -25,32 +25,38 @@ pub fn funkcia(a: i64, b: i64) -> u64 {
     //   - we don't have the primes individually, so we must work with that
     //   - we special case 2, it makes the numbers smaller and we get rid of special case checks in the modulo-less GCD
 
-    let prime_2 = extract_unique_prime2(a, b);
-    
+
+    // extract exponent of 2 and get rid of all factors of 2 (i.e. trailing zeros in binary)
+    let prime_2_exp = extract_unique_prime2(a, b);
     a = a >> a.trailing_zeros();
     b = b >> b.trailing_zeros();
     debug_assert!(a % 2 == 1 && b % 2 == 1);
 
+    // find the common factors of a, b
     let g = gcd_nodiv(a, b);
     debug_assert!(g % 2 == 1);
 
     if g > 1 {
         debug_assert!(a % g == 0);
         debug_assert!(b % g == 0);
-        a = a / g; // common factors are removed, but a2 might still contain primes with higher exponent than in g
+        // remove common factors with exponent 1
+        a = a / g;
         b = b / g;
         debug_assert!(a % 2 == 1 && b % 2 == 1);
 
+        // if factor in a has higher exponent than in b, we need to divide a again by that factor
+        // so we find the remaining common prime factors in a, and divide them out
         loop {
-            let a_rem = gcd_nodiv(a, g); // <- remaining primes of a
+            let a_rem = gcd_nodiv(a, g); // get remaining prime factors of a
             if a_rem == 1 {
                 break;
             }
             debug_assert!(a % a_rem == 0);
             a /= a_rem;
         }
+        // and the same for b
         loop {
-            let b_rem = gcd_nodiv(b, g); // <- remaining primes of b
+            let b_rem = gcd_nodiv(b, g); // get remaining prime factors of b
             if b_rem == 1 {
                 break;
             }
@@ -60,41 +66,46 @@ pub fn funkcia(a: i64, b: i64) -> u64 {
     }
 
     debug_assert!(gcd(a, b) == 1);
-    if a == b && prime_2 == 0 {
+    if a == b && prime_2_exp == 0 {
         return 0; // Pokiaľ je množina prvočísel prázdna, výsledkom je nula
     }
 
+    // Result is simply (a * b * 2^prime_2_exp) % MOD
+    // We just need to be careful about i64 overflow (and minimizing number of modulos)
     if let Some(result) = a.checked_mul(b) {
-        if result < MOD >> prime_2 {
+        if result < MOD >> prime_2_exp {
             // no overflow
-            debug_assert!(result.checked_mul(1 << prime_2).unwrap() < MOD);
-            result << prime_2
-        } else if prime_2 < 30 {
-            debug_assert!((result % MOD).checked_mul(1 << prime_2).is_some());
-            ((result % MOD) << prime_2) % MOD
+            debug_assert!(result.checked_mul(1 << prime_2_exp).unwrap() < MOD);
+            result << prime_2_exp
+        } else if prime_2_exp < 30 {
+            debug_assert!((result % MOD).checked_mul(1 << prime_2_exp).is_some());
+            ((result % MOD) << prime_2_exp) % MOD
         } else {
-            (result % MOD).checked_mul((1 << prime_2) % MOD).unwrap() % MOD
+            (result % MOD).checked_mul((1 << prime_2_exp) % MOD).unwrap() % MOD
         }
     } else {
         let a2 = a % MOD;
         let b2 = b % MOD;
         debug_assert!(a2.checked_mul(b2).is_some());
-        (((a2 * b2) % MOD) * ((1 << prime_2) % MOD)) % MOD
+        (((a2 * b2) % MOD) * ((1 << prime_2_exp) % MOD)) % MOD
     }
 
 }
 
 /// Exponent of the prime 2 in the factorization setdiff of a, b
 fn extract_unique_prime2(a: u64, b: u64) -> u32 {
-    let a_ = a ^ (a - 1);
+    // there is a reason why we have 4x more lines in test code than this implementation ...
+    let a_ = a ^ (a - 1); // -> blsmsk instruction - mask of trailing zeros including the first one
     let b_ = b ^ (b - 1);
     let mask = (a_ ^ b_) >> 1;
     mask.trailing_ones()
 }
 
+/// Binary GCD algorithm: https://en.wikipedia.org/wiki/Binary_GCD_algorithm
+/// Assumes a and b are odd and positive, as these conditions are already handled by funkcia
 #[inline]
 fn gcd_nodiv(mut a: u64, mut b: u64) -> u64 {
-    debug_assert!(a % 2 == 1 && b % 2 == 1);
+    debug_assert!(a % 2 == 1 && b % 2 == 1 && a > 0 && b > 0, "a = {a}, b = {b}");
     let a_orig = a;
     let b_orig = b;
 
@@ -116,6 +127,7 @@ fn gcd_nodiv(mut a: u64, mut b: u64) -> u64 {
     a
 }
 
+/// Classic euclidean algorithm
 #[inline]
 fn gcd(mut a: u64, mut b: u64) -> u64 {
     debug_assert!(a > 0 && b > 0, "a = {a}, b = {b}");
