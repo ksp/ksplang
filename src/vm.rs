@@ -1,9 +1,8 @@
 //! Functions for executing ksplang programs.
 use num_integer::{Integer, Roots};
-use std::collections::HashMap;
 use thiserror::Error;
 
-use crate::ops::Op;
+use crate::{funkcia, ops::Op};
 
 #[cfg(test)]
 mod tests;
@@ -709,60 +708,9 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
                 }
             }
             Op::Funkcia => {
-                const MOD: i64 = 1_000_000_007;
-
                 let a = self.pop()?;
                 let b = self.pop()?;
-                if a == b || (a < 2 && b < 2) {
-                    self.push(0)?;
-                    return Ok(Effect::None);
-                }
-
-                fn factorize(mut a: i64) -> HashMap<i64, usize> {
-                    let mut counts_by_divisor = HashMap::new();
-                    let mut i = 2;
-                    while (i * i) as i128 <= a as i128 {
-                        while a % i == 0 {
-                            counts_by_divisor.entry(i).and_modify(|x| *x += 1).or_insert(1);
-                            a /= i;
-                        }
-
-                        i += 1;
-                    }
-                    if a > 1 {
-                        counts_by_divisor.entry(a).and_modify(|x| *x += 1).or_insert(1);
-                    }
-                    counts_by_divisor
-                }
-
-                let a_factors = factorize(a);
-                let b_factors = factorize(b);
-
-                let mut result = 1i64;
-                let mut apply_factors = |factors: &HashMap<i64, usize>,
-                                         the_other_factors: &HashMap<i64, usize>|
-                 -> Result<(), OperationError> {
-                    for (factor, count) in factors {
-                        if the_other_factors.contains_key(&factor) {
-                            continue;
-                        }
-                        for _ in 0..*count {
-                            result = (result
-                                .checked_mul(factor % MOD)
-                                .ok_or(OperationError::IntegerOverflow)?
-                                % MOD)
-                                % MOD;
-                        }
-                    }
-                    Ok(())
-                };
-
-                apply_factors(&a_factors, &b_factors)?;
-                apply_factors(&b_factors, &a_factors)?;
-
-                if result == 1 {
-                    result = 0
-                }
+                let result = funkcia::funkcia(a, b) as i64;
                 self.push(result)?;
             }
             Op::BulkXor => {
