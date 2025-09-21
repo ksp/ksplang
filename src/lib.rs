@@ -21,3 +21,5 @@ pub mod ops;
 pub mod parser;
 pub mod vm;
 pub mod funkcia;
+pub mod digit_sum;
+pub mod compiler;

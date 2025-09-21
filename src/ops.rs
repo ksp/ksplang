@@ -2,7 +2,7 @@
 use std::fmt::{Display, Formatter};
 
 /// A ksplang instruction.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Op {
     /// Not a real ksplang instruction, only used internally for tests.
     Nop,

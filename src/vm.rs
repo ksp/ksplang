@@ -2,7 +2,7 @@
 use num_integer::{Integer, Roots};
 use thiserror::Error;
 
-use crate::{funkcia, ops::Op};
+use crate::{digit_sum::{digit_sum, digit_sum_reference}, funkcia, ops::Op};
 
 #[cfg(test)]
 mod tests;
@@ -40,7 +40,7 @@ struct State<'a, TStats: StateStats> {
 }
 
 /// An error that can occur during the execution of ksplang instructions.
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OperationError {
     #[error("Removing from an empty stack")]
     PopFailed,
@@ -191,6 +191,67 @@ fn solve_quadratic_equation(
         [None, Some(result2)] => Ok(QuadraticEquationResult::One(result2)),
         [None, None] => Ok(QuadraticEquationResult::None),
     }
+}
+
+pub(crate) const FACTORIAL_TABLE: [i64; 21] = [
+    1,
+    1,
+    2,
+    6,
+    24,
+    120,
+    720,
+    5040,
+    40320,
+    362880,
+    3628800,
+    39916800,
+    479001600,
+    6227020800,
+    87178291200,
+    1307674368000,
+    20922789888000,
+    355687428096000,
+    6402373705728000,
+    121645100408832000,
+    2432902008176640000,
+    //21 => 51090942171709440000, (does not fit into i64)
+];
+
+#[inline]
+pub(crate) fn tetration(num: i64, iters: i64) -> Result<i64, OperationError> {
+    if iters < 0 {
+        return Err(OperationError::NegativeIterations { iterations: iters });
+    }
+    Ok(if iters == 0 {
+        1
+    } else {
+        let mut result = num;
+        if num == 0 {
+            if iters == 1 {
+                result = 0;
+            } else {
+                result = 1;
+            }
+        } else if num == 1 {
+            result = 1;
+        } else {
+            for _ in 1..iters {
+                result = num
+                    .checked_pow(
+                        result
+                            .try_into()
+                            .map_err(|_| OperationError::IntegerOverflow)?,
+                    )
+                    .ok_or(OperationError::IntegerOverflow)?;
+            }
+        }
+        result
+    })
+}
+
+pub(crate) fn decimal_len(num: i64) -> i64 {
+    num.abs_diff(0).checked_ilog10().map(|x| x + 1).unwrap_or(0) as i64
 }
 
 impl<'a, TStats: StateStats> State<'a, TStats> {
@@ -414,31 +475,7 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
                     4 => {
                         let a = self.pop()?;
                         let factorial =
-                            match a.checked_abs().ok_or(OperationError::IntegerOverflow)? {
-                                0 => 1,
-                                1 => 1,
-                                2 => 2,
-                                3 => 6,
-                                4 => 24,
-                                5 => 120,
-                                6 => 720,
-                                7 => 5040,
-                                8 => 40320,
-                                9 => 362880,
-                                10 => 3628800,
-                                11 => 39916800,
-                                12 => 479001600,
-                                13 => 6227020800,
-                                14 => 87178291200,
-                                15 => 1307674368000,
-                                16 => 20922789888000,
-                                17 => 355687428096000,
-                                18 => 6402373705728000,
-                                19 => 121645100408832000,
-                                20 => 2432902008176640000,
-                                //21 => 51090942171709440000, (does not fit into i64)
-                                _ => return Err(OperationError::IntegerOverflow),
-                            };
+                            a.checked_abs().and_then(|x| FACTORIAL_TABLE.get(x as usize).copied()).ok_or(OperationError::IntegerOverflow)?;
 
                         self.push(factorial)?;
                     }
@@ -461,19 +498,6 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
             }
             Op::DigitSum => {
                 let a = self.peek()?;
-                fn digit_sum(num: i64) -> i64 {
-                    // This is a workaround for i64::MIN.abs() not being a valid i64 value.
-                    if num == i64::MIN {
-                        return 89;
-                    }
-                    let mut num = num.abs();
-                    let mut sum = 0;
-                    while num > 0 {
-                        sum += num % 10;
-                        num /= 10;
-                    }
-                    sum
-                }
 
                 let result = digit_sum(a);
                 self.push(result)?;
@@ -505,67 +529,13 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
             Op::TetrationNumIters => {
                 let num = self.pop()?;
                 let iters = self.pop()?;
-                if iters < 0 {
-                    return Err(OperationError::NegativeIterations { iterations: iters });
-                }
-                let result = if iters == 0 {
-                    1
-                } else {
-                    let mut result = num;
-                    if num == 0 {
-                        if iters == 1 {
-                            result = 0;
-                        } else {
-                            result = 1;
-                        }
-                    } else if num == 1 {
-                        result = 1;
-                    } else {
-                        for _ in 1..iters {
-                            result = num
-                                .checked_pow(
-                                    result
-                                        .try_into()
-                                        .map_err(|_| OperationError::IntegerOverflow)?,
-                                )
-                                .ok_or(OperationError::IntegerOverflow)?;
-                        }
-                    }
-                    result
-                };
+                let result = tetration(num, iters)?;
                 self.push(result)?;
             }
             Op::TetrationItersNum => {
                 let iters = self.pop()?;
                 let num = self.pop()?;
-                if iters < 0 {
-                    return Err(OperationError::NegativeIterations { iterations: iters });
-                }
-                let result = if iters == 0 {
-                    1
-                } else {
-                    let mut result = num;
-                    if num == 0 {
-                        if iters == 1 {
-                            result = 0;
-                        } else {
-                            result = 1;
-                        }
-                    } else if num == 1 {
-                        result = 1;
-                    } else {
-                        for _ in 1..iters {
-                            result = num
-                                .checked_pow(
-                                    result
-                                        .try_into()
-                                        .map_err(|_| OperationError::IntegerOverflow)?,
-                                )
-                                .ok_or(OperationError::IntegerOverflow)?;
-                        }
-                    }
-                    result
-                };
+                let result = tetration(num, iters)?;
                 self.push(result)?;
             }
             Op::Median => {
@@ -599,15 +569,7 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
             Op::LenSum => {
                 let a = self.pop()?;
                 let b = self.pop()?;
-                fn len(num: i64) -> i64 {
-                    // We cannot use .abs() on i64::MIN
-                    if num == i64::MIN {
-                        return 19;
-                    }
-
-                    num.abs().checked_ilog10().map(|x| x + 1).unwrap_or(0) as i64
-                }
-                self.push(len(a) + len(b))?;
+                self.push(decimal_len(a) + decimal_len(b))?;
             }
             Op::Bitshift => {
                 let bits = self.pop()?;
