@@ -1,28 +1,76 @@
 use core::fmt;
 use std::{
-    borrow::Cow, cmp, collections::{BTreeMap, HashMap, HashSet}, fmt::Display, mem, num::{NonZeroI32, NonZeroU32}, ops::{ControlFlow, Range, RangeInclusive}
+    borrow::Cow, cmp, collections::{BTreeMap, HashMap, HashSet}, fmt::Display, mem, num::NonZeroI32, ops::{Range, RangeInclusive}
 };
 
 use smallvec::SmallVec;
 
-use crate::{
-    compiler::vm_code::Condition, funkcia, ops::Op, vm::{self, OperationError}
-};
+use crate::{compiler::vm_code::Condition, vm::OperationError};
+
+// const PREDEFINED_VALUES: [i64; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24, 32, 64, 128, 256, 512, 1024, i64::MAX, -1, -2, -3];
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ValueId(pub i32);
 impl ValueId {
-    pub fn is_null(&self) -> bool {
+    pub const PREDEF_RANGE: i32 = 4096;
+    pub const C_ZERO: ValueId = Self::from_predefined_const(0).unwrap();
+    pub const C_ONE: ValueId = Self::from_predefined_const(1).unwrap();
+    pub const C_TWO: ValueId = Self::from_predefined_const(2).unwrap();
+    pub const C_IMIN: ValueId = Self::from_predefined_const(i64::MIN).unwrap();
+    pub const C_IMAX: ValueId = Self::from_predefined_const(i64::MAX).unwrap();
+    pub const fn is_null(&self) -> bool {
         self.0 == 0
     }
-    pub fn is_constant(&self) -> bool {
+    pub const fn is_constant(&self) -> bool {
         self.0 < 0
     }
-    pub fn is_computed(&self) -> bool {
+    pub const fn is_computed(&self) -> bool {
         self.0 > 0
     }
-    pub fn to_option(self) -> Option<NonZeroI32> {
+    pub const fn to_option(self) -> Option<NonZeroI32> {
         NonZeroI32::new(self.0)
+    }
+
+    pub const fn to_predefined_const(self) -> Option<i64> {
+        let id = self.0;
+        if id >= 0 || id < -ValueId::PREDEF_RANGE {
+            return None
+        }
+        let id = -id;
+        if id <= 2049 {
+            return Some(id as i64 - 1025);
+        }
+        if id <= 2049 + 54 {
+            return Some((1 as i64) << (id - 2049 + 10));
+        }
+        if id <= 2049 + 54 + 54 {
+            return Some(((1 as i64) << (id - 2049 - 54 + 10)).wrapping_sub(1));
+        }
+        None
+    }
+
+    pub const fn new_val(id: i32) -> ValueId {
+        assert!(id > 0);
+        ValueId(id)
+    }
+
+    pub const fn new_const(id: i32) -> ValueId {
+        assert!(id > 0);
+        ValueId(-id)
+    }
+
+    pub const fn from_predefined_const(x: i64) -> Option<ValueId> {
+        if x >= -1024 && x <= 1024 {
+            Some(Self::new_const(x as i32 + 1025))
+        } else if x & (x.wrapping_sub(1)) == 0 {
+            // power of 2 (0010000000 in binary)
+            Some(Self::new_const(2049 - 10 + x.trailing_zeros() as i32))
+        } else if x & (x.wrapping_add(1)) == 0 {
+            // power of 2 - 1 (011111111 in binary)
+            Some(Self::new_const(2049 - 10 + 64 - 10 + x.trailing_ones() as i32))
+        } else {
+            None
+        }
     }
 }
 impl From<i32> for ValueId {
@@ -34,16 +82,31 @@ impl fmt::Display for ValueId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_null() {
             write!(f, "∅")
+        } else if let Some(c) = self.to_predefined_const() {
+            write!(f, "{}", c)
         } else if self.is_constant() {
-            write!(f, "c{}", -self.0)
+            write!(f, "c{}", -self.0 - Self::PREDEF_RANGE)
         } else {
             write!(f, "v{}", self.0)
         }
     }
 }
 impl fmt::Debug for ValueId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(self, f) }
+}
+
+#[test]
+fn test_predefined_valueid() {
+    let vals = (-1024..=1024).into_iter()
+        .chain((0..63).map(|x| 1i64 << x))
+        .chain((0..63).map(|x| (1i64 << x).wrapping_sub(1)));
+    for v in vals {
+        let vid = ValueId::from_predefined_const(v);
+        assert!(vid.is_some_and(|x| x.is_constant()), "v={v} vid={:?}", vid.map(|x| x.0));
+        assert_eq!(Some(v), ValueId::to_predefined_const(vid.unwrap()), "vid={}", vid.unwrap().0);
+    }
+    for v in 2049..4095 {
+        assert_eq!(None, ValueId::from_predefined_const(v), "{v}");
     }
 }
 
@@ -138,7 +201,7 @@ pub enum OptOp<TVal: Clone + PartialEq + Eq + Display> {
     Jump(Condition<TVal>, BlockId), // if true: jump to BB. `inputs` are parameters for the target BB
 
     Assert(Condition<TVal>, OperationError, Option<TVal>), // error, optional argument
-    Deopt(Condition<TVal>), // if true: abort block execution, IP where we continue
+    DeoptAssert(Condition<TVal>), // if false: abort block execution, IP where we continue
     // Done(u32), // instruction pointer where to continue execution
     Median,
     MedianCursed, // _ <- median(N, a, b, c, ...)
@@ -148,7 +211,7 @@ pub enum OptOp<TVal: Clone + PartialEq + Eq + Display> {
 
 impl<TVal: Clone + PartialEq + Eq + Display> OptOp<TVal> {
     pub fn is_terminal(&self) -> bool {
-        matches!(self, OptOp::Jump(Condition::True, _) | OptOp::Deopt(Condition::True) | OptOp::Assert(Condition::True, _, _))
+        matches!(self, OptOp::Jump(Condition::True, _) | OptOp::DeoptAssert(Condition::False) | OptOp::Assert(Condition::False, _, _))
     }
 
     pub fn condition(&self) -> Option<Condition<TVal>> {
@@ -157,7 +220,7 @@ impl<TVal: Clone + PartialEq + Eq + Display> OptOp<TVal> {
             OptOp::Select(cond) => Some(cond.clone()),
             OptOp::Jump(cond, _) => Some(cond.clone()),
             OptOp::Assert(cond, _, _) => Some(cond.clone()),
-            OptOp::Deopt(cond) => Some(cond.clone()),
+            OptOp::DeoptAssert(cond) => Some(cond.clone()),
             _ => None,
         }
     }
@@ -182,7 +245,7 @@ impl<TVal: Clone + PartialEq + Eq + Display> OptOp<TVal> {
             OptOp::Assert(_, _, _) => OpEffect::MayFail,
 
             OptOp::Jump(_, _) => OpEffect::ControlFlow,
-            OptOp::Deopt(_) | OptOp::Universal | OptOp::MedianCursed => OpEffect::MayDeopt,
+            OptOp::DeoptAssert(_) | OptOp::Universal | OptOp::MedianCursed => OpEffect::MayDeopt,
             OptOp::StackSwap => OpEffect::StackWrite,
         }
     }
@@ -264,6 +327,12 @@ pub enum OpEffect {
     MayDeopt,
     ControlFlow,
     StackWrite,
+}
+
+impl OpEffect {
+    pub fn only_if(&mut self, condition: bool) {
+        if condition { *self = OpEffect::None }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -517,7 +586,7 @@ pub struct GraphBuilder {
 
 impl GraphBuilder {
     pub fn new() -> Self {
-        let mut t = Self {
+        Self {
             values: HashMap::new(),
             blocks: vec![BasicBlock::new(BlockId(0), vec![])],
             current_block: BlockId(0),
@@ -527,15 +596,7 @@ impl GraphBuilder {
             constant_lookup: HashMap::new(),
             value_index: HashMap::new(),
             assumed_program_position: None,
-        };
-        t.store_constant(0);
-        t.store_constant(1);
-        t.store_constant(2);
-        t.store_constant(3);
-        t.store_constant(4);
-        t.store_constant(5);
-        t.store_constant(-1);
-        t
+        }
     }
 
     pub fn set_program_position(&mut self, pos: Option<usize>) {
@@ -589,7 +650,6 @@ impl GraphBuilder {
 
         let val = fallback(self, instr.0.clone(), &instr.1);
         if let Some(constant) = self.values.get(&val).and_then(|info: &ValueInfo| info.as_constant()) {
-
             // maybe remove the value
             if !self.stack.lookup.contains_key(&val) {
                 self.stack.poped_values.push(val);
@@ -614,17 +674,20 @@ impl GraphBuilder {
             let val = this.new_value();
             val_settings(val);
             let val_id = val.id;
-            let i = this.push_instr(op, args.clone(), val_id);
+            let i = this.push_instr(op, args, val_id);
             instr_settings(i);
             val_id
         })
     }
 
     pub fn store_constant(&mut self, value: i64) -> ValueId {
+        if let Some(predefined) = ValueId::from_predefined_const(value) {
+            return predefined
+        }
         if let Some(&id) = self.constant_lookup.get(&value) {
             return id;
         }
-        let id = ValueId(-(self.constants.len() as i32) - 1);
+        let id = ValueId::new_const(ValueId::PREDEF_RANGE + self.constants.len() as i32 + 1);
         self.constants.push(value);
         self.constant_lookup.insert(value, id);
         id
@@ -683,6 +746,18 @@ impl GraphBuilder {
         let instr = self.push_instr(op, args, out);
         instr.stack_state = Some(stack_state);
         instr
+    }
+
+    pub fn push_assert(&mut self, c: Condition<ValueId>, error: OperationError, val: Option<ValueId>) {
+        self.push_instr(OptOp::Assert(c, error, val), &[], ValueId(0));
+    }
+
+    pub fn push_deopt_assert(&mut self, c: Condition<ValueId>, precise_deoptinfo: bool) {
+        if precise_deoptinfo {
+            self.push_instr_may_deopt(OptOp::DeoptAssert(c), &[], ValueId(0));
+        } else {
+            self.push_instr(OptOp::DeoptAssert(c), &[], ValueId(0));
+        }
     }
 
     pub fn instr_mut(&mut self, id: InstrId) -> Option<&mut OptInstr> {
@@ -761,7 +836,7 @@ impl GraphBuilder {
 
     pub fn get_constant(&self, id: ValueId) -> Option<i64> {
         if id.is_constant() {
-            Some(self.constants[(-id.0 - 1) as usize])
+            id.to_predefined_const().or_else(|| Some(self.constants[(-id.0 - 1 - ValueId::PREDEF_RANGE) as usize]))
         } else {
             None
         }
@@ -771,26 +846,50 @@ impl GraphBuilder {
         if !id.is_constant() {
             panic!("Not a constant: {:?}", id);
         }
-        self.constants[(-id.0 - 1) as usize]
+        if let Some(x) = id.to_predefined_const() {
+            x
+        } else {
+            self.constants[(-id.0 - 1 - ValueId::PREDEF_RANGE) as usize]
+        }
     }
 
-    pub fn val_info<'a>(&'a self, reg: ValueId) -> Option<Cow<'a, ValueInfo>> {
-        if reg.is_constant() {
-            let c = self.get_constant_(reg);
-            let mut x = ValueInfo::new(reg);
+    pub fn list_used_constants(&self) -> Vec<(ValueId, i64)> {
+        let mut used = HashMap::new();
+        for b in &self.blocks {
+            for i in b.instructions.values() {
+                for v in i.iter_inputs() {
+                    if v.is_constant() && v.to_predefined_const().is_none() {
+                        used.entry(v).or_insert_with(|| {
+                            let Some(c) = self.get_constant(v) else {
+                                panic!("Cannot find constant {} used by {}", v, i)
+                            };
+                            c
+                        });
+                    }
+                }
+            }
+        }
+
+        used.into_iter().collect()
+    }
+
+    pub fn val_info<'a>(&'a self, v: ValueId) -> Option<Cow<'a, ValueInfo>> {
+        if v.is_constant() {
+            let c = self.get_constant_(v);
+            let mut x = ValueInfo::new(v);
             x.range = c..=c;
             Some(Cow::Owned(x))
         } else {
-            self.values.get(&reg).map(|v| Cow::Borrowed(v))
+            self.values.get(&v).map(|v| Cow::Borrowed(v))
         }
     }
 
-    pub fn val_range(&self, reg: ValueId) -> RangeInclusive<i64> {
-        if reg.is_constant() {
-            let c = self.constants[(-reg.0 - 1) as usize];
+    pub fn val_range(&self, v: ValueId) -> RangeInclusive<i64> {
+        if v.is_constant() {
+            let c = self.get_constant_(v);
             return c..=c;
         }
-        match self.values.get(&reg) {
+        match self.values.get(&v) {
             Some(reg) => reg.range.clone(),
             None => i64::MIN..=i64::MAX,
         }
@@ -819,7 +918,7 @@ impl GraphBuilder {
             }
         }
         parts.reverse();
-        format!("[{}]", parts.join(", "))
+        format!("{} [{}]", self.stack.stack.len(), parts.join(", "))
     }
 
     pub fn remove_instruction(&mut self, id: InstrId, force_value_removal: bool) {

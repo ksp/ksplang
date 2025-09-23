@@ -59,7 +59,7 @@ pub enum PrecompiledOp<TReg: Display> {
     Jump(Condition<TReg>, u16), // if true: jump to instruction (in this precompiled block)
 
     Assert(Condition<TReg>, u16), // error code
-    Deopt(Condition<TReg>), // if true: abort block execution
+    DeoptAssert(Condition<TReg>), // if false: abort block execution
     Done(u32), // instruction pointer where to continue execution
     Median3(TReg, TReg, TReg, TReg), // a <- median(b, c, d)
     MedianCursed3(TReg, TReg, TReg), // a <- median(b, c, 3)
@@ -130,7 +130,7 @@ impl<TReg: Display> PrecompiledOp<TReg> {
             PrecompiledOp::Jump(condition, ip) => PrecompiledOp::Jump(condition.replace_regs(|r| f(r, false)), *ip),
 
             PrecompiledOp::Assert(condition, code) => PrecompiledOp::Assert(condition.replace_regs(|r| f(r, false)), *code),
-            PrecompiledOp::Deopt(condition) => PrecompiledOp::Deopt(condition.replace_regs(|r| f(r, false))),
+            PrecompiledOp::DeoptAssert(condition) => PrecompiledOp::DeoptAssert(condition.replace_regs(|r| f(r, false))),
             PrecompiledOp::Done(ip) => PrecompiledOp::Done(*ip),
 
             PrecompiledOp::Median3(a, b, c, d) => PrecompiledOp::Median3(f(a, true), f(b, false), f(c, false), f(d, false)),
@@ -158,6 +158,10 @@ pub enum Condition<TReg> {
     GtConst(TReg, i16), // a > const
     Geq(TReg, TReg), // a >= b
     GeqConst(TReg, i16), // a >= const
+    Divides(TReg, TReg), // a % b == 0
+    DividesConst(TReg, u16), // a % const == 0
+    NotDivides(TReg, TReg), // a % b != 0
+    NotDividesConst(TReg, u16), // a % const != 0
     True,
     False,
 }
@@ -181,6 +185,10 @@ impl<TReg> Condition<TReg> {
             Condition::GtConst(a, c) => Condition::GtConst(f(a), *c),
             Condition::Geq(a, b) => Condition::Geq(f(a), f(b)),
             Condition::GeqConst(a, c) => Condition::GeqConst(f(a), *c),
+            Condition::Divides(a, b) => Condition::Divides(f(a), f(b)),
+            Condition::DividesConst(a, c) => Condition::DividesConst(f(a), *c),
+            Condition::NotDivides(a, b) => Condition::NotDivides(f(a), f(b)),
+            Condition::NotDividesConst(a, c) => Condition::NotDividesConst(f(a), *c),
             Condition::True => Condition::True,
             Condition::False => Condition::False,
         }
@@ -191,12 +199,12 @@ impl<TReg> Condition<TReg> {
         let mut out = ArrayVec::<TReg, 2>::new();
         match self {
             Condition::Eq(a, b) | Condition::Neq(a, b) | Condition::Lt(a, b)
-            | Condition::Leq(a, b) | Condition::Gt(a, b) | Condition::Geq(a, b) => {
+            | Condition::Leq(a, b) | Condition::Gt(a, b) | Condition::Geq(a, b) | Condition::Divides(a, b) | Condition::NotDivides(a, b) => {
                 out.push(a.clone());
                 out.push(b.clone());
             },
             Condition::EqConst(a, _) | Condition::NeqConst(a, _) | Condition::LtConst(a, _)
-            | Condition::LeqConst(a, _) | Condition::GtConst(a, _) | Condition::GeqConst(a, _) => {
+            | Condition::LeqConst(a, _) | Condition::GtConst(a, _) | Condition::GeqConst(a, _) | Condition::DividesConst(a, _) | Condition::NotDividesConst(a, _) => {
                 out.push(a.clone());
             },
             Condition::True | Condition::False => { }
@@ -220,6 +228,10 @@ impl<T: fmt::Display> fmt::Display for Condition<T> {
             Condition::GtConst(a, c) => write!(f, "{} > {}", a, c),
             Condition::Geq(a, b) => write!(f, "{} >= {}", a, b),
             Condition::GeqConst(a, c) => write!(f, "{} >= {}", a, c),
+            Condition::Divides(a, b) => write!(f, "{} % {} == 0", a, b),
+            Condition::DividesConst(a, c) => write!(f, "{} % {} == 0", a, c),
+            Condition::NotDivides(a, b) => write!(f, "{} % {} != 0", a, b),
+            Condition::NotDividesConst(a, c) => write!(f, "{} % {} != 0", a, c),
             Condition::True => write!(f, "true"),
             Condition::False => write!(f, "false"),
         }

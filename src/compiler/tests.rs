@@ -19,10 +19,16 @@ fn precompile(ksplang: &str, terminate_at: Option<usize>) -> GraphBuilder {
 
 #[test]
 fn test_constant_zero() {
-    let g = precompile("CS CS lensum CS funkcia", None);
+    // let g = precompile("CS CS lensum CS funkcia", None);
     // let g = precompile("CS CS lensum CS funkcia ++ praise CS d pop funkcia ++ REM", None);
     // let g = precompile("CS CS lensum ++ CS lensum CS ++ funkcia CS ++ funkcia", None);
-    // let g = precompile("CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum ++ CS lensum CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u", None);
+    // TODO:
+    //  * fusing: const + (const + a)
+    //  * median(a, 2) = a / 2 + 1
+    //  * a << 1 = a * 2
+    //  * a * 2 / 2 = a
+    //  * a / 2 * 2 = a & ~1
+    let g = precompile("CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum ++ CS lensum CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u", None);
 
     for bb in &g.blocks {
         println!("{}", bb);

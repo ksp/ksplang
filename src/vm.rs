@@ -98,7 +98,7 @@ enum Effect {
     TemporaryReverse(i64),
 }
 
-enum QuadraticEquationResult {
+pub enum QuadraticEquationResult {
     None,
     One(i64),
     Two(i64, i64),
@@ -106,7 +106,7 @@ enum QuadraticEquationResult {
 
 /// Solve the quadratic equation ax^2+bx+c=0 and return
 /// integer results sorted from smallest to largest.
-fn solve_quadratic_equation(
+pub fn solve_quadratic_equation(
     a: i64,
     b: i64,
     c: i64,
@@ -648,12 +648,9 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
                 }
                 // If a is zero, this is a linear equation and we need to calculate it differently.
                 if a == 0 {
-                    let b = b as i128;
-                    let c = c as i128;
-
-                    if -c % b == 0 {
+                    if c % b == 0 {
                         let result =
-                            (-c / b).try_into().map_err(|_| OperationError::IntegerOverflow)?;
+                            (c / b).checked_neg().ok_or(OperationError::IntegerOverflow)?;
                         self.push(result)?;
                     }
                     return Ok(Effect::None);

@@ -94,6 +94,8 @@ pub fn digit_sum_range(r: RangeInclusive<i64>) -> RangeInclusive<i64> {
         olo = olo * 10 + 0;
     }
 
+    println!("{olo} {ohi}");
+
     assert!(olo <= hi && olo >= lo && ohi >= lo && ohi <= hi, "out of range input: {}..={}, olo={}, ohi={}", lo, hi, olo, ohi);
 
     return cmp::min(digit_sum_u64(olo), digit_sum_u64(lo))..=cmp::max(digit_sum_u64(ohi), digit_sum_u64(hi));
@@ -139,7 +141,11 @@ fn test_digit_range() {
     assert_eq!(0..=170, digit_sum_range(-i64::MAX..=i64::MAX));
     assert_eq!(0..=170, digit_sum_range(0..=i64::MAX));
     assert_eq!(1..=170, digit_sum_range(1..=i64::MAX));
-    // for i in [i64::MIN, -8999999999999999999, 8999999999999999999, 9199999999999999999, i64::MAX] {
-    //     assert_eq!(digit_sum(i), digit_sum_reference(i));
-    // }
+    assert_eq!(1..=18, digit_sum_range(1..=170));
+    assert_eq!(1..=16, digit_sum_range(100..=170));
+    assert_eq!(1..=16, digit_sum_range(100..=169));
+    assert_eq!(3..=15, digit_sum_range(120..=168));
+    for i in [i64::MIN, -8999999999999999999, 8999999999999999999, 9199999999999999999, i64::MAX] {
+        assert_eq!(digit_sum(i), digit_sum_reference(i));
+    }
 }

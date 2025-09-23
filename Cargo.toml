@@ -11,7 +11,8 @@ categories = ["compilers"]
 
 [dependencies]
 thiserror = "1.0.40"
-num-integer = "0.1.45"
+num-integer = "0.1.46"
+num-traits = "0.2.19"
 smallvec = { version = "1.15.1", features = ["union", "const_generics", "const_new"] }
 arrayvec = "0.7.6"
 

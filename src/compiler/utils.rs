@@ -1,4 +1,7 @@
-use std::{cmp, collections::HashSet, ops::RangeInclusive};
+use std::{cmp, collections::HashSet, hash::Hash, ops::RangeInclusive};
+
+use num_integer::Integer;
+use num_traits::{CheckedAdd, CheckedMul, CheckedSub, SaturatingAdd, SaturatingMul, SaturatingSub};
 
 
 
@@ -30,6 +33,17 @@ pub fn abs_range(r: RangeInclusive<i64>) -> RangeInclusive<u64> {
     }
 }
 
+pub fn range_2_i64(r: RangeInclusive<u64>) -> RangeInclusive<i64> {
+    let (a, b) = r.into_inner();
+    if a > i64::MAX as u64 {
+        1..=0
+    } else if b > i64::MAX as u64 {
+        a as i64..=i64::MAX
+    } else {
+        a as i64..=b as i64
+    }
+}
+
 pub fn sort_tuple<T: Ord>(a: T, b: T) -> (T, T) {
     if a <= b {
         (a, b)
@@ -50,32 +64,43 @@ pub fn median(vals: &mut [i64]) -> i64 {
 }
 
 
-pub fn eval_combi<F: Fn(i64, i64) -> Option<i64>>(
-    a: RangeInclusive<i64>,
-    b: RangeInclusive<i64>,
+pub fn eval_combi<T1, T2, TR, F: FnMut(T1, T2) -> Option<TR>>(
+    a: RangeInclusive<T1>,
+    b: RangeInclusive<T2>,
     max_combination: u64,
-    f: F,
-) -> Option<RangeInclusive<i64>> {
+    mut f: F,
+) -> Option<RangeInclusive<TR>>
+    where T1: Integer + CheckedSub + CheckedAdd + CheckedMul + Clone + TryFrom<u64>,
+          T2: Integer + CheckedSub + CheckedAdd + CheckedMul + Clone + TryFrom<u64> + TryFrom<T1>,
+          TR: Integer + Hash + Clone + From<i32>
+{
     if a.is_empty() || b.is_empty() {
-        return Some(1..=0);
+        return Some(TR::one()..=TR::zero());
     }
 
-    let size_a = a.end().abs_diff(*a.start()).saturating_add(1);
-    let size_b = b.end().abs_diff(*b.start()).saturating_add(1);
-    if size_a.saturating_mul(size_b) <= max_combination {
+    let (a_start, a_end) = a.into_inner();
+    let (b_start, b_end) = b.into_inner();
+
+    let a_size = a_end.checked_sub(&a_start)?.checked_add(&T1::one())?;
+    let b_size = b_end.checked_sub(&b_start)?.checked_add(&T2::one())?;
+    if b_size.checked_mul(&a_size.try_into().ok()?)? <= max_combination.try_into().ok().expect("max_combination convert") {
         let mut values = HashSet::new();
-        for x in a.clone() {
-            for y in b.clone() {
-                if let Some(value) = f(x, y) {
+        let mut x = a_start;
+        let mut y = b_start;
+        while x <= a_end {
+            while y <= b_end {
+                if let Some(value) = f(x.clone(), y.clone()) {
                     values.insert(value);
                 }
+                y = y + T2::one();
             }
+            x = x + T1::one();
         }
         if values.is_empty() {
-            return Some(1..=0);
+            return Some(TR::one()..=TR::zero());
         }
-        let min = *values.iter().min().unwrap();
-        let max = *values.iter().max().unwrap();
+        let min = values.iter().min().unwrap().clone();
+        let max = values.iter().max().unwrap().clone();
         Some(min..=max)
     } else {
         None
