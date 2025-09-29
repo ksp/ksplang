@@ -604,11 +604,11 @@ impl GraphBuilder {
     }
 
     pub fn current_block_mut(&mut self) -> &mut BasicBlock {
-        &mut self.blocks[self.current_block.0 as usize]
+        self.block_mut(self.current_block).unwrap()
     }
 
     pub fn current_block_ref(&self) -> &BasicBlock {
-        &self.blocks[self.current_block.0 as usize]
+        self.block_(self.current_block)
     }
 
     pub fn next_instr_id(&self) -> InstrId {
@@ -760,8 +760,23 @@ impl GraphBuilder {
         }
     }
 
+    pub fn block(&self, id: BlockId) -> Option<&BasicBlock> {
+        self.blocks.get(id.0 as usize)
+    }
+
+    pub fn block_(&self, id: BlockId) -> &BasicBlock {
+        let Some(x) = self.blocks.get(id.0 as usize) else {
+            panic!("Block {id} does not exist (there is {} BBs)", self.blocks.len());
+        };
+        x
+    }
+
+    pub fn block_mut(&mut self, id: BlockId) -> Option<&mut BasicBlock> {
+        self.blocks.get_mut(id.0 as usize)
+    }
+
     pub fn instr_mut(&mut self, id: InstrId) -> Option<&mut OptInstr> {
-        self.blocks.get_mut(id.block_id().0 as usize)?.instructions.get_mut(&id.instr_ix())
+        self.block_mut(id.block_id())?.instructions.get_mut(&id.instr_ix())
     }
 
     pub fn set_effect(&mut self, id: InstrId, effect: OpEffect) {

@@ -1,10 +1,10 @@
 use std::iter::Product;
 
-use crate::{compiler::{cfg::{GraphBuilder, OptInstr}, precompiler::Precompiler}, parser};
+use crate::{compiler::{cfg::{GraphBuilder, OptInstr}, precompiler::{NoTrace, Precompiler}}, parser};
 
-fn precompile_ops(ops: &[crate::ops::Op], terminate_at: Option<usize>) -> Precompiler<'_> {
+fn precompile_ops(ops: &[crate::ops::Op], terminate_at: Option<usize>) -> Precompiler<'_, NoTrace> {
     let g = GraphBuilder::new();
-    let mut precompiler = Precompiler::new(ops, 1000, false, 0, 100_000, terminate_at, g);
+    let mut precompiler = Precompiler::new(ops, 1000, false, 0, 100_000, terminate_at, g, NoTrace());
     precompiler.interpret();
     precompiler
 }
@@ -12,7 +12,7 @@ fn precompile_ops(ops: &[crate::ops::Op], terminate_at: Option<usize>) -> Precom
 fn precompile(ksplang: &str, terminate_at: Option<usize>) -> GraphBuilder {
     let parsed = parser::parse_program(ksplang).unwrap();
     let g = GraphBuilder::new();
-    let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, terminate_at, g);
+    let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, terminate_at, g, NoTrace());
     precompiler.interpret();
     precompiler.g
 }
@@ -28,6 +28,7 @@ fn test_constant_zero() {
     //  * a << 1 = a * 2
     //  * a * 2 / 2 = a
     //  * a / 2 * 2 = a & ~1
+    //  * 
     let g = precompile("CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum ++ CS lensum CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u", None);
 
     for bb in &g.blocks {

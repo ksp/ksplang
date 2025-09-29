@@ -1,8 +1,12 @@
 //! Functions for executing ksplang programs.
+use core::panic;
+use std::{collections::{BTreeMap, HashMap}, mem, ops::Range, str::MatchIndices};
+
 use num_integer::{Integer, Roots};
+use smallvec::{SmallVec, ToSmallVec};
 use thiserror::Error;
 
-use crate::{digit_sum::{digit_sum, digit_sum_reference}, funkcia, ops::Op};
+use crate::{compiler::{cfg::GraphBuilder, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::{digit_sum, digit_sum_reference}, funkcia, ops::Op};
 
 #[cfg(test)]
 mod tests;
@@ -14,29 +18,40 @@ mod tests;
 #[derive(Default)]
 pub struct NoStats {}
 
-impl StateStats for NoStats {
+impl Tracer for NoStats {
     #[inline(always)]
     fn push(&mut self, _: i64) {}
     #[inline(always)]
     fn pop(&mut self) {}
+    #[inline(always)]
+    fn instruction(&mut self, _ip: usize, _op: Op, _: &Result<Effect, OperationError>) -> Result<(), RunError> { Ok(()) }
+    #[inline(always)]
+    fn should_continue(&mut self, _r: bool, _ip: usize, _op: Op) -> bool { true }
 }
 
 /// A trait for tracking statistics about the state of the VM.
 /// Can also be used to track pushed and popped values.
 ///
 /// You can implement this trait to track any statistics you need.
-pub trait StateStats: Default {
+pub trait Tracer: Default {
     fn push(&mut self, value: i64);
     fn pop(&mut self);
+    fn instruction(&mut self, ip: usize, op: Op, result: &Result<Effect, OperationError>) -> Result<(), RunError>;
+    fn should_continue(&mut self, reversed: bool, ip: usize, op: Op) -> bool;
 }
 
 /// The internal state of the VM.
 #[derive(Clone, Debug)]
-struct State<'a, TStats: StateStats> {
-    stack: Vec<i64>,
-    max_stack_size: usize,
-    pi_digits: &'a [i8],
-    stats: TStats,
+struct State<'a, TTracer: Tracer> {
+    pub stack: Vec<i64>,
+    pub max_stack_size: usize,
+    pub pi_digits: &'a [i8],
+    pub instructions_run: u64,
+    pub ip: usize,
+    pub reversed: bool,
+    pub reverse_undo_stack: Vec<(usize, usize)>,
+    pub ops: Vec<Op>,
+    pub tracer: TTracer,
 }
 
 /// An error that can occur during the execution of ksplang instructions.
@@ -88,7 +103,7 @@ pub enum OperationError {
     ArgumentCMustBeNonNegative { value: i64 },
 }
 
-enum Effect {
+pub enum Effect {
     None,
     SetInstructionPointer(usize),
     SaveAndSetInstructionPointer(usize),
@@ -98,7 +113,7 @@ enum Effect {
     TemporaryReverse(i64),
 }
 
-pub enum QuadraticEquationResult {
+pub(crate) enum QuadraticEquationResult {
     None,
     One(i64),
     Two(i64, i64),
@@ -106,7 +121,7 @@ pub enum QuadraticEquationResult {
 
 /// Solve the quadratic equation ax^2+bx+c=0 and return
 /// integer results sorted from smallest to largest.
-pub fn solve_quadratic_equation(
+pub(crate) fn solve_quadratic_equation(
     a: i64,
     b: i64,
     c: i64,
@@ -254,9 +269,39 @@ pub(crate) fn decimal_len(num: i64) -> i64 {
     num.abs_diff(0).checked_ilog10().map(|x| x + 1).unwrap_or(0) as i64
 }
 
-impl<'a, TStats: StateStats> State<'a, TStats> {
-    fn new(max_stack_size: usize, pi_digits: &'a [i8]) -> Self {
-        State { stack: Vec::new(), max_stack_size, pi_digits, stats: Default::default() }
+impl<'a, TTracer: Tracer> State<'a, TTracer> {
+    fn new(max_stack_size: usize, pi_digits: &'a [i8], ops: Vec<Op>, stack: Vec<i64>) -> Self {
+        State {
+            max_stack_size,
+            pi_digits,
+            instructions_run: 0,
+            ip: 0,
+            reversed: false,
+            reverse_undo_stack: vec![],
+            stack,
+            ops,
+            tracer: Default::default()
+        }
+    }
+
+    fn change_tracer<T2: Tracer>(self, new_tracer: impl FnOnce(TTracer) -> T2) -> State<'a, T2> {
+        State {
+            stack: self.stack,
+            max_stack_size: self.max_stack_size,
+            pi_digits: self.pi_digits,
+            instructions_run: self.instructions_run,
+            ip: self.ip,
+            reversed: self.reversed,
+            reverse_undo_stack: self.reverse_undo_stack,
+            ops: self.ops,
+            tracer: new_tracer(self.tracer)
+        }
+    }
+
+    fn swap_tracer<T2: Tracer>(mut self, new_tracer: T2) -> (TTracer, State<'a, T2>) {
+        let old = mem::take(&mut self.tracer);
+        let result = self.change_tracer(move |_| { new_tracer });
+        (old, result)
     }
 
     fn clear(&mut self) {
@@ -264,7 +309,7 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
     }
 
     fn pop(&mut self) -> Result<i64, OperationError> {
-        self.stats.pop();
+        self.tracer.pop();
         self.stack.pop().ok_or(OperationError::PopFailed)
     }
 
@@ -274,7 +319,7 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
         }
 
         self.stack.push(value);
-        self.stats.push(value);
+        self.tracer.push(value);
         Ok(())
     }
 
@@ -718,12 +763,18 @@ impl<'a, TStats: StateStats> State<'a, TStats> {
                     return Err(OperationError::NegativeInstructionIndex { index: i });
                 }
 
+                let ip = (self.ip as i64) + if self.reversed { -1 } else { 1 };
+                self.stack.push(ip);
+                return Ok(Effect::SetInstructionPointer(
+                     i.try_into().map_err(|_| OperationError::InstructionOutOfRange { index: i })?,
+                ));
+
                 // The try_into() should only fail in case when usize has a smaller range
                 // than i64, in which case this is the correct behavior - we cannot have this
                 // amount of instructions anyway.
-                return Ok(Effect::SaveAndSetInstructionPointer(
-                    i.try_into().map_err(|_| OperationError::InstructionOutOfRange { index: i })?,
-                ));
+                // return Ok(Effect::SaveAndSetInstructionPointer(
+                //     i.try_into().map_err(|_| OperationError::InstructionOutOfRange { index: i })?,
+                // ));
             }
             Op::Goto => {
                 let i = self.peek()?;
@@ -881,11 +932,14 @@ pub enum RunError {
     /// The program ran for too long (this is a result of the [`Op::Sleep`] instruction).
     #[error("The program ran for too long.")]
     Timeout,
+    /// Tracer interupted the run with custom data
+    #[error("Tracer interrupted program execution.")]
+    TracerInterrupt(u64, String)
 }
 
 /// The succesful result of running a ksplang program.
 #[derive(Debug, Clone)]
-pub struct RunResult<T: StateStats> {
+pub struct RunResult<T: Tracer> {
     /// The resulting stack after the program has finished.
     pub stack: Vec<i64>,
     /// The number of instructions which have been run.
@@ -895,7 +949,19 @@ pub struct RunResult<T: StateStats> {
     /// Whether the program was reversed at the end (due to [`Op::Rev`]).
     pub reversed: bool,
     /// The internal VM statistics.
-    pub stats: T,
+    pub tracer: T,
+}
+
+impl<T: Tracer> From<State<'_, T>> for RunResult<T> {
+    fn from(s: State<T>) -> Self {
+        RunResult {
+            stack: s.stack,
+            instruction_counter: s.instructions_run,
+            instruction_pointer: s.ip,
+            reversed: s.reversed,
+            tracer: s.tracer
+        }
+    }
 }
 
 /// Run a ksplang program with the given options.
@@ -921,20 +987,20 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult<NoStats>, RunErro
 ///
 /// This may be useful if you want to collect statistics about the state of the program
 /// during execution.
-pub fn run_with_stats<T: StateStats>(
+pub fn run_with_stats<T: Tracer>(
     ops: &[Op],
     options: VMOptions,
 ) -> Result<RunResult<T>, RunError> {
-    let mut state: State<T> = State::new(options.max_stack_size, options.pi_digits);
-    state.stack = options.initial_stack.to_vec();
+    let mut s: State<T> = State::new(options.max_stack_size, options.pi_digits, ops.to_vec(), options.initial_stack.to_vec());
+    run_state(&mut s, &options)?;
+    Ok(s.into())
+}
 
-    let mut ops = ops.to_vec();
-
-    let mut reverse_undo_stack = Vec::new();
-
-    let mut instructions_run = 0u64;
-    let mut ip = 0usize;
-    let mut reversed = false;
+#[inline]
+pub fn run_state<'a, T: Tracer>(
+    s: &mut State<'a, T>,
+    options: &VMOptions
+) -> Result<(), RunError> {
 
     enum IPChange {
         Increment,
@@ -943,36 +1009,35 @@ pub fn run_with_stats<T: StateStats>(
     }
 
     loop {
-        while let Some((reverse_ip, return_ip)) = reverse_undo_stack.last() {
-            if *reverse_ip == ip {
-                reversed = !reversed;
-                ip = *return_ip;
-                state.stack.reverse();
-                reverse_undo_stack.pop();
+        while let Some((reverse_ip, return_ip)) = s.reverse_undo_stack.last() {
+            if *reverse_ip == s.ip {
+                s.reversed = !s.reversed;
+                s.ip = *return_ip;
+                s.stack.reverse();
+                s.reverse_undo_stack.pop();
             } else {
                 break;
             }
         }
 
-        if instructions_run >= options.stop_after {
-            return Ok(RunResult {
-                stack: state.stack,
-                instruction_pointer: ip,
-                instruction_counter: instructions_run,
-                reversed,
-                stats: state.stats,
-            });
-        }
-
-        if let Some(&op) = ops.get(ip) {
+        if let Some(&op) = s.ops.get(s.ip) {
+            if s.instructions_run >= options.stop_after || !s.tracer.should_continue(s.reversed, s.ip, op) {
+                return Ok(());
+            }
+            let ip = s.ip;
+            let instruction_counter = s.instructions_run;
             let build_err = |error| RunError::InstructionFailed {
                 instruction: op,
                 index: ip,
-                instruction_counter: instructions_run,
+                instruction_counter,
                 error,
             };
 
-            let (ip_change, instruction_counter_change) = match state.apply(op) {
+            let result = s.apply(op);
+
+            s.tracer.instruction(s.ip, op, &result)?;
+
+            let (ip_change, instruction_counter_change) = match result {
                 Err(error) => return Err(build_err(error)),
                 Ok(Effect::None) => (IPChange::Increment, 1),
                 Ok(Effect::SetInstructionPointer(new_ip)) => (IPChange::Set(new_ip), 1),
@@ -980,15 +1045,15 @@ pub fn run_with_stats<T: StateStats>(
                 Ok(Effect::SaveAndSetInstructionPointer(new_ip)) => {
                     // This should never overflow for any realistically
                     // possible amount of instructions.
-                    let saved_ip = ip as i64 + if reversed { -1 } else { 1 };
-                    state.push(saved_ip).map_err(build_err)?;
+                    let saved_ip = s.ip as i64 + if s.reversed { -1 } else { 1 };
+                    s.push(saved_ip).map_err(build_err)?;
                     (IPChange::Set(new_ip), 1)
                 }
                 Ok(Effect::Timeout) => {
                     return Err(RunError::Timeout);
                 }
                 Ok(Effect::RunSubprogramAndAppendResult(subprogram_ops)) => {
-                    let remaining_ops = options.max_op_count - instructions_run;
+                    let remaining_ops = options.max_op_count - s.instructions_run;
                     let result = run(
                         &subprogram_ops,
                         VMOptions {
@@ -996,87 +1061,87 @@ pub fn run_with_stats<T: StateStats>(
                             max_stack_size: options.max_stack_size,
                             pi_digits: options.pi_digits,
                             max_op_count: remaining_ops,
-                            stop_after: options.stop_after - instructions_run,
+                            stop_after: options.stop_after - s.instructions_run,
                         },
                     )?;
                     for value in result.stack {
                         let op = Op::by_id(value as usize)
                             .ok_or(build_err(OperationError::InvalidInstructionId { id: value }))?;
-                        ops.push(op);
+                        s.ops.push(op);
                     }
                     (IPChange::Increment, 1 + result.instruction_counter)
                 }
                 Ok(Effect::TemporaryReverse(offset)) => {
-                    let return_ip = if reversed {
-                        (ip as i64)
+                    let return_ip = if s.reversed {
+                        (s.ip as i64)
                             .checked_sub(offset + 1)
                             .ok_or(build_err(OperationError::IntegerOverflow))?
                     } else {
-                        (ip as i64)
+                        (s.ip as i64)
                             .checked_add(offset + 1)
                             .ok_or(build_err(OperationError::IntegerOverflow))?
                     };
 
-                    if return_ip < 0 || return_ip >= ops.len() as i64 {
+                    if return_ip < 0 || return_ip >= s.ops.len() as i64 {
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: return_ip,
                         }));
                     }
 
-                    reversed = !reversed;
-                    reverse_undo_stack.push((ip, return_ip as usize));
-                    state.stack.reverse();
+                    s.reversed = !s.reversed;
+                    s.reverse_undo_stack.push((s.ip, return_ip as usize));
+                    s.stack.reverse();
                     (IPChange::Add(-offset), 1)
                 }
             };
 
             match ip_change {
                 IPChange::Increment => {
-                    if reversed {
-                        if ip == 0 {
-                            ip = usize::MAX;
+                    if s.reversed {
+                        if s.ip == 0 {
+                            s.ip = usize::MAX;
                         } else {
-                            ip -= 1;
+                            s.ip -= 1;
                         }
                     } else {
-                        ip += 1;
+                        s.ip += 1;
                     }
                 }
                 IPChange::Set(new_ip) => {
-                    if new_ip >= ops.len() {
+                    if new_ip >= s.ops.len() {
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: new_ip as i64,
                         }));
                     }
-                    ip = new_ip;
+                    s.ip = new_ip;
                 }
                 IPChange::Add(offset) => {
-                    let new_ip = if reversed {
-                        (ip as i64)
+                    let new_ip = if s.reversed {
+                        (s.ip as i64)
                             .checked_sub(offset)
                             .ok_or(build_err(OperationError::IntegerOverflow))?
                     } else {
-                        (ip as i64)
+                        (s.ip as i64)
                             .checked_add(offset)
                             .ok_or(build_err(OperationError::IntegerOverflow))?
                     };
 
-                    if new_ip < 0 || new_ip >= ops.len() as i64 {
+                    if new_ip < 0 || new_ip >= s.ops.len() as i64 {
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: new_ip,
                         }));
                     }
-                    ip = new_ip as usize;
+                    s.ip = new_ip as usize;
                 }
             }
 
-            instructions_run += instruction_counter_change;
-            if instructions_run >= options.max_op_count {
-                return Err(RunError::RunTooLong { instruction_counter: instructions_run });
+            s.instructions_run += instruction_counter_change;
+            if s.instructions_run >= options.max_op_count {
+                return Err(RunError::RunTooLong { instruction_counter: s.instructions_run });
             }
 
             // Sanity check; instructions should be doing their own checking.
-            if state.stack.len() > options.max_stack_size {
+            if s.stack.len() > options.max_stack_size {
                 return Err(RunError::StackOverflow);
             }
         } else {
@@ -1084,11 +1149,262 @@ pub fn run_with_stats<T: StateStats>(
         }
     }
 
-    Ok(RunResult {
-        stack: state.stack,
-        instruction_pointer: ip,
-        instruction_counter: instructions_run,
-        reversed,
-        stats: state.stats,
-    })
+    Ok(())
+}
+
+#[derive(Clone, Debug, PartialEq, Default)]
+struct VisitCounter {
+    counter: u32,
+    supressed: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct Optimizer {
+    last_ip: usize,
+    visit_counter: HashMap<usize, VisitCounter>,
+    optimized_blocks: HashMap<usize, ()>,
+    has_jumped: bool,
+    should_optimize: bool,
+    has_interrupted: bool,
+    is_fake_state: bool,
+}
+
+impl Tracer for Optimizer {
+    #[inline]
+    fn push(&mut self, _value: i64) {}
+
+    #[inline]
+    fn pop(&mut self) {}
+
+    #[inline]
+    fn instruction(&mut self, _ip: usize, _op: Op, result: &Result<Effect, OperationError>) -> Result<(), RunError> {
+        if !matches!(result, Ok(Effect::None)) {
+            self.has_jumped = true;
+        }
+        Ok(())
+    }
+
+    #[inline]
+    fn should_continue(&mut self, reversed: bool, ip: usize, op: Op) -> bool {
+        fn mark_visit(this: &mut Optimizer, reversed: bool, ip: usize) -> bool {
+            let k = if reversed { !ip } else { ip };
+            if this.optimized_blocks.contains_key(&k) {
+                return true;
+            }
+
+            let ctr = this.visit_counter.entry(k).or_default();
+            ctr.counter = ctr.counter.wrapping_add(1);
+            if ctr.supressed || ctr.counter < 10 {
+                this.has_jumped = false;
+                return true;
+            }
+            this.has_interrupted = true;
+            false
+        }
+        if self.has_jumped && op == Op::DigitSum {
+            mark_visit(self, reversed, ip)
+        } else {
+            true
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ActualTracer {
+    pub values: Vec<i64>,
+    pub ips: Vec<usize>,
+    pub pop_push_counts: Vec<(u32, u32)>,
+    // only stored when we branch:
+    // branch address -> (from address. range of instruction index)
+    pub ip_lookup: BTreeMap<usize, Vec<(usize, (usize, usize))>>,
+    pub total_pushes: u32,
+    pub total_pops: u32,
+    pub max_count: u32,
+    pub break_ip: usize,
+    pub record_jump_location: bool,
+    pub start_block_location: usize,
+    pub start_block_ix: usize,
+    pub reversed: bool,
+    pub lazymode: bool,
+}
+
+impl Tracer for ActualTracer {
+    fn push(&mut self, value: i64) {
+        self.values.push(value);
+        self.total_pushes = self.total_pops.saturating_add(1);
+    }
+
+    fn pop(&mut self) {
+        self.total_pops = self.total_pops.saturating_add(1);
+    }
+
+    fn instruction(&mut self, ip: usize, op: Op, result: &Result<Effect, OperationError>) -> Result<(), RunError> {
+        if self.total_pops == u32::MAX || self.total_pops == u32::MAX {
+            return Err(RunError::TracerInterrupt(0, format!("trace size overflow")))
+        }
+
+        if matches!(result, Ok(Effect::SaveAndSetInstructionPointer(_))) {
+            todo!("should not happen, hacked elsewhere");
+        }
+
+        self.ips.push(ip);
+        self.pop_push_counts.push((self.total_pops, self.total_pushes));
+        if matches!(result, Ok(Effect::RunSubprogramAndAppendResult(_) | Effect::TemporaryReverse(_))) {
+            panic!("nooo")
+        }
+        if matches!(op, Op::Jump | Op::Goto | Op::BranchIfZero | Op::Call) {
+            // record IP change
+            self.record_jump_location = true;
+            let entry = (self.start_block_location, (self.start_block_ix, self.ips.len()));
+            assert_eq!(entry.0.abs_diff(ip), entry.1.0.abs_diff(entry.1.1));
+            let v = self.ip_lookup.entry(ip).or_default();
+            v.push(entry);
+        }
+
+        Ok(())
+    }
+
+    fn should_continue(&mut self, reversed: bool, ip: usize, op: Op) -> bool {
+        assert_eq!(reversed, self.reversed);
+        if matches!(op, Op::Sum | Op::Sleep | Op::Rev | Op::Deez | Op::KPi | Op::FF) {
+            return false;
+        }
+        if self.max_count == 0 || self.break_ip == ip || self.values.len() > i32::MAX as usize {
+            return false;
+        }
+        if self.record_jump_location {
+            self.start_block_location = ip;
+            self.start_block_ix = self.ips.len();
+        }
+        return true;
+    }
+}
+
+impl ActualTracer {
+    fn find_trace_ix<'a>(&'a self, ip: usize) -> impl Iterator<Item = usize> + 'a {
+        let rev = self.reversed;
+        let dir = if rev { -1 } else { 1 };
+
+        let opt = if rev {
+            self.ip_lookup.range(..=ip).rev().next()
+        } else {
+            self.ip_lookup.range(ip..).next()
+        };
+
+        let current_block_ix: Option<usize> = if (self.ips.len() as i64 - self.start_block_ix as i64) < dir * (ip as i64 - self.start_block_location as i64) {
+            Some((dir * (ip as i64 - self.start_block_location as i64)) as usize + self.start_block_ix)
+        } else {
+            None
+        };
+
+        current_block_ix.into_iter().chain(
+            opt.into_iter().flat_map(|(block_end, traces)| traces.iter().cloned())
+                .filter(move |(block_start, _)| if rev { *block_start >= ip } else { *block_start <= ip })
+                .map(move |(block_start, (trace_start, trace_end))| {
+                    let offset = if rev { block_start - ip } else { ip - block_start };
+                    assert!(offset >= 0);
+                    assert!(trace_start + offset < trace_end);
+                    trace_start + offset
+                })
+        )
+    }
+
+    fn get_pushes(&self, trace_ix: usize) -> (u32, SmallVec<[i64; 2]>) {
+        let prev = if trace_ix != 0 { self.pop_push_counts[trace_ix - 1] } else { (0, 0) };
+        let current = self.pop_push_counts[trace_ix];
+        (current.0 - prev.0, self.values[prev.1 as usize..current.1 as usize].to_smallvec())
+    }
+
+    fn get_next_ip(&self, trace_ix: usize) -> Option<usize> {
+        self.ips.get(trace_ix + 1).copied()
+    }
+}
+
+impl TraceProvider for ActualTracer {
+    fn get_results<'a>(&'a mut self, ip: usize) -> impl Iterator<Item = (u32, smallvec::SmallVec<[i64; 2]>)> + 'a {
+        self.find_trace_ix(ip).map(|ix| self.get_pushes(ix))
+    }
+    fn is_lazy(&self) -> bool { false }
+
+    fn get_branch_targets<'a>(&'a mut self, ip: usize) -> impl Iterator<Item = usize> {
+        self.find_trace_ix(ip).flat_map(|ix| self.get_next_ip(ix))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LazyTracer<'a> {
+    state: State<'a, ActualTracer>
+}
+
+#[derive(Debug, Clone)]
+pub struct OptimizingVM {
+    program: Vec<Op>,
+    allow_deez: bool,
+    opt: Optimizer
+}
+
+impl OptimizingVM {
+    pub fn new(program: Vec<Op>, allow_deez: bool) -> Self {
+        Self { program, allow_deez, opt: Optimizer::default() }
+    }
+
+    pub fn run(&mut self, input_stack: Vec<i64>, opt: VMOptions) -> Result<RunResult<NoStats>, RunError> {
+        let program_len = self.program.len();
+        let mut s: State<Optimizer> = State::new(opt.max_stack_size, opt.pi_digits, self.program.to_vec(), input_stack);
+        s.tracer = mem::take(&mut self.opt);
+
+        let (s, result) = self.run_internal(s, &opt);
+
+        // restore state
+        if s.ops.len() > program_len {
+            todo!("deez cleanup");
+        }
+        let s = s.change_tracer(|old| {
+            self.opt = old;
+            NoStats::default()
+        });
+        match result {
+            Ok(()) => Ok(s.into()),
+            Err(e) => Err(e)
+        }
+    }
+
+    fn run_internal<'a>(&mut self, mut s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
+        loop {
+            s.tracer.has_interrupted = false;
+
+            let r = self::run_state(&mut s, options);
+            if r.is_err() || !s.tracer.has_interrupted {
+                return (s, r);
+            }
+        }
+    }
+
+    fn optimize<'a>(&mut self, mut s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
+        let limit = 10_000;
+        let mut opt = Optimizer::default();
+        let (optimizer, mut st) = s.swap_tracer(ActualTracer::default());
+        st.tracer.start_block_location = st.ip;
+        st.tracer.max_count = 4_000;
+        let start_ip = st.ip;
+        let start_stack_size = st.stack.len();
+        let reversed = st.reversed;
+        let result = run_state(&mut st, options);
+
+        let (trace, s) = st.swap_tracer(opt);
+
+        if result.as_ref().is_err_and(|e| matches!(e, RunError::TracerInterrupt(_, _))) {
+            return (s, result);
+        }
+
+        if trace.ips.len() < 100 {
+            println!("ehh tracing interrupted only after {} at {}", trace.ips.len(), s.ip);
+            return (s, Ok(()));
+        }
+
+        let mut p = Precompiler::new(&s.ops, start_stack_size, reversed, start_ip, limit, None, GraphBuilder::new(), trace);
+        p.interpret();
+
+        todo!()
+    }
 }

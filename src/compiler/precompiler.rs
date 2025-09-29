@@ -1,6 +1,7 @@
 use std::{cmp, collections::{BTreeSet, HashSet}, ops::RangeInclusive, result, vec};
 
 use num_integer::Integer;
+use smallvec::SmallVec;
 
 use crate::{compiler::{cfg::{GraphBuilder, OpEffect, OptOp, ValueId}, utils::{abs_range, eval_combi, eval_combi_u64, median, range_2_i64, sort_tuple, u64neg}, vm_code::Condition}, digit_sum::digit_sum_range, funkcia::funkcia, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
 
@@ -15,7 +16,28 @@ impl Default for Options {
     }
 }
 
-pub struct Precompiler<'a> {
+pub trait TraceProvider {
+    // type TracePointer
+    fn get_results<'a>(&'a mut self, ip: usize) -> impl Iterator<Item = (u32, SmallVec<[i64; 2]>)> + 'a;
+    fn is_lazy(&self) -> bool;
+
+    fn get_branch_targets<'a>(&'a mut self, ip: usize) -> impl Iterator<Item = usize>;
+    // fn get_push_pop_count(&mut self, ip: usize) -> impl Iterator<Item = (u32, u32)>;
+}
+
+pub struct NoTrace();
+impl TraceProvider for NoTrace {
+    fn get_results<'a>(&'a mut self, _ip: usize) -> impl Iterator<Item = (u32, SmallVec<[i64; 2]>)> + 'a {
+        std::iter::empty()
+    }
+    fn is_lazy(&self) -> bool { false }
+
+    fn get_branch_targets<'a>(&'a mut self, _ip: usize) -> impl Iterator<Item = usize> {
+        std::iter::empty()
+    }
+}
+
+pub struct Precompiler<'a, TP: TraceProvider> {
     pub ops: &'a [crate::ops::Op],
     pub initial_stack_size: usize,
     pub reversed_direction: bool,
@@ -26,9 +48,10 @@ pub struct Precompiler<'a> {
     pub interpretation_limit: usize,
     pub termination_ip: Option<usize>,
     pub opt: Options,
+    pub tracer: TP
 }
 
-impl<'a> Precompiler<'a> {
+impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
     pub fn new(
         ops: &'a [crate::ops::Op],
         initial_stack_size: usize,
@@ -37,6 +60,7 @@ impl<'a> Precompiler<'a> {
         interpretation_limit: usize,
         termination_ip: Option<usize>,
         initial_graph: GraphBuilder,
+        tracer: TP
     ) -> Self {
         Self {
             ops,
@@ -48,6 +72,7 @@ impl<'a> Precompiler<'a> {
             g: initial_graph,
             termination_ip,
             opt: Options::default(),
+            tracer
         }
     }
 
