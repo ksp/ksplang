@@ -27,7 +27,8 @@ pub fn u64neg(a: u64) -> i64 {
 pub fn abs_range(r: RangeInclusive<i64>) -> RangeInclusive<u64> {
     let (a, b) = r.into_inner();
     if (a >= 0) == (b >= 0) {
-        a.abs_diff(0)..=b.abs_diff(0)
+        let (a, b) = sort_tuple(a.abs_diff(0), b.abs_diff(0));
+        a..=b
     } else {
         0..=cmp::max(a.abs_diff(0), b.abs_diff(0))
     }
@@ -42,6 +43,11 @@ pub fn range_2_i64(r: RangeInclusive<u64>) -> RangeInclusive<i64> {
     } else {
         a as i64..=b as i64
     }
+}
+
+pub fn range_2_i64_neg(r: RangeInclusive<u64>) -> RangeInclusive<i64> {
+    let (a, b) = r.into_inner();
+    0i64.checked_sub_unsigned(b).unwrap()..=0i64.checked_sub_unsigned(a).unwrap()
 }
 
 pub fn sort_tuple<T: Ord>(a: T, b: T) -> (T, T) {
@@ -63,7 +69,6 @@ pub fn median(vals: &mut [i64]) -> i64 {
     }
 }
 
-
 pub fn eval_combi<T1, T2, TR, F: FnMut(T1, T2) -> Option<TR>>(
     a: RangeInclusive<T1>,
     b: RangeInclusive<T2>,
@@ -84,23 +89,30 @@ pub fn eval_combi<T1, T2, TR, F: FnMut(T1, T2) -> Option<TR>>(
     let a_size = a_end.checked_sub(&a_start)?.checked_add(&T1::one())?;
     let b_size = b_end.checked_sub(&b_start)?.checked_add(&T2::one())?;
     if b_size.checked_mul(&a_size.try_into().ok()?)? <= max_combination.try_into().ok().expect("max_combination convert") {
-        let mut values = HashSet::new();
+        let mut min = TR::zero();
+        let mut max = TR::zero();
+        let mut count = 0;
         let mut x = a_start;
-        let mut y = b_start;
         while x <= a_end {
+            let mut y = b_start.clone();
             while y <= b_end {
                 if let Some(value) = f(x.clone(), y.clone()) {
-                    values.insert(value);
+                    if count == 0 {
+                        min = value.clone();
+                        max = value.clone();
+                    } else {
+                        if value < min { min = value.clone() }
+                        if value > max { max = value.clone() }
+                    }
+                    count += 1;
                 }
                 y = y + T2::one();
             }
             x = x + T1::one();
         }
-        if values.is_empty() {
+        if count == 0 {
             return Some(TR::one()..=TR::zero());
         }
-        let min = values.iter().min().unwrap().clone();
-        let max = values.iter().max().unwrap().clone();
         Some(min..=max)
     } else {
         None
