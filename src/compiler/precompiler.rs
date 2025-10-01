@@ -86,10 +86,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
     fn instr_add(&mut self, a: ValueId, b: ValueId) -> ValueId {
         let (a, b) = sort_tuple(a, b);
-        let (start_a, end_a) = self.g.val_range(a).into_inner();
-        let (start_b, end_b) = self.g.val_range(b).into_inner();
-        let can_overflow = start_a.checked_add(start_b).is_none() || end_a.checked_add(end_b).is_none();
-        self.g.value_numbering(OptOp::Add, &[a, b], None, Some(if can_overflow { OpEffect::MayFail } else { OpEffect::None }))
+        self.g.value_numbering(OptOp::Add, &[a, b], None, None)
     }
 
     pub fn step(&mut self) -> Result<(), ()> {
@@ -206,7 +203,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 if start == i64::MAX {
                     return Err(());
                 }
-                let out = self.instr_add(a, ValueId::C_ONE);
+                let out = if a.is_constant() {
+                    let c = self.g.get_constant_(a);
+                    self.g.store_constant(c + 1)
+                } else {
+                    self.instr_add(a, ValueId::C_ONE)
+                };
                 self.g.pop_stack();
                 self.g.stack.push(out);
                 Ok(())

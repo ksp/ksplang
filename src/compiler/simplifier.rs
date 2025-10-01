@@ -330,7 +330,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
     }
     
     let mut iter = 0;
-    'main: loop {
+    let mut changed = true;
+    'main: while changed {
+        changed = true;
         iter += 1;
         if iter > 100 {
             println!("Warning: simplify_instr infinite loop detected: {i:?}");
@@ -521,7 +523,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             }
 
             _ => {
-                break 'main;
+                changed = false;
             }
         }
 

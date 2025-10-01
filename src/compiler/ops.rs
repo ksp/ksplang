@@ -324,7 +324,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         debug_assert!(self.arity().contains(&inputs.len()), "Invalid number of inputs for {:?}: {}", self, inputs.len());
         match self {
             OptOp::Push | OptOp::Pop | OptOp::Nop => Err(None),
-            OptOp::Add => inputs.iter().try_fold(1i64, |a, b| a.checked_add(*b)).ok_or(Some(OperationError::IntegerOverflow)),
+            OptOp::Add => inputs.iter().try_fold(0i64, |a, b| a.checked_add(*b)).ok_or(Some(OperationError::IntegerOverflow)),
             OptOp::Sub => {
                         assert_eq!(inputs.len(), 2);
                         inputs[0].checked_sub(inputs[1]).ok_or(Some(OperationError::IntegerOverflow))
