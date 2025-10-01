@@ -1,401 +1,12 @@
-use core::fmt;
+use core::{fmt, hash};
 use std::{
-    borrow::Cow, cmp, collections::{BTreeMap, HashMap, HashSet}, fmt::Display, mem, num::NonZeroI32, ops::{Range, RangeInclusive}
+    borrow::Cow, cmp, collections::{BTreeMap, HashMap, HashSet}, fmt::Display, i32, mem, ops::{Range, RangeInclusive}
 };
 
-use smallvec::SmallVec;
+use arrayvec::ArrayVec;
+use smallvec::{SmallVec, ToSmallVec};
 
-use crate::{compiler::vm_code::Condition, vm::OperationError};
-
-// const PREDEFINED_VALUES: [i64; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 24, 32, 64, 128, 256, 512, 1024, i64::MAX, -1, -2, -3];
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ValueId(pub i32);
-impl ValueId {
-    pub const PREDEF_RANGE: i32 = 4096;
-    pub const C_ZERO: ValueId = Self::from_predefined_const(0).unwrap();
-    pub const C_ONE: ValueId = Self::from_predefined_const(1).unwrap();
-    pub const C_TWO: ValueId = Self::from_predefined_const(2).unwrap();
-    pub const C_IMIN: ValueId = Self::from_predefined_const(i64::MIN).unwrap();
-    pub const C_IMAX: ValueId = Self::from_predefined_const(i64::MAX).unwrap();
-    pub const fn is_null(&self) -> bool {
-        self.0 == 0
-    }
-    pub const fn is_constant(&self) -> bool {
-        self.0 < 0
-    }
-    pub const fn is_computed(&self) -> bool {
-        self.0 > 0
-    }
-    pub const fn to_option(self) -> Option<NonZeroI32> {
-        NonZeroI32::new(self.0)
-    }
-
-    pub const fn to_predefined_const(self) -> Option<i64> {
-        let id = self.0;
-        if id >= 0 || id < -ValueId::PREDEF_RANGE {
-            return None
-        }
-        let id = -id;
-        if id <= 2049 {
-            return Some(id as i64 - 1025);
-        }
-        if id <= 2049 + 54 {
-            return Some((1 as i64) << (id - 2049 + 10));
-        }
-        if id <= 2049 + 54 + 54 {
-            return Some(((1 as i64) << (id - 2049 - 54 + 10)).wrapping_sub(1));
-        }
-        None
-    }
-
-    pub const fn new_val(id: i32) -> ValueId {
-        assert!(id > 0);
-        ValueId(id)
-    }
-
-    pub const fn new_const(id: i32) -> ValueId {
-        assert!(id > 0);
-        ValueId(-id)
-    }
-
-    pub const fn from_predefined_const(x: i64) -> Option<ValueId> {
-        if x >= -1024 && x <= 1024 {
-            Some(Self::new_const(x as i32 + 1025))
-        } else if x & (x.wrapping_sub(1)) == 0 {
-            // power of 2 (0010000000 in binary)
-            Some(Self::new_const(2049 - 10 + x.trailing_zeros() as i32))
-        } else if x & (x.wrapping_add(1)) == 0 {
-            // power of 2 - 1 (011111111 in binary)
-            Some(Self::new_const(2049 - 10 + 64 - 10 + x.trailing_ones() as i32))
-        } else {
-            None
-        }
-    }
-}
-impl From<i32> for ValueId {
-    fn from(value: i32) -> Self {
-        ValueId(value)
-    }
-}
-impl fmt::Display for ValueId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.is_null() {
-            write!(f, "∅")
-        } else if let Some(c) = self.to_predefined_const() {
-            write!(f, "{}", c)
-        } else if self.is_constant() {
-            write!(f, "c{}", -self.0 - Self::PREDEF_RANGE)
-        } else {
-            write!(f, "v{}", self.0)
-        }
-    }
-}
-impl fmt::Debug for ValueId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(self, f) }
-}
-
-#[test]
-fn test_predefined_valueid() {
-    let vals = (-1024..=1024).into_iter()
-        .chain((0..63).map(|x| 1i64 << x))
-        .chain((0..63).map(|x| (1i64 << x).wrapping_sub(1)));
-    for v in vals {
-        let vid = ValueId::from_predefined_const(v);
-        assert!(vid.is_some_and(|x| x.is_constant()), "v={v} vid={:?}", vid.map(|x| x.0));
-        assert_eq!(Some(v), ValueId::to_predefined_const(vid.unwrap()), "vid={}", vid.unwrap().0);
-    }
-    for v in 2049..4095 {
-        assert_eq!(None, ValueId::from_predefined_const(v), "{v}");
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct BlockId(pub u32);
-impl From<u32> for BlockId {
-    fn from(value: u32) -> Self { BlockId(value) }
-}
-impl Into<usize> for BlockId {
-    fn into(self) -> usize { self.0 as usize }
-}
-impl Into<u32> for BlockId {
-    fn into(self) -> u32 { self.0 }
-}
-impl fmt::Display for BlockId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "bb{}", self.0)
-    }
-}
-impl fmt::Debug for BlockId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-/// Unique identifier for instructions
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct InstrId(pub BlockId, pub u32);
-impl InstrId {
-    pub fn block_id(self) -> BlockId {
-        self.0
-    }
-    pub fn instr_ix(self) -> u32 {
-        self.1
-    }
-    pub fn is_block_head(self) -> bool {
-        self.1 == 0
-    }
-}
-impl fmt::Display for InstrId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "i{}_{}", self.0 .0, self.1)
-    }
-}
-impl fmt::Debug for InstrId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self, f)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum OptOp<TVal: Clone + PartialEq + Eq + Display> {
-    Push,
-    Pop,
-    Nop, // used for stack state accounting
-
-    Add,          // a + b
-    Sub,          // a - b
-    AbsSub,       // |a - b|
-    Mul,          // a * b
-    Div,          // a / b
-    CursedDiv,    // a % b if non-zero, otherwise a / b
-    Mod,          // a % b
-    ModEuler,     // a % b (always non-negative)
-    Tetration,    // a tetrated b times
-    Funkcia,      // funkcia(a, b)
-    LenSum,       // len(a) + len(b)
-    Max,          // max(a, b)
-    Min,          // min(a, b)
-    Sgn,          // sgn(a)
-    AbsFactorial, // |a|!
-    Universal, // universal[a](b, c) (or deopt if different number of params should be used instead)
-    And,       // a <- b & c
-    Or,        // a <- b | c
-    Xor,       // a <- b ^ c
-    ShiftL,    // a <- b << c
-    ShiftR,    // a <- b >> c
-
-    BinNot,                        // a <- ~b
-    BoolNot,                       // a <- !b
-    Condition(Condition<TVal>), // a <- condition ? 1 : 0
-
-    Select(Condition<TVal>), // a <- b ? c : d
-
-    DigitSum, // a <- digit_sum(b)
-    Gcd,      // a <- gcd(b, c)
-
-    StackSwap, // a <- stack[b]; stack[b] <- c; if b + d < stack_size, otherwise deopt
-
-    Const(i64),
-
-    Jump(Condition<TVal>, BlockId), // if true: jump to BB. `inputs` are parameters for the target BB
-
-    Assert(Condition<TVal>, OperationError, Option<TVal>), // error, optional argument
-    DeoptAssert(Condition<TVal>), // if false: abort block execution, IP where we continue
-    // Done(u32), // instruction pointer where to continue execution
-    Median,
-    MedianCursed, // _ <- median(N, a, b, c, ...)
-                  // KsplangOp(crate::ops::Op),
-                  // KsplangOpWithArg(crate::ops::Op, TReg)
-}
-
-impl<TVal: Clone + PartialEq + Eq + Display> OptOp<TVal> {
-    pub fn is_terminal(&self) -> bool {
-        matches!(self, OptOp::Jump(Condition::True, _) | OptOp::DeoptAssert(Condition::False) | OptOp::Assert(Condition::False, _, _))
-    }
-
-    pub fn condition(&self) -> Option<Condition<TVal>> {
-        match self {
-            OptOp::Condition(cond) => Some(cond.clone()),
-            OptOp::Select(cond) => Some(cond.clone()),
-            OptOp::Jump(cond, _) => Some(cond.clone()),
-            OptOp::Assert(cond, _, _) => Some(cond.clone()),
-            OptOp::DeoptAssert(cond) => Some(cond.clone()),
-            _ => None,
-        }
-    }
-
-    pub fn is_commutative(&self, arg_count: usize) -> Range<usize> {
-        match self {
-            OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Gcd | OptOp::Max | OptOp::Min | OptOp::AbsSub | OptOp::Median | OptOp::Funkcia | OptOp::LenSum => 0..arg_count,
-            OptOp::MedianCursed => 1..arg_count, // first argument is N
-            _ => 0..0,
-        }
-    }
-
-    pub fn worst_case_effect(&self) -> OpEffect {
-        match self {
-            OptOp::Push | OptOp::Pop => OpEffect::None, // stack push/pop bound checks are tracked separately
-            OptOp::Nop | OptOp::Const(_) | OptOp::Condition(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn => OpEffect::None,
-
-            // overflow checks, div by zero
-            OptOp::Add | OptOp::Sub | OptOp::AbsSub | OptOp::Mul | OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuler | OptOp::Tetration | OptOp::ShiftL | OptOp::AbsFactorial =>
-                OpEffect::MayFail,
-
-            OptOp::Assert(_, _, _) => OpEffect::MayFail,
-
-            OptOp::Jump(_, _) => OpEffect::ControlFlow,
-            OptOp::DeoptAssert(_) | OptOp::Universal | OptOp::MedianCursed => OpEffect::MayDeopt,
-            OptOp::StackSwap => OpEffect::StackWrite,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub struct OptOptPattern {
-    pub options_values: Vec<ValueId>,
-    pub options_opts: Vec<(OptOp<Box<OptOptPattern>>, Vec<OptOptPattern>)>,
-    pub anything_in_range: Vec<RangeInclusive<i64>>,
-    pub constant_in_range: Vec<RangeInclusive<i64>>,
-    pub disable_commutativity: bool,
-}
-
-impl OptOptPattern {
-    pub fn new(op: OptOp<Box<OptOptPattern>>, args: Vec<OptOptPattern>) -> Self {
-        Self::default().or_op(op, args)
-    }
-
-    pub fn new_val(val: ValueId) -> Self {
-        Self::default().or_value(val)
-    }
-
-    pub fn new_range(range: RangeInclusive<i64>) -> Self {
-        Self::default().or_in_range(range)
-    }
-
-    pub fn new_constant(range: RangeInclusive<i64>) -> Self {
-        Self::default().or_constant(range)
-    }
-
-    pub fn or_value(mut self, val: ValueId) -> Self {
-        self.options_values.push(val);
-        self
-    }
-
-    pub fn or_op(mut self, op: OptOp<Box<OptOptPattern>>, args: Vec<OptOptPattern>) -> Self {
-        self.options_opts.push((op, args));
-        self
-    }
-
-    pub fn or_in_range(mut self, range: RangeInclusive<i64>) -> Self {
-        self.anything_in_range.push(range);
-        self
-    }
-
-    pub fn or_constant(mut self, range: RangeInclusive<i64>) -> Self {
-        self.constant_in_range.push(range);
-        self
-    }
-}
-
-impl fmt::Display for OptOptPattern {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut parts = vec![];
-        if !self.options_values.is_empty() {
-            parts.push(format!("Values({})", self.options_values.iter().map(|v| format!("{}", v)).collect::<Vec<_>>().join(", ")));
-        }
-        if !self.options_opts.is_empty() {
-            parts.push(format!("Ops({})", self.options_opts.iter().map(|(op, args)| format!("{:?}({})", op, args.iter().map(|a| format!("{}", a)).collect::<Vec<_>>().join(", "))).collect::<Vec<_>>().join(", ")));
-        }
-        if !self.anything_in_range.is_empty() {
-            parts.push(format!("Range({})", self.anything_in_range.iter().map(|r| format!("{:?}", r)).collect::<Vec<_>>().join(", ")));
-        }
-        if !self.constant_in_range.is_empty() {
-            parts.push(format!("Const({})", self.constant_in_range.iter().map(|r| format!("{:?}", r)).collect::<Vec<_>>().join(", ")));
-        }
-
-        let nocomm = if self.disable_commutativity { "no-comm: " } else { "" };
-
-        write!(f, "P({}{})", nocomm, parts.join(" | "))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum OpEffect {
-    None,
-    MayFail,
-    MayDeopt,
-    ControlFlow,
-    StackWrite,
-}
-
-impl OpEffect {
-    pub fn only_if(&mut self, condition: bool) {
-        if condition { *self = OpEffect::None }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OptInstr {
-    pub id: InstrId,
-    pub op: OptOp<ValueId>,
-    pub inputs: SmallVec<[ValueId; 4]>,
-    pub out: ValueId,
-    pub stack_state: Option<u32>, // stack state before this instruction (for deoptimization)
-    pub program_position: usize, // u64::MAX if unknown
-    pub effect: OpEffect,
-}
-
-impl OptInstr {
-    pub fn iter_inputs(&self) -> impl Iterator<Item = ValueId> + '_ {
-        self.inputs.iter().copied().chain(self.op.condition().into_iter().flat_map(|cond| cond.regs()))
-    }
-}
-
-impl fmt::Display for OptInstr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{: >3} {: >4} | ", self.id.0.0, self.id.1)?;
-        if !self.out.is_null() {
-            write!(f, "{} <- ", self.out)?;
-        }
-        write!(f, "{:?}", self.op)?;
-        for arg in &self.inputs {
-            write!(f, " {}", arg)?;
-        }
-        write!(f, "   [ ")?;
-        if self.effect != self.op.worst_case_effect() {
-            write!(f, "{:?} ", self.effect)?;
-        }
-        if let Some(stack_state) = self.stack_state {
-            write!(f, "stack={} ", stack_state)?;
-        }
-        write!(f, "IP={} ]", self.program_position)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ValueInfo {
-    pub id: ValueId,
-    pub assigned_at: Option<InstrId>,
-    pub range: RangeInclusive<i64>,
-    pub used_at: HashSet<InstrId>,
-}
-
-impl ValueInfo {
-    pub fn new(id: ValueId) -> Self {
-        Self { id, assigned_at: None, range: i64::MIN..=i64::MAX, used_at: HashSet::new() }
-    }
-    pub fn is_constant(&self) -> bool {
-        self.range.start() == self.range.end()
-    }
-    pub fn as_constant(&self) -> Option<i64> {
-        if self.is_constant() {
-            Some(*self.range.start())
-        } else {
-            None
-        }
-    }
-}
+use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier, utils::intersect_range, vm_code::Condition}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -629,55 +240,42 @@ impl GraphBuilder {
         entry.or_insert(info)
     }
 
-    pub fn value_numbering_core<Fallback>(
-        &mut self,
-        instr: (OptOp<ValueId>, SmallVec<[ValueId; 4]>),
-        fallback: Fallback,
-    ) -> ValueId
-    where
-        Fallback: FnOnce(&mut Self, OptOp<ValueId>, &[ValueId]) -> ValueId,
-    {
+    pub fn value_numbering_try_lookup(&self, op: OptOp<ValueId>, args: &[ValueId]) -> Option<ValueId> {
+        let instr = (op, args.to_smallvec());
         if let Some(vals) = self.value_index.get(&instr) {
             for (val, instr) in vals {
                 if instr.block_id() == self.current_block
-                    || instr.block_id().0 == 0
+                    || instr.block_id().is_first_block()
                     || self.current_block_ref().predecessors.contains(&instr.block_id())
                 {
-                    return *val;
+                    return Some(*val);
                 }
             }
         }
-
-        let val = fallback(self, instr.0.clone(), &instr.1);
-        if let Some(constant) = self.values.get(&val).and_then(|info: &ValueInfo| info.as_constant()) {
-            // maybe remove the value
-            if !self.stack.lookup.contains_key(&val) {
-                self.stack.poped_values.push(val);
-            }
-
-            return self.store_constant(constant);
-        }
-
-        let defined_at = self.values[&val].assigned_at.expect("value_numbering failed: assignment instruction not recorded");
-        self.value_index.entry(instr).or_insert_with(Vec::new).push((val, defined_at));
-        val
+        None
     }
 
-    pub fn value_numbering<FVal: FnOnce(&mut ValueInfo) -> (), FInstr: FnOnce(&mut OptInstr) -> ()>(
+    fn value_numbering_store(&mut self, op: OptOp<ValueId>, args: &[ValueId], val: ValueId, defined_at: InstrId) {
+        let instr = (op, args.to_smallvec());
+        let v = self.value_index.entry(instr).or_insert_with(Vec::new);
+        if v.last() != Some(&(val, defined_at)) {
+            v.push((val, defined_at));
+        }
+    }
+
+    pub fn value_numbering(
         &mut self,
         op: OptOp<ValueId>,
-        args: Vec<ValueId>,
-        val_settings: FVal,
-        instr_settings: FInstr,
+        args: &[ValueId],
+        range: Option<RangeInclusive<i64>>,
+        effect: Option<OpEffect>,
     ) -> ValueId {
-        self.value_numbering_core((op, args.into()), |this, op, args| {
-            let val = this.new_value();
-            val_settings(val);
-            let val_id = val.id;
-            let i = this.push_instr(op, args, val_id);
-            instr_settings(i);
-            val_id
-        })
+        // TODO: also store unsimplified expr?
+        // if let Some(existing_val) = self.value_numbering_try_lookup(op.clone(), args) {
+        //     return existing_val;
+        // }
+
+        self.push_instr(op, args, true, range, effect).0
     }
 
     pub fn store_constant(&mut self, value: i64) -> ValueId {
@@ -691,17 +289,6 @@ impl GraphBuilder {
         self.constants.push(value);
         self.constant_lookup.insert(value, id);
         id
-        // self.value_numbering_core((OptOp::Const(value), vec![]), |this, op, _| {
-        //     // add to block 0, so it can be reused anywhere
-        //     let assigned_at = InstrId(BlockId(0), this.blocks[0].next_instr_id);
-        //     let reg = this.new_value(|r| {
-        //         r.range = value..=value;
-        //         r.assigned_at = assigned_at;
-        //     });
-        //     let instr = OptInstr { op, inputs: vec![], out: reg, stack_state: None, program_position: usize::MAX };
-        //     this.blocks[0].add_instruction(instr);
-        //     reg
-        // })
     }
 
     fn mark_used_at(&mut self, val: ValueId, instr: InstrId) {
@@ -714,49 +301,112 @@ impl GraphBuilder {
         }
     }
 
-    pub fn push_instr(&mut self, op: OptOp<ValueId>, args: &[ValueId], out: ValueId) -> &mut OptInstr {
-        assert!(!out.is_constant(), "Cannot assign to constant: {:?} <- {:?}{:?}", out, op, args);
-        assert!(!args.contains(&ValueId(0)), "Cannot use null ValueId: {:?} <- {:?}{:?}", out, op, args);
-        let effect = op.worst_case_effect();
+    fn infer_op_range_effect(&self, op: &OptOp<ValueId>, args: &[ValueId]) -> (Option<RangeInclusive<i64>>, OpEffect) {
+        let ranges = args.iter().map(|v| self.val_range(*v)).collect::<Vec<_>>();
+        (op.evaluate_range_quick(&ranges), op.effect_based_on_ranges(&ranges))
+    }
+
+    pub fn push_instr(&mut self, op: OptOp<ValueId>, args: &[ValueId], value_numbering: bool, out_range: Option<RangeInclusive<i64>>, effect: Option<OpEffect>) -> (ValueId, Option<&mut OptInstr>) {
+        // assert!(!out.is_constant(), "Cannot assign to constant: {:?} <- {:?}{:?}", out, op, args);
+        assert!(!args.contains(&ValueId(0)), "Cannot use null ValueId: {:?}{:?}", op, args);
+
+        let effect2 = match effect {
+            Some(e) => OpEffect::better_of(e, op.worst_case_effect()),
+            None => op.worst_case_effect()
+        };
+        let value_numbering = value_numbering && !matches!(effect2, OpEffect::StackWrite | OpEffect::StackRead);
+
+        let has_output = op.has_output();
+
         let instr = OptInstr {
-            id: InstrId(self.current_block, self.current_block_ref().next_instr_id),
-            op, inputs: args.into(), out,
+            id: InstrId(self.current_block, u32::MAX),
+            op: op.clone(),
+            inputs: args.into(),
+            out: if has_output { ValueId(i32::MAX) } else { ValueId(0) },
             stack_state: None,
             program_position: self.assumed_program_position.unwrap_or(usize::MAX),
-            effect
+            effect: effect2
         };
 
-        if !out.is_null() {
-            let Some(val_info) = self.values.get_mut(&out) else {
-                panic!("Out Value not registered: {:?} <- {:?}{:?}", out, instr.op, instr.inputs);
-            };
-            assert!(val_info.assigned_at.is_none() || val_info.assigned_at == Some(instr.id));
-            val_info.assigned_at = Some(instr.id);
+        let (mut instr, simplifier_range) = simplifier::simplify_instr(self, instr);
+        instr.id = InstrId(self.current_block, self.current_block_ref().next_instr_id);
+        assert_eq!(has_output, instr.op.has_output());
+
+        if instr.op == OptOp::Nop {
+            return (ValueId(0), None);
+        }
+
+        if instr.op == OptOp::Add && instr.inputs.len() == 1 {
+            // used to signal value already exists
+            return (instr.inputs[0], None);
+        }
+
+        if let OptOp::Const(c) = instr.op {
+            return (self.store_constant(c), None);
+        }
+
+        if value_numbering {
+            if let Some(existing_val) = self.value_numbering_try_lookup(instr.op.clone(), &instr.inputs) {
+                return (existing_val, None);
+            }
+        }
+
+        let mut out_val = ValueId(0);
+        if has_output {
+            let (inferred_range, inferred_effect) = self.infer_op_range_effect(&instr.op, &instr.inputs);
+            instr.effect = OpEffect::better_of(instr.effect, inferred_effect);
+            let val_range =
+                simplifier_range.iter().chain(&out_range).chain(&inferred_range)
+                    .cloned()
+                    .reduce(|a, b| intersect_range(&a, &b))
+                    .unwrap_or(i64::MIN..=i64::MAX);
+            assert!(!val_range.is_empty() || instr.op.is_terminal(), "Empty output range for instr {}: {:?} <- {:?}{:?}", instr.id, instr.out, instr.op, instr.inputs);
+
+            if *val_range.start() == *val_range.end() {
+                out_val = self.store_constant(*val_range.start());
+                instr.out = ValueId(0);
+            } else {
+                let val = self.new_value();
+                val.range = val_range;
+                val.assigned_at = Some(instr.id);
+                out_val = val.id;
+                instr.out = val.id;
+            }
+        }
+
+        if value_numbering {
+            self.value_numbering_store(instr.op.clone(), &instr.inputs, out_val, instr.id);
         }
 
         for arg in instr.iter_inputs() {
             self.mark_used_at(arg, instr.id);
         }
 
-        self.current_block_mut().add_instruction(instr)
+        let instr = self.current_block_mut().add_instruction(instr);
+        (out_val, Some(instr))
     }
 
-    pub fn push_instr_may_deopt(&mut self, op: OptOp<ValueId>, args: &[ValueId], out: ValueId) -> &mut OptInstr {
+    pub fn push_instr_may_deopt(&mut self, op: OptOp<ValueId>, args: &[ValueId]) -> &mut OptInstr {
+        // TODO: refactor as checkpoint instruction
         let stack_state = self.stack.save_history();
-        let instr = self.push_instr(op, args, out);
+        let instr = self.push_instr(op, args, false, None, None).1.unwrap();
         instr.stack_state = Some(stack_state);
         instr
     }
 
     pub fn push_assert(&mut self, c: Condition<ValueId>, error: OperationError, val: Option<ValueId>) {
-        self.push_instr(OptOp::Assert(c, error, val), &[], ValueId(0));
+        let mut args: ArrayVec<ValueId, 1> = ArrayVec::new();
+        if let Some(val) = val {
+            args.push(val);
+        }
+        self.push_instr(OptOp::Assert(c, error), &args, false, None, None);
     }
 
     pub fn push_deopt_assert(&mut self, c: Condition<ValueId>, precise_deoptinfo: bool) {
         if precise_deoptinfo {
-            self.push_instr_may_deopt(OptOp::DeoptAssert(c), &[], ValueId(0));
+            self.push_instr_may_deopt(OptOp::DeoptAssert(c), &[]);
         } else {
-            self.push_instr(OptOp::DeoptAssert(c), &[], ValueId(0));
+            self.push_instr(OptOp::DeoptAssert(c), &[], false, None, None);
         }
     }
 
@@ -789,9 +439,7 @@ impl GraphBuilder {
             Some(reg) => reg,
             None => {
                 self.stack.record_real_pop();
-                let reg = self.new_value().id;
-                self.push_instr(OptOp::Pop, &[], reg);
-                reg
+                self.push_instr(OptOp::Pop, &[], false, None, None).0
             }
         }
     }

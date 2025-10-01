@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::compiler::{cfg::{InstrId, ValueId}, vm_code::Condition};
+use crate::compiler::{ops::{InstrId, ValueId}, vm_code::Condition};
 
 
 

@@ -103,6 +103,30 @@ pub enum OperationError {
     ArgumentCMustBeNonNegative { value: i64 },
 }
 
+impl OperationError {
+    pub fn with_value(&self, value: i64) -> Self {
+        match self {
+            Self::PeekFailed { index: _ } => Self::PeekFailed { index: value },
+            Self::InvalidArgumentForUniversal { argument: _ } => Self::InvalidArgumentForUniversal { argument: value },
+            Self::NegativeLength { value: _ } => Self::NegativeLength { value },
+            Self::IndexOutOfRange { stack_len, index: _ } => Self::IndexOutOfRange { stack_len: *stack_len, index: value },
+            Self::PiOutOfRange { digits_available, index: _ } => Self::PiOutOfRange { digits_available: *digits_available, index: value as usize },
+            Self::NegativeIterations { iterations: _ } => Self::NegativeIterations { iterations: value },
+            Self::NegativeBitCount { bits: _ } => Self::NegativeBitCount { bits: value },
+            Self::NonpositiveLength { value: _ } => Self::NonpositiveLength { value },
+            Self::NegativeInstructionIndex { index: _ } => Self::NegativeInstructionIndex { index: value },
+            Self::InstructionOutOfRange { index: _ } => Self::InstructionOutOfRange { index: value },
+            Self::RevReturnInstructionOutOfRange { index: _ } => Self::RevReturnInstructionOutOfRange { index: value },
+            Self::InvalidInstructionId { id: _ } => Self::InvalidInstructionId { id: value },
+            Self::NegativePraiseCount { praises: _ } => Self::NegativePraiseCount { praises: value },
+            Self::ArgumentAMustBeNonNegative { value: _ } => Self::ArgumentAMustBeNonNegative { value },
+            Self::ArgumentBMustBeNonNegative { value: _ } => Self::ArgumentBMustBeNonNegative { value },
+            Self::ArgumentCMustBeNonNegative { value: _ } => Self::ArgumentCMustBeNonNegative { value },
+            _ => panic!("Cannot add value to {self:?}"),
+        }
+    }
+}
+
 pub enum Effect {
     None,
     SetInstructionPointer(usize),
@@ -234,6 +258,12 @@ pub(crate) const FACTORIAL_TABLE: [i64; 21] = [
 ];
 
 #[inline]
+pub(crate) fn abs_factorial(a: i64) -> Result<i64, OperationError> {
+    a.checked_abs().filter(|a| *a < FACTORIAL_TABLE.len() as i64).and_then(|x| FACTORIAL_TABLE.get(x as usize).copied()).ok_or(OperationError::IntegerOverflow)
+}
+
+
+#[inline]
 pub(crate) fn tetration(num: i64, iters: i64) -> Result<i64, OperationError> {
     if iters < 0 {
         return Err(OperationError::NegativeIterations { iterations: iters });
@@ -267,6 +297,18 @@ pub(crate) fn tetration(num: i64, iters: i64) -> Result<i64, OperationError> {
 
 pub(crate) fn decimal_len(num: i64) -> i64 {
     num.abs_diff(0).checked_ilog10().map(|x| x + 1).unwrap_or(0) as i64
+}
+
+pub(crate) fn median(values: &mut [i64]) -> i64 {
+    values.sort();
+    if values.len() % 2 == 0 {
+        ((values[values.len() / 2 - 1] as i128 + (values[values.len() / 2] as i128))
+            / 2)
+        .try_into()
+        .unwrap() // Cannot overflow, sum of two i64 divided by 2 fits into i64
+    } else {
+        values[values.len() / 2]
+    }
 }
 
 impl<'a, TTracer: Tracer> State<'a, TTracer> {
@@ -519,10 +561,8 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
                     }
                     4 => {
                         let a = self.pop()?;
-                        let factorial =
-                            a.checked_abs().and_then(|x| FACTORIAL_TABLE.get(x as usize).copied()).ok_or(OperationError::IntegerOverflow)?;
 
-                        self.push(factorial)?;
+                        self.push(abs_factorial(a)?)?;
                     }
                     5 => {
                         let a = self.pop()?;
@@ -584,7 +624,7 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
                 self.push(result)?;
             }
             Op::Median => {
-                let n = self.peek()?;
+                let n: i64 = self.peek()?;
                 let mut values = Vec::new();
                 if n <= 0 {
                     return Err(OperationError::NonpositiveLength { value: n });
@@ -600,15 +640,7 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
                     values.push(self.peek_n(i)?);
                 }
 
-                values.sort();
-                let result: i64 = if values.len() % 2 == 0 {
-                    ((values[values.len() / 2 - 1] as i128 + (values[values.len() / 2] as i128))
-                        / 2)
-                    .try_into()
-                    .map_err(|_| OperationError::IntegerOverflow)?
-                } else {
-                    values[values.len() / 2]
-                };
+                let result = median(&mut values);
                 self.push(result)?;
             }
             Op::LenSum => {

@@ -1,6 +1,4 @@
-use std::iter::Product;
-
-use crate::{compiler::{cfg::{GraphBuilder, OptInstr}, precompiler::{NoTrace, Precompiler}}, parser};
+use crate::{compiler::{cfg::GraphBuilder, precompiler::{NoTrace, Precompiler}}, parser};
 
 fn precompile_ops(ops: &[crate::ops::Op], terminate_at: Option<usize>) -> Precompiler<'_, NoTrace> {
     let g = GraphBuilder::new();

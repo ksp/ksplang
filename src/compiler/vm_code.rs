@@ -3,7 +3,7 @@ use std::{char::MAX, cmp, collections::{BTreeMap, BTreeSet, HashMap, HashSet}, f
 use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 
-use crate::compiler::cfg::{BasicBlock, BlockId, GraphBuilder, InstrId, OpEffect, OptOp, ValueId};
+use crate::compiler::{cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}};
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -232,6 +232,75 @@ impl<TReg> Condition<TReg> {
         }
         out
     }
+
+    pub fn discriminant(&self) -> usize {
+        match self {
+            Condition::Eq(_, _) => 0,
+            Condition::EqConst(_, _) => 1,
+            Condition::Neq(_, _) => 2,
+            Condition::NeqConst(_, _) => 3,
+            Condition::Lt(_, _) => 4,
+            Condition::LtConst(_, _) => 5,
+            Condition::Leq(_, _) => 6,
+            Condition::LeqConst(_, _) => 7,
+            Condition::Gt(_, _) => 8,
+            Condition::GtConst(_, _) => 9,
+            Condition::Geq(_, _) => 10,
+            Condition::GeqConst(_, _) => 11,
+            Condition::Divides(_, _) => 12,
+            Condition::DividesConst(_, _) => 13,
+            Condition::NotDivides(_, _) => 14,
+            Condition::NotDividesConst(_, _) => 15,
+            Condition::True => 16,
+            Condition::False => 17,
+        }
+    }
+
+    pub fn eval(&self, args: &[i64]) -> bool {
+        match self {
+            Condition::Eq(_, _) => args[0] == args[1],
+            Condition::EqConst(_, c) => args[0] == *c as i64,
+            Condition::Neq(_, _) => args[0] != args[1],
+            Condition::NeqConst(_, c) => args[0] != *c as i64,
+            Condition::Lt(_, _) => args[0] < args[1],
+            Condition::LtConst(_, c) => args[0] < *c as i64,
+            Condition::Leq(_, _) => args[0] <= args[1],
+            Condition::LeqConst(_, c) => args[0] <= *c as i64,
+            Condition::Gt(_, _) => args[0] > args[1],
+            Condition::GtConst(_, c) => args[0] > *c as i64,
+            Condition::Geq(_, _) => args[0] >= args[1],
+            Condition::GeqConst(_, c) => args[0] >= *c as i64,
+            Condition::Divides(_, _) => args[1] != 0 && args[0] % args[1] == 0,
+            Condition::DividesConst(_, c) => *c != 0 && args[0] % (*c as i64) == 0,
+            Condition::NotDivides(_, _) => args[1] == 0 || args[0] % args[1] != 0,
+            Condition::NotDividesConst(_, c) => *c == 0 || args[0] % (*c as i64) != 0,
+            Condition::True => true,
+            Condition::False => false,
+        }
+    }
+
+    pub fn neg(self) -> Condition<TReg> {
+        match self {
+            Condition::Eq(a, b) => Condition::Neq(a, b),
+            Condition::EqConst(a, c) => Condition::NeqConst(a, c),
+            Condition::Neq(a, b) => Condition::Eq(a, b),
+            Condition::NeqConst(a, c) => Condition::EqConst(a, c),
+            Condition::Lt(a, b) => Condition::Geq(a, b),
+            Condition::LtConst(a, c) => Condition::GeqConst(a, c),
+            Condition::Leq(a, b) => Condition::Gt(a, b),
+            Condition::LeqConst(a, c) => Condition::GtConst(a, c),
+            Condition::Gt(a, b) => Condition::Leq(a, b),
+            Condition::GtConst(a, c) => Condition::LeqConst(a, c),
+            Condition::Geq(a, b) => Condition::Lt(a, b),
+            Condition::GeqConst(a, c) => Condition::LtConst(a, c),
+            Condition::Divides(a, b) => Condition::NotDivides(a, b),
+            Condition::DividesConst(a, c) => Condition::NotDividesConst(a, c),
+            Condition::NotDivides(a, b) => Condition::Divides(a, b),
+            Condition::NotDividesConst(a, c) => Condition::DividesConst(a, c),
+            Condition::True => Condition::False,
+            Condition::False => Condition::True,
+        }
+    }
 }
 
 impl<T: fmt::Display> fmt::Display for Condition<T> {
@@ -373,7 +442,7 @@ fn remat_cost(g: &GraphBuilder, lr: &LiveRanges, max_cost: u32) -> HashMap<Value
             OptOp::BinNot | OptOp::ShiftR | OptOp::BoolNot | OptOp::Condition(_) | OptOp::Or | OptOp::And | OptOp::Xor | OptOp::Min | OptOp::Max | OptOp::AbsFactorial | OptOp::Sgn | OptOp::ShiftL | OptOp::DigitSum | OptOp::Add | OptOp::AbsSub | OptOp::Select(_)=>
                 10,
             OptOp::Mul => 12,
-            OptOp::Div | OptOp::CursedDiv | OptOp::LenSum | OptOp::Mod | OptOp::ModEuler => 14,
+            OptOp::Div | OptOp::CursedDiv | OptOp::LenSum | OptOp::Mod | OptOp::ModEuclid => 14,
             OptOp::Median => 8 * i.inputs.len() as u32,
             OptOp::Gcd | OptOp::Funkcia | OptOp::Tetration => 19,
             _ => continue

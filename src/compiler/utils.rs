@@ -1,8 +1,12 @@
 use std::{cmp, collections::HashSet, hash::Hash, ops::RangeInclusive};
 
 use num_integer::Integer;
-use num_traits::{CheckedAdd, CheckedMul, CheckedSub, SaturatingAdd, SaturatingMul, SaturatingSub};
+use num_traits::{CheckedAdd, CheckedMul, CheckedSub, One, SaturatingAdd, SaturatingMul, SaturatingSub, Zero};
 
+use crate::vm;
+
+pub const EMPTY_RANGE: RangeInclusive<i64> = 1..=0;
+pub const FULL_RANGE: RangeInclusive<i64> = i64::MIN..=i64::MAX;
 
 
 pub fn most_set_bits_in_range(from: u64, to: u64) -> u64 {
@@ -34,6 +38,52 @@ pub fn abs_range(r: RangeInclusive<i64>) -> RangeInclusive<u64> {
     }
 }
 
+#[inline]
+pub fn add_range(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> RangeInclusive<i64> {
+    let start = a.start().saturating_add(b.start());
+    let end = a.end().saturating_add(b.end());
+    start..=end
+}
+
+#[inline]
+pub fn sub_range(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> RangeInclusive<i64> {
+    let start = a.start().saturating_sub(b.end());
+    let end = a.end().saturating_sub(b.start());
+    start..=end
+}
+
+pub fn mul_range(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> (RangeInclusive<i64>, bool) {
+    let candidates = [
+        a.start().saturating_mul(b.start()),
+        a.start().saturating_mul(b.end()),
+        a.end().saturating_mul(b.start()),
+        a.end().saturating_mul(b.end()),
+    ];
+    let may_overflow = a.start().checked_mul(b.start()).is_none() ||
+                             a.start().checked_mul(b.end()).is_none() ||
+                             a.end().checked_mul(b.start()).is_none() ||
+                             a.end().checked_mul(b.end()).is_none();
+    let min = *candidates.iter().min().unwrap();
+    let max = *candidates.iter().max().unwrap();
+    (min..=max, may_overflow)
+}
+
+pub fn union_range(a: RangeInclusive<i64>, b: RangeInclusive<i64>) -> RangeInclusive<i64> {
+    let start = cmp::min(*a.start(), *b.start());
+    let end = cmp::max(*a.end(), *b.end());
+    start..=end
+}
+
+pub fn intersect_range<T: Ord + Zero + One + Clone>(a: &RangeInclusive<T>, b: &RangeInclusive<T>) -> RangeInclusive<T> {
+    let start = cmp::max(a.start(), b.start()).clone();
+    let end = cmp::min(a.end(), b.end()).clone();
+    if start > end {
+        T::one()..=T::zero()
+    } else {
+        start..=end
+    }
+}
+
 pub fn range_2_i64(r: RangeInclusive<u64>) -> RangeInclusive<i64> {
     let (a, b) = r.into_inner();
     if a > i64::MAX as u64 {
@@ -45,77 +95,11 @@ pub fn range_2_i64(r: RangeInclusive<u64>) -> RangeInclusive<i64> {
     }
 }
 
-pub fn range_2_i64_neg(r: RangeInclusive<u64>) -> RangeInclusive<i64> {
-    let (a, b) = r.into_inner();
-    0i64.checked_sub_unsigned(b).unwrap()..=0i64.checked_sub_unsigned(a).unwrap()
-}
-
 pub fn sort_tuple<T: Ord>(a: T, b: T) -> (T, T) {
     if a <= b {
         (a, b)
     } else {
         (b, a)
-    }
-}
-
-pub fn median(vals: &mut [i64]) -> i64 {
-    vals.sort();
-    if vals.len() % 2 == 1 {
-        vals[vals.len() / 2]
-    } else {
-        let a = vals[vals.len() / 2 - 1];
-        let b = vals[vals.len() / 2];
-        ((a as i128 + b as i128) / 2) as i64
-    }
-}
-
-pub fn eval_combi<T1, T2, TR, F: FnMut(T1, T2) -> Option<TR>>(
-    a: RangeInclusive<T1>,
-    b: RangeInclusive<T2>,
-    max_combination: u64,
-    mut f: F,
-) -> Option<RangeInclusive<TR>>
-    where T1: Integer + CheckedSub + CheckedAdd + CheckedMul + Clone + TryFrom<u64>,
-          T2: Integer + CheckedSub + CheckedAdd + CheckedMul + Clone + TryFrom<u64> + TryFrom<T1>,
-          TR: Integer + Hash + Clone + From<i32>
-{
-    if a.is_empty() || b.is_empty() {
-        return Some(TR::one()..=TR::zero());
-    }
-
-    let (a_start, a_end) = a.into_inner();
-    let (b_start, b_end) = b.into_inner();
-
-    let a_size = a_end.checked_sub(&a_start)?.checked_add(&T1::one())?;
-    let b_size = b_end.checked_sub(&b_start)?.checked_add(&T2::one())?;
-    if b_size.checked_mul(&a_size.try_into().ok()?)? <= max_combination.try_into().ok().expect("max_combination convert") {
-        let mut min = TR::zero();
-        let mut max = TR::zero();
-        let mut count = 0;
-        let mut x = a_start;
-        while x <= a_end {
-            let mut y = b_start.clone();
-            while y <= b_end {
-                if let Some(value) = f(x.clone(), y.clone()) {
-                    if count == 0 {
-                        min = value.clone();
-                        max = value.clone();
-                    } else {
-                        if value < min { min = value.clone() }
-                        if value > max { max = value.clone() }
-                    }
-                    count += 1;
-                }
-                y = y + T2::one();
-            }
-            x = x + T1::one();
-        }
-        if count == 0 {
-            return Some(TR::one()..=TR::zero());
-        }
-        Some(min..=max)
-    } else {
-        None
     }
 }
 

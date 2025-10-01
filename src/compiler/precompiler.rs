@@ -3,7 +3,7 @@ use std::{cmp, collections::{BTreeSet, HashSet}, ops::RangeInclusive, result, ve
 use num_integer::Integer;
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::{GraphBuilder, OpEffect, OptOp, ValueId}, utils::{abs_range, eval_combi, eval_combi_u64, median, range_2_i64, sort_tuple, u64neg}, vm_code::Condition}, digit_sum::digit_sum_range, funkcia::funkcia, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
+use crate::{compiler::{cfg::GraphBuilder, ops::{OpEffect, OptOp, ValueId, ValueInfo}, range_ops::{eval_combi, range_num_digits}, utils::{abs_range, add_range, eval_combi_u64, range_2_i64, sort_tuple}, vm_code::Condition}, digit_sum::digit_sum_range, funkcia::funkcia, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
 
 pub struct Options {
     pub allow_pruning: bool
@@ -88,29 +88,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         let (a, b) = sort_tuple(a, b);
         let (start_a, end_a) = self.g.val_range(a).into_inner();
         let (start_b, end_b) = self.g.val_range(b).into_inner();
-        let start = start_a.saturating_add(start_b);
-        let end = end_a.saturating_add(end_b);
-        self.g.value_numbering(OptOp::Add, vec![a, b], |info: &mut crate::compiler::cfg::ValueInfo| {
-            info.range = start..=end;
-        }, |instr| {
-            let can_overflow = start_a.checked_add(start_b).is_none() || end_a.checked_add(end_b).is_none();
-            instr.effect = if can_overflow { OpEffect::MayFail } else { OpEffect::None };
-        })
+        let can_overflow = start_a.checked_add(start_b).is_none() || end_a.checked_add(end_b).is_none();
+        self.g.value_numbering(OptOp::Add, &[a, b], None, Some(if can_overflow { OpEffect::MayFail } else { OpEffect::None }))
     }
-
-    // fn instr_sub(&mut self, a: u32, b: u32) -> u32 {
-    //     let (start_a, end_a) = self.reg_range(a).into_inner();
-    //     let (start_b, end_b) = self.reg_range(b).into_inner();
-    //     let start = start_a.saturating_sub(end_b);
-    //     let end = end_a.saturating_sub(start_b);
-    //     self.graph.value_numbering(PrecompiledOp::Sub(0, a, b), |this| {
-    //         let out = this.new_register(move |info| {
-    //             info.range = start..=end;
-    //         });
-    //         this.push_instr(PrecompiledOp::Sub(out, a, b));
-    //         out
-    //     })
-    // }
 
     pub fn step(&mut self) -> Result<(), ()> {
         let op = self.ops[self.position as usize];
@@ -155,38 +135,30 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             crate::ops::Op::Max => {
                 let a = self.g.pop_stack();
                 let b = self.g.pop_stack();
-                let range_a = self.g.val_range(a).into_inner();
-                let range_b = self.g.val_range(b).into_inner();
-                let range = cmp::max(range_a.0, range_b.0)..=cmp::max(range_a.1, range_b.1);
 
-                let out = self.g.value_numbering(OptOp::Max, vec![a, b], |info| {
-                    info.range = range;
-                }, |_|{});
+                let out = self.g.value_numbering(OptOp::Max, &[a, b], None, None);
                 self.g.stack.push(out);
                 Ok(())
             }
             crate::ops::Op::LSwap => {
                 let x = self.g.peek_stack();
-                let out = self.g.new_value().id;
                 // TODO: try finding anti-swap
-                self.g.push_instr_may_deopt(OptOp::StackSwap, &[ValueId::C_ZERO, x], out);
+                let out = self.g.push_instr_may_deopt(OptOp::StackSwap, &[ValueId::C_ZERO, x]).out;
                 self.g.pop_stack();
                 self.g.stack.push(out);
 
-                self.g.push_instr_may_deopt(OptOp::Nop, &[], ValueId(0)); // after side effect
+                self.g.push_instr_may_deopt(OptOp::Nop, &[]); // checkpoint after side effect
                 Ok(())
             }
             crate::ops::Op::Swap => {
                 let (i, x) = self.g.peek_stack_2();
                 // let i_range = self.reg_range(i_reg); // TODO: try finding anti-swap
 
-                let out = self.g.new_value().id;
-                // self.save_deopt(|_|{ });
-                self.g.push_instr_may_deopt(OptOp::StackSwap, &[i, x], out);
+                let out = self.g.push_instr_may_deopt(OptOp::StackSwap, &[i, x]).out;
                 self.g.pop_stack();
                 self.g.stack.push(out);
 
-                self.g.push_instr_may_deopt(OptOp::Nop, &[], ValueId(0)); // after side effect
+                self.g.push_instr_may_deopt(OptOp::Nop, &[]); // after side effect
                 Ok(())
             }
             crate::ops::Op::Roll => {
@@ -265,39 +237,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.pop_stack();
                         let a = self.g.pop_stack();
                         let b = self.g.pop_stack();
-                        let (start_a, end_a) = self.g.val_range(a).into_inner();
-                        let (start_b, end_b) = self.g.val_range(b).into_inner();
 
                         if a == b {
                             ValueId::C_ZERO
-                        } else if start_a > end_b {
-                            // a - b is always positive
-                            self.g.value_numbering(OptOp::Sub, vec![a, b], |info| {
-                                info.range =
-                                    start_a.saturating_sub(end_b)..=end_a.saturating_sub(start_b)
-                            }, |instr| {
-                                let can_overflow = start_a.checked_sub(end_b).is_none() || end_a.checked_sub(start_b).is_none();
-                                instr.effect = if can_overflow { OpEffect::MayFail } else { OpEffect::None };
-                            })
-                        } else if start_b > end_a {
-                            // b - a is always positive
-                            self.g.value_numbering(OptOp::Sub, vec![b, a], |info| {
-                                info.range =
-                                    start_b.saturating_sub(end_a)..=end_b.saturating_sub(start_a)
-                            }, |instr| {
-                                let can_overflow = start_b.checked_sub(end_a).is_none() || end_b.checked_sub(start_a).is_none();
-                                instr.effect = if can_overflow { OpEffect::MayFail } else { OpEffect::None };
-                            })
                         } else {
-                            // ranges overlap, must use abs sub
                             let (a, b) = sort_tuple(a, b);
-                            let start = 0;
-                            let end = cmp::max(end_a, end_b).checked_sub(cmp::min(start_a, start_b));
-                            self.g.value_numbering(OptOp::AbsSub, vec![a, b], |info| {
-                                info.range = start..=end.unwrap_or(i64::MAX);
-                            }, |instr| {
-                                instr.effect = if end.is_none() { OpEffect::MayFail } else { OpEffect::None }
-                            })
+                            self.g.value_numbering(OptOp::AbsSub, &[a, b], None, None)
                         }
                     }
                     (2, 2) => {
@@ -306,61 +251,24 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         let a = self.g.pop_stack();
                         let b = self.g.pop_stack();
                         let (a, b) = sort_tuple(a, b);
-                        let (start_a, end_a) = self.g.val_range(a).into_inner();
-                        let (start_b, end_b) = self.g.val_range(b).into_inner();
-                        self.g.value_numbering(OptOp::Mul, vec![a, b], |info| {
-                            let points = [
-                                start_a.saturating_mul(start_b),
-                                start_a.saturating_mul(end_b),
-                                end_a.saturating_mul(start_b),
-                                end_a.saturating_mul(end_b),
-                            ];
-                            info.range =
-                                *points.iter().min().unwrap()..=*points.iter().max().unwrap();
-                        }, |instr| {
-                            // TODO: may overflow?
-                        })
+                        self.g.value_numbering(OptOp::Mul, &[a, b], None, None)
                     }
                     (3, 3) => {
                         self.g.pop_stack();
                         //  a % b if non-zero, otherwise a / b
                         let a = self.g.pop_stack();
                         let b = self.g.pop_stack();
-                        // let (start_a, end_a) = self.reg_range(a).into_inner();
-                        let (start_b, end_b) = self.g.val_range(b).into_inner();
-                        // TODO: try to detect pattern of division? (depends on dup detection, so ...)
-                        // TODO: ranges
-                        self.g.value_numbering(OptOp::CursedDiv, vec![a, b], |_info| {
-                            // let points = [
-                            //     if end_b != 0 { start_a.saturating_div(end_b) } else { i64::MIN },
-                            //     if end_b != 0 { end_a.saturating_div(end_b) } else { i64::MIN },
-                            //     if start_b != 0 { start_a.saturating_div(start_b) } else { i64::MIN },
-                            //     if start_b != 0 { end_a.saturating_div(start_b) } else { i64::MIN },
-                            //     if end_b != 0 { start_a.saturating_rem(end_b) } else { i64::MIN },
-                            //     if end_b != 0 { end_a.saturating_rem(end_b) } else { i64::MIN },
-                            //     if start_b != 0 { start_a.saturating_rem(start_b) } else { i64::MIN },
-                            //     if start_b != 0 { end_a.saturating_rem(start_b) } else { i64::MIN },
-                            // ];
-                            // info.range = *points.iter().min().unwrap()..=*points.iter().max().unwrap();
-                        }, |instr| {
-                            // div by zero
-                            instr.effect = if start_b <= 0 && end_b >= 0 { OpEffect::MayFail } else { OpEffect::None };
-                        })
+                        self.g.value_numbering(OptOp::CursedDiv, &[a, b], None, None)
                     }
                     (4, 4) => {
                         self.g.pop_stack();
                         let a = self.g.pop_stack();
-                        self.g.value_numbering(OptOp::AbsFactorial, vec![a], |info| {
-                            info.range = 1..=2432902008176640000; // TODO
-                        }, |instr| {})
+                        self.g.value_numbering(OptOp::AbsFactorial, &[a], None, None)
                     }
                     (5, 5) => {
                         self.g.pop_stack();
                         let a = self.g.pop_stack();
-                        let (start_a, end_a) = self.g.val_range(a).into_inner();
-                        self.g.value_numbering(OptOp::Sgn, vec![a], |info| {
-                            info.range = start_a.signum()..=end_a.signum();
-                        }, |_| {})
+                        self.g.value_numbering(OptOp::Sgn, &[a], None, None)
                     }
 
                     _ => return Err(()),
@@ -372,52 +280,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let a = self.g.pop_stack();
                 let b = self.g.pop_stack();
                 let euclidean = matches!(op, crate::ops::Op::Modulo);
-                let (a_start, a_end) = self.g.val_range(a).into_inner();
-                let (b_start, b_end) = abs_range(self.g.val_range(b)).into_inner();
 
-                if a == b || (a_start == a_end && a_start == b_start as i64 && b_start == b_end) {
-                    // a % a -> 0
-                    if b_start == 0 {
-                        self.g.push_instr(
-                            OptOp::Assert(
-                                Condition::NeqConst(a, 0),
-                                OperationError::DivisionByZero,
-                                None,
-                            ),
-                            &[a],
-                            ValueId(0),
-                        );
-                    }
-                    self.g.stack.push(ValueId::C_ZERO);
-                    return Ok(());
-                }
-
-                let range =
-                // if end_b == start_b { let start = start_a; } else
-                if euclidean {
-                    if b_start > a_end.abs_diff(0) && a_start >= 0 {
-                        a_start..=a_end
-                    } else {
-                        eval_combi(a_start..=a_end, cmp::max(1, b_start)..=b_end, 256, |a, b| a.checked_rem_euclid(b as i64))
-                            .unwrap_or(0..=(b_end - 1) as i64)
-                    }
-                } else {
-                    if a_start >= a_end.saturating_neg() && (b_start as i64) > a_end {
-                        a_start..=a_end
-                    } else {
-                        eval_combi(a_start..=a_end, cmp::max(1, b_start)..=b_end, 256, |a, b| a.checked_rem(b as i64))
-                            .unwrap_or(u64neg(b_end)..=(b_end - 1) as i64)
-                    }
-                };
-
-                println!("MOD {a_start}..={a_end} % {b_start}..={b_end} -> {}..={}", range.start(), range.end());
-
-                let op = if euclidean { OptOp::ModEuler } else { OptOp::Mod };
-                let out = self.g.value_numbering(op, vec![a, b], |info| {
-                    info.range = range;
-                }, |instr| {
-                    instr.effect = if b_start == 0 { OpEffect::MayFail } else { OpEffect::None };
-                });
+                let op = if euclidean { OptOp::ModEuclid } else { OptOp::Mod };
+                let out = self.g.value_numbering(op, &[a, b], None, None);
                 self.g.stack.push(out);
                 Ok(())
             }
@@ -433,13 +298,11 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let num_range = self.g.val_range(num);
                 let iters_range = self.g.val_range(iters);
 
-                let out = self.g.value_numbering(OptOp::Tetration, vec![num, iters], |info| {
-                    let range = eval_combi(num_range, iters_range, 16, |num, iters| {
+                let range = eval_combi(num_range, iters_range, 16, |num, iters| {
                         vm::tetration(num, iters).ok()
-                    })
-                    .unwrap_or(i64::MIN..=i64::MAX);
-                    info.range = range;
-                }, |_|{});
+                    });
+
+                let out = self.g.value_numbering(OptOp::Tetration, &[num, iters], range, None);
                 self.g.stack.push(out);
                 Ok(())
             }
@@ -454,51 +317,26 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 let vals = self.g.peek_stack_n(0..*n_range.end() as usize);
                 assert_eq!(n, vals[0]);
-                let ranges: Vec<_> = vals.iter().map(|&v| self.g.val_range(v)).collect();
-                let mut starts: Vec<i64> = ranges.iter().map(|r| *r.start()).collect();
-                let mut ends: Vec<i64> = ranges.iter().map(|r| *r.end()).collect();
-                assert_eq!(starts.len(), *n_range.end() as usize);
-
-                let mut min_start = i64::MAX;
-                let mut max_start = i64::MIN;
-                for i in n_range.clone() {
-                    let med_start = median(&mut starts[..i as usize]);
-                    let med_end = median(&mut ends[..i as usize]);
-                    min_start = cmp::min(min_start, med_start);
-                    max_start = cmp::max(max_start, med_end);
-                }
-                let out_range = min_start..=max_start;
 
                 if n_range.start() == n_range.end() {
-                    let out = self.g.value_numbering(OptOp::Median, vals, |info| {
-                        info.range = out_range;
-                    }, |_| {});
+                    let out = self.g.value_numbering(OptOp::Median, &vals, None, None);
                     self.g.stack.push(out);
-                    Ok(())
                 } else {
-                    let out = self.g.value_numbering(OptOp::MedianCursed, vals, |info| {
-                        info.range = out_range;
-                    }, |instr| {
-                        // we only get here if n_range has an upper bound -> deopt cannot occur, but it can still fail on <=zero
-                        instr.effect = if *n_range.start() <= 0 { OpEffect::MayFail } else { OpEffect::None };
-                    });
+                    let out = self.g.value_numbering(OptOp::MedianCursed, &vals, None, None);
                     self.g.stack.push(out);
-                    Ok(())
                 }
+                Ok(())
             }
             crate::ops::Op::DigitSum => {
                 let x = self.g.peek_stack();
                 let mut range = self.g.val_range(x);
 
-                if *range.end() < 10 {
+                if *range.start() >= 0 && *range.end() < 10 {
                     self.g.stack.push(x);
                     return Ok(());
                 }
 
-                let out_range = digit_sum_range(range);
-                let out = self.g.value_numbering(OptOp::DigitSum, vec![x], |info| {
-                    info.range = out_range;
-                }, |_|{});
+                let out = self.g.value_numbering(OptOp::DigitSum, &[x], None, None);
                 self.g.stack.push(out);
                 Ok(())
             }
@@ -508,40 +346,24 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let a_range = self.g.val_range(a);
                 let b_range = self.g.val_range(b);
 
-                fn num_digits(r: &RangeInclusive<i64>) -> RangeInclusive<i64> {
-                    let max = cmp::max(r.start().abs_diff(0), r.end().abs_diff(0));
-                    let min = if *r.start() <= 0 && *r.end() >= 0 {
-                        0
-                    } else {
-                        cmp::min(r.start().abs_diff(0), r.end().abs_diff(0))
-                    };
+                let range_a = range_num_digits(&a_range);
+                let range_b = range_num_digits(&b_range);
 
-                    vm::decimal_len(u64neg(min))..=vm::decimal_len(u64neg(max))
-                }
-
-                let mut add_hack_deopt = false;
-
-                let out = self.g.value_numbering(OptOp::LenSum, vec![a, b], |info| {
-                    let range_a = num_digits(&a_range);
-                    let range_b = num_digits(&b_range);
-
-                    // TODO: fucking hack which will add unnecessary deopts
+                // TODO: fucking hack which will add unnecessary deopts
+                let out =
                     if *a_range.start() >= 1 && *a_range.end() <= 11 && *b_range.start() >= 1 && *b_range.end() <= 11 {
                         // this is likely creating a constnant which we could not infer, so let's add a deopt and call it a day
-                        add_hack_deopt = true;
-                        info.range = 2..=2;
+                        if *a_range.end() >= 10 {
+                            self.g.push_deopt_assert(Condition::LtConst(a, 10), false);
+                        }
+                        if *b_range.end() >= 10 {
+                            self.g.push_deopt_assert(Condition::LtConst(b, 10), false);
+                        }
+                        ValueId::C_TWO
                     } else {
-                        info.range = (*range_a.start() + *range_b.start())..=(*range_a.end() + *range_b.end());
-                    }
-                }, |_|{});
-                if add_hack_deopt {
-                    if *a_range.end() >= 10 {
-                        self.g.push_deopt_assert(Condition::LtConst(a, 10), false);
-                    }
-                    if *b_range.end() >= 10 {
-                        self.g.push_deopt_assert(Condition::LtConst(b, 10), false);
-                    }
-                }
+                        self.g.value_numbering(OptOp::LenSum, &[a, b], Some(add_range(&range_a, &range_b)), None)
+                    };
+
                 self.g.stack.push(out);
                 Ok(())
             }
@@ -555,24 +377,23 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     return Err(());
                 }
 
-                let out = self.g.value_numbering(OptOp::ShiftL, vec![num, bits], |info| {
-                    let (num_start, num_end) = num_range.into_inner();
-                    let (bits_start, bits_end) = bits_range.into_inner();
+                let out = self.g.value_numbering(OptOp::ShiftL, &[num, bits], None, None);
+                    // let (num_start, num_end) = num_range.into_inner(); // TODO: migrate to simplifier
+                    // let (bits_start, bits_end) = bits_range.into_inner();
 
-                    let max_shift = 1u64 << bits_end.clamp(0, 63);
-                    let min_shift = 1u64 << bits_start.clamp(0, 63);
+                    // let max_shift = 1u64 << bits_end.clamp(0, 63);
+                    // let min_shift = 1u64 << bits_start.clamp(0, 63);
 
-                    let candidates = [
-                        (num_start as u64).saturating_mul(min_shift) as i64,
-                        (num_start as u64).saturating_mul(max_shift) as i64,
-                        (num_end as u64).saturating_mul(min_shift) as i64,
-                        (num_end as u64).saturating_mul(max_shift) as i64,
-                    ];
+                    // let candidates = [
+                    //     (num_start as u64).saturating_mul(min_shift) as i64,
+                    //     (num_start as u64).saturating_mul(max_shift) as i64,
+                    //     (num_end as u64).saturating_mul(min_shift) as i64,
+                    //     (num_end as u64).saturating_mul(max_shift) as i64,
+                    // ];
 
-                    let min_result = *candidates.iter().min().unwrap();
-                    let max_result = *candidates.iter().max().unwrap();
-                    info.range = min_result..=max_result;
-                }, |_| {});
+                    // let min_result = *candidates.iter().min().unwrap();
+                    // let max_result = *candidates.iter().max().unwrap();
+                    // info.range = min_result..=max_result;
                 self.g.stack.push(out);
                 Ok(())
             }
@@ -582,17 +403,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let (a, b) = sort_tuple(a, b);
                 let a_range = self.g.val_range(a);
                 let b_range = self.g.val_range(b);
+                let range = eval_combi(a_range, b_range, 1024, |a, b| Some(a & b));
 
-                let out = self.g.value_numbering(OptOp::And, vec![a, b], |info| {
-                    let (a_start, a_end) = a_range.into_inner();
-                    let (b_start, b_end) = b_range.into_inner();
-
-                    info.range =
-                        eval_combi(a_start..=a_end, b_start..=b_end, 256, |a, b| Some(a & b))
-                            .unwrap_or(
-                                0..=(cmp::min(a_end as u64, b_end as u64).saturating_mul(2) as i64),
-                            ) // TODO: less dumb heuristic
-                }, |_| {});
+                let out = self.g.value_numbering(OptOp::And, &[a, b], range, None);
                 self.g.stack.push(out);
                 Ok(())
             }
@@ -609,21 +422,15 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     return Ok(());
                 }
 
-                let out = self.g.value_numbering(OptOp::Funkcia, vec![a, b], |info| {
-                    info.range = eval_combi(
-                        cmp::min(cmp::max(1, a_start), a_end)..=a_end,
-                        cmp::min(cmp::max(1, b_start), b_end)..=b_end,
-                        256,
-                        |a, b: i64| Some(funkcia(a, b) as i64),
-                    )
-                    .unwrap_or_else(|| {
-                        // can be at most a * b or FUNKCIA_MOD - 1
-                        let max = cmp::min(1_000_000_007 - 1, a_end.saturating_mul(b_end));
-                        0..=max
-                    });
+                let range = eval_combi(
+                    cmp::min(cmp::max(1, a_start), a_end)..=a_end,
+                    cmp::min(cmp::max(1, b_start), b_end)..=b_end,
+                    256,
+                    |a, b: i64| Some(funkcia(a, b) as i64),
+                );
 
-                    println!("Funcia({a_start}..={a_end}, {b_start}..={b_end}) -> {:?}", info.range)
-                }, |_| {});
+                let out = self.g.value_numbering(OptOp::Funkcia, &[a, b], None, None);
+
                 self.g.stack.push(out);
                 Ok(())
             }
@@ -633,19 +440,11 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let (a, b) = sort_tuple(a, b);
                 let a_range = abs_range(self.g.val_range(a));
                 let b_range = abs_range(self.g.val_range(b));
-
-                let out = self.g.value_numbering(OptOp::Gcd, vec![a, b], |info| {
-                    let range = eval_combi_u64(a_range.clone(), b_range.clone(), 256, |a, b| {
+                let range = eval_combi_u64(a_range.clone(), b_range.clone(), 256, |a, b| {
                         Some(a.gcd(&b))
-                    })
-                    .unwrap_or_else(|| {
-                        let min =
-                            if a_range.start() == &0 && b_range.start() == &0 { 0 } else { 1 };
-                        let max = cmp::min(*a_range.end(), *b_range.end());
-                        min..=max
                     });
-                    info.range = range_2_i64(range)
-                }, |_| {});
+
+                let out = self.g.value_numbering(OptOp::Gcd, &[a, b], range.map(range_2_i64), None);
                 self.g.stack.push(out);
                 Ok(())
             }
@@ -661,47 +460,44 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 self.g.pop_stack();
                 let vals = self.g.pop_stack_n(n_const as usize);
-                let (constants, vals): (BTreeSet<ValueId>, BTreeSet<ValueId>) = vals.iter().partition(|x| x.is_constant());
-                let constants: Vec<i64> = constants.into_iter().map(|c| self.g.get_constant_(c)).collect();
-                let const_gcd = constants.into_iter().map(|v| v.abs_diff(0)).reduce(|a, b| a.gcd(&b));
+                // TODO: migrate to simplifier
+                // let (constants, vals): (BTreeSet<ValueId>, BTreeSet<ValueId>) = vals.iter().partition(|x| x.is_constant());
+                // let constants: Vec<i64> = constants.into_iter().map(|c| self.g.get_constant_(c)).collect();
+                // let const_gcd = constants.into_iter().map(|v| v.abs_diff(0)).reduce(|a, b| a.gcd(&b));
 
-                if const_gcd == Some(1) || vals.len() == 0 {
-                    if const_gcd.unwrap() > i64::MAX as u64 {
-                        self.g.push_instr(OptOp::Assert(Condition::False, OperationError::IntegerOverflow, None), &[], ValueId(0));
-                        return Ok(());
-                    }
-                    let result = self.g.store_constant(const_gcd.unwrap() as i64);
-                    self.g.stack.push(result);
-                    return Ok(());
-                }
+                // if const_gcd == Some(1) || vals.len() == 0 {
+                //     if const_gcd.unwrap() > i64::MAX as u64 {
+                //         self.g.push_instr_internal(OptOp::Assert(Condition::False, OperationError::IntegerOverflow), &[], ValueId(0));
+                //         return Ok(());
+                //     }
+                //     let result = self.g.store_constant(const_gcd.unwrap() as i64);
+                //     self.g.stack.push(result);
+                //     return Ok(());
+                // }
 
-                let ranges: Vec<RangeInclusive<u64>> = vals.iter().map(|v| abs_range(self.g.val_range(*v))).collect();
+                // let ranges: Vec<RangeInclusive<u64>> = vals.iter().map(|v| abs_range(self.g.val_range(*v))).collect();
 
-                if const_gcd == None && vals.len() == 1 {
-                    let val = *vals.first().unwrap();
-                    if *ranges[0].end() > i64::MAX as u64 {
-                        self.g.push_assert(Condition::Neq(val, ValueId::C_IMIN), OperationError::IntegerOverflow, None);
-                    }
-                    self.g.stack.push(val);
-                    return Ok(());
-                }
+                // if const_gcd == None && vals.len() == 1 {
+                //     let val = *vals.first().unwrap();
+                //     if *ranges[0].end() > i64::MAX as u64 {
+                //         self.g.push_assert(Condition::Neq(val, ValueId::C_IMIN), OperationError::IntegerOverflow, None);
+                //     }
+                //     self.g.stack.push(val);
+                //     return Ok(());
+                // }
 
-                let min_end = ranges.iter().map(|r| *r.end())
-                    .chain(const_gcd).max().unwrap();
+                // let min_end = ranges.iter().map(|r| *r.end())
+                //     .chain(const_gcd).max().unwrap();
 
-                let all_zero = matches!(const_gcd, Some(0) | None) && ranges.iter().all(|r| *r.start() == 0);
-                let out_range = if all_zero { 0 } else { 1 }..=min_end;
+                // let all_zero: bool = matches!(const_gcd, Some(0) | None) && ranges.iter().all(|r| *r.start() == 0);
+                // let out_range = if all_zero { 0 } else { 1 }..=min_end;
 
-                // `as i64` will correctly convert to i64::MIN
-                let args: Vec<ValueId> = vals.iter().copied()
-                                                    .chain(const_gcd.map(|c| self.g.store_constant(c as i64)))
-                                                    .collect();
+                // // `as i64` will correctly convert to i64::MIN
+                // let args: Vec<ValueId> = vals.iter().copied()
+                //                                     .chain(const_gcd.map(|c| self.g.store_constant(c as i64)))
+                //                                     .collect();
 
-                let result = self.g.value_numbering(OptOp::Gcd, args, |v| {
-                    v.range = range_2_i64(out_range.clone());
-                }, |g| {
-                    g.effect.only_if(*out_range.end() > i64::MAX as u64);
-                });
+                let result = self.g.value_numbering(OptOp::Gcd, &vals, None, None);
 
                 self.g.stack.push(result);
 
@@ -724,7 +520,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             } else {
                                 Condition::NeqConst(c, 0)
                             };
-                            self.g.push_instr(OptOp::Assert(cond, OperationError::QeqZeroEqualsZero, None), &[], ValueId(0));
+                            self.g.push_assert(cond, OperationError::QeqZeroEqualsZero, None);
                         }
 
                         // zero solutions:
@@ -737,11 +533,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                     if b_start == 1 && b_end == 1 {
                         // -c
-                        let r = self.g.value_numbering(OptOp::Sub, vec![ValueId::C_ZERO, c], |v| {
-                            v.range = c_end.saturating_neg()..=c_start.saturating_neg();
-                        }, |i| {
-                            i.effect.only_if(c_start == i64::MIN);
-                        });
+                        let r = self.g.value_numbering(OptOp::Sub, &[ValueId::C_ZERO, c], None, None);
                         self.g.stack.push(r);
                         return Ok(())
                     }
@@ -779,19 +571,14 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.push_deopt_assert(Condition::Neq(c, ValueId::C_IMIN), false);
                     }
 
-                    let div = self.g.value_numbering(OptOp::Div, vec![dividend, divisor], |info| {
-                        info.range = out_range.clone().unwrap_or(i64::MIN..=i64::MAX) // TODO better range
-                    }, |instr| {
-                        instr.effect = OpEffect::None; // all failures must be handled specially here
-                    });
+                    let div = self.g.value_numbering(OptOp::Div, &[dividend, divisor], out_range.clone(), Some(OpEffect::None)); // all failures must be handled specially here
 
                     if !elide_neg {
-                        let neg = self.g.value_numbering(OptOp::Sub, vec![ValueId::C_ZERO, div], |info| {
-                            info.range = out_range.map(|r| r.end().saturating_neg()..=r.start().saturating_neg())
-                                                  .unwrap_or(i64::MIN+1..=i64::MAX);
-                        }, |instr| {
-                            instr.effect = if can_overflow { OpEffect::MayFail } else { OpEffect::None };
-                        });
+                        let neg = self.g.value_numbering(OptOp::Sub, &[ValueId::C_ZERO, div],
+                            Some(out_range.map(|r| r.end().saturating_neg()..=r.start().saturating_neg())
+                                                  .unwrap_or(i64::MIN+1..=i64::MAX)),
+                            Some(if can_overflow { OpEffect::MayFail } else { OpEffect::None })
+                        );
                         self.g.stack.push(neg);
                     } else {
                         self.g.stack.push(div);
@@ -867,10 +654,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                                     if br == (0..=1) {
                                         Some(b)
                                     } else {
-                                        Some(self.g.value_numbering(OptOp::Condition(Condition::GtConst(b, 0)), vec![], |_| { }, |_| { }))
+                                        Some(self.g.value_numbering(OptOp::Condition(Condition::GtConst(b, 0)), &[], None, None))
                                     }
                                 } else if *ar.start() > 0 { // 1 ^ b
-                                    Some(self.g.value_numbering(OptOp::Condition(Condition::LeqConst(b, 0)), vec![], |_| { }, |_| { }))
+                                    Some(self.g.value_numbering(OptOp::Condition(Condition::LeqConst(b, 0)), &[], None, None))
                                 } else {
                                     None
                                 }
@@ -879,9 +666,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             let r = try_opt(ar.clone(), b, br.clone())
                                 .or_else(|| try_opt(br, a, ar))
                                 .unwrap_or_else(|| {
-                                    let a_cond = self.g.value_numbering(OptOp::Condition(Condition::GtConst(a, 0)), vec![], |_| { }, |_| { });
-                                    let b_cond = self.g.value_numbering(OptOp::Condition(Condition::GtConst(b, 0)), vec![], |_| { }, |_| { });
-                                    self.g.value_numbering(OptOp::Condition(Condition::Neq(a_cond, b_cond)), vec![], |_| { }, |_| {})
+                                    let a_cond = self.g.value_numbering(OptOp::Condition(Condition::GtConst(a, 0)), &[], None, None);
+                                    let b_cond = self.g.value_numbering(OptOp::Condition(Condition::GtConst(b, 0)), &[], None, None);
+                                    self.g.value_numbering(OptOp::Condition(Condition::Neq(a_cond, b_cond)), &[], None, None)
                                 });
                             self.g.stack.push(r);
                         }
@@ -942,7 +729,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         }
 
         self.g.set_program_position(Some(self.position));
-        self.g.push_instr_may_deopt(OptOp::DeoptAssert(Condition::False), &[], ValueId(0));
+        self.g.push_instr_may_deopt(OptOp::DeoptAssert(Condition::False), &[]);
         self.g.set_program_position(None);
         println!("F Stack: {}", self.g.fmt_stack());
         println!("  FINAL   Block: {}", self.g.current_block_ref());
