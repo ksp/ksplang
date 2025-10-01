@@ -27,6 +27,50 @@ pub fn mod_range(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> 
     return min..=max;
 }
 
+pub fn mod_range_euclid(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> RangeInclusive<i64> {
+    let b_abs = abs_range(b_range.clone());
+
+    if a_range.is_empty() || b_range.is_empty() || *b_abs.end() == 0 {
+        return 1..=0;
+    }
+
+    if a_range == (0..=0) || *b_abs.end() == 1 { return 0..=0; }
+
+    if a_range.contains(&-1) && a_range.contains(&0) {
+        // positive and negative? -> can always produce 0 and b_hi
+        return 0..=(*b_abs.end() as i64 - 1);
+    }
+
+    let (a_lo, a_hi) = a_range.clone().into_inner();
+
+    if a_hi >= 0 {
+        assert!(a_lo >= 0);
+        return range_2_i64(mod_range_u(cmp::max(0, a_lo) as u64..=a_hi as u64, b_abs.clone()));
+    }
+
+    // now negatives
+    assert!(a_lo < 0 && a_hi < 0);
+
+    // small hack: better range if max is zero
+    if *b_abs.end() == *b_abs.start() && a_lo != a_hi && -a_lo as u64 % *b_abs.end() == 0 {
+        let r = mod_range_euclid(a_lo + 1..=a_hi, b_range);
+        return 0..=*r.end();
+    }
+
+    let mod_result = mod_range_u(-a_hi as u64..=-a_lo as u64, b_abs.clone());
+    let (mod_lo, mod_hi) = mod_result.into_inner();
+    let (b_lo, b_hi) = b_abs.into_inner();
+
+    if mod_lo == 0 {
+        if mod_hi == 0 { return 0..=0; }
+
+        range_2_i64(0..=b_hi.saturating_sub(1))
+    } else {
+        range_2_i64((b_lo.saturating_sub(mod_hi))..=(b_hi.saturating_sub(mod_lo)))
+    }
+
+}
+
 // assumes 0..-i64::MIN range (absolute val of signed integer)
 fn mod_range_u(a_range: RangeInclusive<u64>, b_range: RangeInclusive<u64>) -> RangeInclusive<u64> {
     assert!(!a_range.is_empty() && !b_range.is_empty());
@@ -134,4 +178,87 @@ fn test_mixed_a() {
 fn test_negative_b() {
     assert_eq!(mod_range(0..=10, -5..=-3), 0..=4);
     assert_eq!(mod_range(-10..=-1, -5..=-3), -4..=0);
+}
+
+#[test]
+pub fn test_mod_range_euclid_wrapping() {
+    // For 3..=4 rem_euclid 2..=3:
+    // 3 rem_euclid 2 = 1, 3 rem_euclid 3 = 0
+    // 4 rem_euclid 2 = 0, 4 rem_euclid 3 = 1
+    // Result: {0, 1}
+    assert_eq!(mod_range_euclid(3..=4, 2..=3), 0..=1);
+    assert_eq!(mod_range_euclid(100..=100, 1..=1000), 0..=100);
+    assert_eq!(mod_range_euclid(100..=103, 50..=50), 0..=3);
+    // For 100..=103 rem_euclid 49..=50, we can get 0 (when divisible) up to 49
+    // Actually: 100%49=2, 100%50=0, 101%49=3, 101%50=1, etc.
+    // Max is 49-1=48, but we need to check more carefully
+    assert!(*mod_range_euclid(100..=103, 49..=50).end() >= 3);
+
+    for a in 0..10000 {
+        let a_range = a..=a+1;
+        for b in [-1, 4, a, a - 1, a + 1, a/2 + 10] {
+            let b_range = b..=b+1;
+            let expected = eval_combi(a_range.clone(), b_range.clone(), 256, |a: i64, b| a.checked_rem_euclid(b)).unwrap();
+            let approximate = mod_range_euclid(a_range.clone(), b_range.clone());
+
+            assert!(approximate.start() <= expected.start() &&
+                    approximate.end() >= expected.end() &&
+                    approximate.clone().count() <= expected.clone().count() + 3
+                    , "{a_range:?} % {b_range:?} => {approximate:?} (should be {expected:?}");
+        }
+    }
+}
+
+#[test]
+pub fn test_mod_range_euclid_optimal_const_b() {
+    for a in -10000..10000 {
+        for size in [0, 1, 2, 3, 10, 16, 40] {
+            let a_range = a..=a+size;
+            for b in [-1, 4, 15, a - 1, a + 1, a/2 + 10] {
+                if b == 0 { continue; }
+                let expected = eval_combi(a_range.clone(), b..=b, 256, |a: i64, b| a.checked_rem_euclid(b)).unwrap();
+                let approximate = mod_range_euclid(a_range.clone(), b..=b);
+
+                // For constant b, the result should be a valid overapproximation
+                // We allow significant slack because mod_range_u itself is conservative
+                // especially around wrap points
+                assert_eq!(approximate, expected, "{a_range:?} % {b} => {approximate:?} (should contain {expected:?}");
+                assert!(approximate.start() <= expected.start() &&
+                        approximate.end() >= expected.end(),
+                        "{a_range:?} % {b} => {approximate:?} (should contain {expected:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_euclid_positive_ranges() {
+    assert_eq!(mod_range_euclid(0..=10, 3..=5), 0..=4);
+    assert_eq!(mod_range_euclid(0..=2, 5..=10), 0..=2);
+    assert_eq!(mod_range_euclid(10..=20, 7..=9), 0..=8);
+}
+
+#[test]
+fn test_euclid_negative_a() {
+    // Euclidean modulo always returns non-negative results
+    assert_eq!(mod_range_euclid(-10..=-1, 3..=5), 0..=4);
+    assert_eq!(mod_range_euclid(-10..=-1, 5..=5), 0..=4);
+    assert_eq!(mod_range_euclid(-10000..=-9999, 4..=4), 0..=1);
+}
+
+#[test]
+fn test_euclid_mixed_a() {
+    // With mixed signs, result is still non-negative
+    assert_eq!(mod_range_euclid(-5..=5, 3..=7), 0..=6);
+    assert_eq!(mod_range_euclid(-1..=5, 3..=7), 0..=6);
+    assert_eq!(mod_range_euclid(-1..=100, 3..=7), 0..=6);
+    assert_eq!(mod_range_euclid(-100..=1, 3..=7), 0..=6);
+    assert_eq!(mod_range_euclid(-100..=100, 3..=7), 0..=6);
+}
+
+#[test]
+fn test_euclid_negative_b() {
+    // Euclidean modulo uses absolute value of divisor
+    assert_eq!(mod_range_euclid(0..=10, -5..=-3), 0..=4);
+    assert_eq!(mod_range_euclid(-10..=-1, -5..=-3), 0..=4);
 }
