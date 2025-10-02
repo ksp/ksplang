@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp, ops::RangeInclusive};
+use std::{borrow::Cow, cmp, collections::HashSet, iter::Copied, ops::RangeInclusive};
 
 use smallvec::{smallvec, SmallVec, ToSmallVec};
 
@@ -319,6 +319,60 @@ pub fn extract_effect(g: &mut GraphBuilder, current_effect: OpEffect, op: &OptOp
     }
 }
 
+pub fn get_values_offset(g: &GraphBuilder, val1: ValueId, val2: ValueId) -> Option<(i64, SmallVec<[ValueId; 4]>, SmallVec<[ValueId; 4]>)> {
+    fn make_result(g: &GraphBuilder, pos: &[ValueId], neg: &[ValueId]) -> (i64, SmallVec<[ValueId; 4]>, SmallVec<[ValueId; 4]>) {
+        let cpos: i64 = pos.iter().flat_map(|a| g.get_constant(*a)).sum();
+        let cneg: i64 = neg.iter().flat_map(|a| g.get_constant(*a)).sum();
+        let mut pos: SmallVec<_> = pos.iter().copied().filter(|v| v.is_computed()).collect();
+        let mut neg: SmallVec<_> = neg.iter().copied().filter(|v| v.is_computed()).collect();
+        pos.sort();
+        neg.sort();
+        (cpos - cneg, pos, neg)
+    }
+    if val1 == val2 {
+        return Some((0, smallvec![], smallvec![]));
+    }
+    if val1.is_constant() && val2.is_constant() {
+        let c1 = g.get_constant_(val1);
+        let c2 = g.get_constant_(val2);
+        return Some((c2 - c1, smallvec![], smallvec![]));
+    }
+
+    let def1 = g.get_defined_at(val1);
+    let def2 = g.get_defined_at(val2);
+
+    if let Some(def1) = def1 {
+        if def1.op == OptOp::Add && def1.inputs.contains(&val2) {
+            let mut other = def1.inputs.clone();
+            other.swap_remove(other.iter().position(|a| *a == val2).unwrap());
+            return Some(make_result(g, &[], &other));
+        }
+    }
+    if let Some(def2) = def2 {
+        if def2.op == OptOp::Add && def2.inputs.contains(&val1) {
+            let mut other = def2.inputs.clone();
+            other.swap_remove(other.iter().position(|a| *a == val1).unwrap());
+            return Some(make_result(g, &other, &[]));
+        }
+    }
+    if let (Some(def1), Some(def2)) = (def1, def2) {
+        if def1.op == OptOp::Add && def2.op == OptOp::Add {
+            let common_part: SmallVec<[ValueId; 4]> = def1.inputs.iter().copied().filter(|a| def2.inputs.contains(a)).collect();
+            if common_part.len() > 0 {
+                let mut a_i = def1.inputs.clone();
+                let mut b_i = def2.inputs.clone();
+                for c in common_part.iter() {
+                    a_i.swap_remove(a_i.iter().position(|x| *x == *c).unwrap());
+                    b_i.swap_remove(b_i.iter().position(|x| *x == *c).unwrap());
+                }
+                return Some(make_result(g, &b_i, &a_i));
+            }
+        }
+    }
+
+    None
+}
+
 /// Returns (changed, new instruction)
 pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Option<RangeInclusive<i64>>) {
     if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::Const(_)) {
@@ -385,7 +439,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Assert(Condition::True, _) | OptOp::DeoptAssert(Condition::True) | OptOp::Jump(Condition::False, _) =>
                 return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
             // degenerate expressions are all simplified to degenerate Add, which is the only thing user then has to handle
-            OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Gcd | OptOp::Max | OptOp::Min if i.inputs.len() == 1 =>
+            OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Max | OptOp::Min if i.inputs.len() == 1 =>
                 return (i.clone().with_op(OptOp::Add, &i.inputs, OpEffect::None), None),
 
             OptOp::AbsSub | OptOp::Sub if i.inputs[0] == i.inputs[1] =>
@@ -492,6 +546,21 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 i.inputs = vals.to_smallvec();
                 i.op = OptOp::Median;
                 i.effect = OpEffect::None;
+            }
+
+            OptOp::Gcd if i.inputs.len() == 1 => {
+                i.op = OptOp::AbsSub;
+                i.inputs = smallvec![ValueId::C_ZERO, i.inputs[0]];
+            }
+
+            OptOp::Gcd if i.inputs.len() == 2 => {
+                let (a, b) = (i.inputs[0], i.inputs[1]);
+                if let Some((offset, a_additional, b_additional)) = get_values_offset(cfg, a, b) {
+                    if a_additional.is_empty() && b_additional.is_empty() && offset == 1 {
+                        // gcd(a, a + 1) -> 1
+                        return (i.clone().with_op(OptOp::Const(1), &[], OpEffect::None), Some(1..=1));
+                    }
+                }
             }
 
             OptOp::Median if i.inputs.len() == 2 && i.inputs[0].is_constant() => {

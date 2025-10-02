@@ -1190,13 +1190,21 @@ struct VisitCounter {
     supressed: bool,
 }
 
+#[derive(Clone, Debug)]
+struct OptimizedBlock {
+    start_ip: usize,
+    reversed: bool,
+
+    cfg: GraphBuilder,
+}
+
 #[derive(Clone, Debug, Default)]
 struct Optimizer {
-    last_ip: usize,
+    // last_ip: usize,
     visit_counter: HashMap<usize, VisitCounter>,
-    optimized_blocks: HashMap<usize, ()>,
+    optimized_blocks: HashMap<usize, OptimizedBlock>,
     has_jumped: bool,
-    should_optimize: bool,
+    // should_optimize: bool,
     has_interrupted: bool,
     is_fake_state: bool,
 }
@@ -1257,7 +1265,7 @@ struct ActualTracer {
     pub start_block_location: usize,
     pub start_block_ix: usize,
     pub reversed: bool,
-    pub lazymode: bool,
+    // pub lazymode: bool,
 }
 
 impl Tracer for ActualTracer {
@@ -1362,10 +1370,10 @@ impl TraceProvider for ActualTracer {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct LazyTracer<'a> {
-    state: State<'a, ActualTracer>
-}
+// #[derive(Debug, Clone)]
+// pub struct LazyTracer<'a> {
+//     state: State<'a, ActualTracer>
+// }
 
 #[derive(Debug, Clone)]
 pub struct OptimizingVM {

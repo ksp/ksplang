@@ -1,4 +1,4 @@
-use core::{fmt, hash};
+use core::{fmt};
 use std::{
     borrow::Cow, cmp, collections::{BTreeMap, HashMap, HashSet}, fmt::Display, i32, mem, ops::{Range, RangeInclusive}
 };
@@ -360,7 +360,7 @@ impl GraphBuilder {
                     .cloned()
                     .reduce(|a, b| intersect_range(&a, &b))
                     .unwrap_or(i64::MIN..=i64::MAX);
-            assert!(!val_range.is_empty() || instr.op.is_terminal(), "Empty output range for instr {}: {:?} <- {:?}{:?}", instr.id, instr.out, instr.op, instr.inputs);
+            assert!(!val_range.is_empty() || instr.op.is_terminal(), "Empty output range for instr {}: {:?} <- {:?}{:?} (specified range={out_range:?}, simplifier range={out_range:?}, inferred range={inferred_range:?})", instr.id, instr.out, instr.op, instr.inputs);
 
             if *val_range.start() == *val_range.end() {
                 out_val = self.store_constant(*val_range.start());

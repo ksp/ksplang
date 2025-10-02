@@ -20,6 +20,9 @@ impl ValueId {
     pub const fn is_null(&self) -> bool {
         self.0 == 0
     }
+    pub const fn is_new_value_placeholder(&self) -> bool {
+        self.0 == i32::MAX
+    }
     pub const fn is_constant(&self) -> bool {
         self.0 < 0
     }
@@ -85,6 +88,8 @@ impl fmt::Display for ValueId {
             write!(f, "{}", c)
         } else if self.is_constant() {
             write!(f, "c{}", -self.0 - Self::PREDEF_RANGE)
+        } else if self.is_new_value_placeholder() {
+            write!(f, "vNEW")
         } else {
             write!(f, "v{}", self.0)
         }

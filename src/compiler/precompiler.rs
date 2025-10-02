@@ -575,12 +575,15 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.push_deopt_assert(Condition::Neq(c, ValueId::C_IMIN), false);
                     }
 
-                    let div = self.g.value_numbering(OptOp::Div, &[dividend, divisor], out_range.clone(), Some(OpEffect::None)); // all failures must be handled specially here
+                    let negated_range =
+                        out_range.as_ref().map(|r| r.end().saturating_neg()..=r.start().saturating_neg())
+                                          .unwrap_or(i64::MIN+1..=i64::MAX);
+
+                    let div = self.g.value_numbering(OptOp::Div, &[dividend, divisor], if elide_neg { Some(negated_range.clone()) } else { out_range.clone() }, Some(OpEffect::None)); // all failures must be handled specially here
 
                     if !elide_neg {
                         let neg = self.g.value_numbering(OptOp::Sub, &[ValueId::C_ZERO, div],
-                            Some(out_range.map(|r| r.end().saturating_neg()..=r.start().saturating_neg())
-                                                  .unwrap_or(i64::MIN+1..=i64::MAX)),
+                            Some(negated_range),
                             Some(if can_overflow { OpEffect::MayFail } else { OpEffect::None })
                         );
                         self.g.stack.push(neg);
