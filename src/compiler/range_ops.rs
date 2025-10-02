@@ -5,6 +5,11 @@ use num_traits::{CheckedAdd, CheckedMul, CheckedSub};
 
 use crate::{compiler::utils::{abs_range, range_2_i64, u64neg}, vm};
 
+#[inline]
+pub fn range_signum(r: RangeInclusive<i64>) -> RangeInclusive<i64> {
+    r.start().signum()..=r.end().signum()
+}
+
 pub fn range_mod(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> RangeInclusive<i64> {
     let b_abs = abs_range(b_range.clone());
 
@@ -20,7 +25,7 @@ pub fn range_mod(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> 
         Some(range_mod_u(cmp::max(0, a_lo) as u64..=a_hi as u64, b_abs.clone()))
     } else { None };
     let negative = if a_lo < 0 {
-        Some(range_mod_u(-cmp::min(0, a_hi) as u64..=-a_lo as u64, b_abs.clone()))
+        Some(range_mod_u(-cmp::min(0, a_hi) as u64..=a_lo.abs_diff(0), b_abs.clone()))
     } else { None };
 
     let positive = positive.map(range_2_i64);

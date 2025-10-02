@@ -11,6 +11,7 @@ pub struct ValueId(pub i32);
 impl ValueId {
     pub const PREDEF_RANGE: i32 = 4096;
     pub const C_NEG_ONE: ValueId = Self::from_predefined_const(-1).unwrap();
+    pub const C_NEG_TWO: ValueId = Self::from_predefined_const(-2).unwrap();
     pub const C_ZERO: ValueId = Self::from_predefined_const(0).unwrap();
     pub const C_ONE: ValueId = Self::from_predefined_const(1).unwrap();
     pub const C_TWO: ValueId = Self::from_predefined_const(2).unwrap();
@@ -321,7 +322,8 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
     }
 
     pub fn evaluate(&self, inputs: &[i64]) -> Result<i64, Option<OperationError>> {
-        debug_assert!(self.arity().contains(&inputs.len()), "Invalid number of inputs for {:?}: {}", self, inputs.len());
+        let cond_count = self.condition().map(|c| c.regs().len()).unwrap_or(0);
+        debug_assert!(self.arity().contains(&(inputs.len() - cond_count)), "Invalid number of inputs for {:?}: {}", self, inputs.len());
         match self {
             OptOp::Push | OptOp::Pop | OptOp::Nop => Err(None),
             OptOp::Add => inputs.iter().try_fold(0i64, |a, b| a.checked_add(*b)).ok_or(Some(OperationError::IntegerOverflow)),
@@ -399,7 +401,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Assert(condition, operation_error) => if condition.eval(inputs) {
                 Ok(0)
             } else {
-                Err(Some(if inputs.len() > condition.regs().len() {
+                Err(Some(if inputs.len() > cond_count {
                     operation_error.with_value(inputs[condition.regs().len()])
                 } else {
                     operation_error.clone()
@@ -604,6 +606,17 @@ impl OpEffect {
             (ControlFlow, _) | (_, ControlFlow) => ControlFlow,
             (StackRead, _) | (_, StackRead) => StackRead,
             (StackWrite, StackWrite) => StackWrite,
+        }
+    }
+    pub fn worse_of(a: OpEffect, b: OpEffect) -> OpEffect {
+        use OpEffect::*;
+        match (a, b) {
+            (StackWrite, _) | (_, StackWrite) => StackWrite,
+            (StackRead, _) | (_, StackRead) => StackRead,
+            (ControlFlow, _) | (_, ControlFlow) => ControlFlow,
+            (MayDeopt, _) | (_, MayDeopt) => MayDeopt,
+            (MayFail, _) | (_, MayFail) => MayFail,
+            (None, None) => None
         }
     }
 }

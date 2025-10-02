@@ -1,8 +1,8 @@
-use std::{borrow::Cow, collections::{BTreeMap, HashMap}, fmt, ops::{Range, RangeInclusive}, str::MatchIndices, sync::Arc};
+use std::{borrow::Cow, collections::{BTreeMap}, fmt, ops::{Range, RangeInclusive}, sync::Arc};
 
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{OptInstr, OptOp, ValueId, ValueInfo}, vm_code::Condition}, ops::Op};
+use crate::{compiler::{cfg::GraphBuilder, ops::{OptInstr, OptOp, ValueId, ValueInfo}, vm_code::Condition}};
 
 #[derive(Clone)]
 pub struct HackEqDebug<T, TId>(pub T, pub TId);
@@ -47,6 +47,8 @@ impl<'a> OptOptPattern<'a> {
         Self::default().or_constant(range)
     }
 
+    pub fn new_const(x: i64) -> Self { Self::new_constant(x..=x) }
+
     pub fn new_any() -> Self { Self::new_range(i64::MIN..=i64::MAX) }
 
     pub fn or_value(mut self, val: ValueId) -> Self {
@@ -88,10 +90,9 @@ impl<'a> OptOptPattern<'a> {
     }
 
 
-    pub fn try_match(&self, cfg: &GraphBuilder, val: &[ValueId]) -> Result<MatchInfo, ()> {
+    pub fn try_match(&'_ self, cfg: &GraphBuilder, val: &[ValueId]) -> Result<MatchInfo<'_>, ()> {
         let mut info = MatchInfo::new();
-        let v = self.match_internal(cfg, val, &mut info)?;
-        info.values.push(v);
+        self.match_internal(cfg, val, &mut info)?;
         Ok(info)
     }
 
@@ -118,7 +119,15 @@ impl<'a> OptOptPattern<'a> {
         false
     }
 
-    fn match_internal(&self, cfg: &GraphBuilder, val: &[ValueId], info: &mut MatchInfo) -> Result<ValueId, ()> {
+    fn match_internal(&self, cfg: &GraphBuilder, val: &[ValueId], info: &mut MatchInfo<'a>) -> Result<ValueId, ()> {
+        let v = self.match_core(cfg, val, info)?;
+        info.values.push(v);
+        if let Some(name) = &self.name {
+            info.named.push((name.clone(), v))
+        }
+        return Ok(v)
+    }
+    fn match_core(&self, cfg: &GraphBuilder, val: &[ValueId], info: &mut MatchInfo<'a>) -> Result<ValueId, ()> {
         for vv in &self.options_values {
             if val.contains(vv) {
                 return Ok(*vv);
@@ -157,7 +166,7 @@ impl<'a> OptOptPattern<'a> {
         Err(())
     }
 
-    fn matches_instr(info: &mut MatchInfo, cfg: &GraphBuilder, val: ValueId, val_info: &ValueInfo, instr: &OptInstr, pattern: &OptOp<Box<OptOptPattern<'a>>>, args: &[OptOptPattern<'a>], allow_commutativity: bool) -> bool {
+    fn matches_instr(info: &mut MatchInfo<'a>, cfg: &GraphBuilder, val: ValueId, val_info: &ValueInfo, instr: &OptInstr, pattern: &OptOp<Box<OptOptPattern<'a>>>, args: &[OptOptPattern<'a>], allow_commutativity: bool) -> bool {
         if instr.op.discriminant() != pattern.discriminant() {
             return false;
         }
@@ -226,7 +235,7 @@ impl<'a> OptOptPattern<'a> {
         }
     }
 
-    fn match_list(info: &mut MatchInfo, cfg: &GraphBuilder, vals: &[ValueId], patterns: &[OptOptPattern<'a>], commutativity: Range<usize>) -> bool {
+    fn match_list(info: &mut MatchInfo<'a>, cfg: &GraphBuilder, vals: &[ValueId], patterns: &[OptOptPattern<'a>], commutativity: Range<usize>) -> bool {
         if patterns.is_empty() { return vals.is_empty(); }
         if vals.is_empty() { return patterns.iter().all(|p| p.allow_empty); }
 
@@ -324,7 +333,7 @@ impl<'a> OptOptPattern<'a> {
         }
     }
 
-    fn match_condition(cfg: &GraphBuilder, info: &mut MatchInfo, cond: &Condition<ValueId>, pattern: &Condition<Box<OptOptPattern<'a>>>) -> Result<bool, ()> {
+    fn match_condition(cfg: &GraphBuilder, info: &mut MatchInfo<'a>, cond: &Condition<ValueId>, pattern: &Condition<Box<OptOptPattern<'a>>>) -> Result<bool, ()> {
         match (cond, pattern) {
             (Condition::True, Condition::True) => Ok(true),
             (Condition::False, Condition::False) => Ok(true),
@@ -404,6 +413,7 @@ impl fmt::Display for OptOptPattern<'_> {
 }
 
 
+#[derive(Clone, Debug)]
 pub struct MatchInfo<'a> {
     pub constants: SmallVec<[i64; 3]>,
     pub values: SmallVec<[ValueId; 6]>,
@@ -433,6 +443,21 @@ impl<'a> MatchInfo<'a> {
         assert_eq!(self.constants.len(), sp.constants_len);
         assert_eq!(self.values.len(), sp.values_len);
         assert_eq!(self.named.len(), sp.named_len);
+    }
+
+    fn main_value(&self) -> ValueId {
+        *self.values.last().expect("MatchInfo is empty")
+    }
+
+    pub fn get_named_iter(&'a self, name: &'a str) -> impl Iterator<Item = ValueId> + 'a {
+        self.named.iter().filter(move |(n, _)| name == n.as_ref()).map(|(_, v)| *v)
+    }
+
+    pub fn get_named_single(&self, name: &str) -> Option<ValueId> {
+        let mut iter = self.get_named_iter(name);
+        let a = iter.next();
+        let b = iter.next();
+        if b.is_some() { None } else { a }
     }
 }
 

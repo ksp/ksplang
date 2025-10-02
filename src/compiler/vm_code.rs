@@ -364,11 +364,12 @@ struct Compiler {
 }
 
 impl Compiler {
-    pub fn new() {
-        let mut c = Compiler::default();
-        for reg in 0..256 {
+    pub fn new() -> Self {
+        // let mut c = Compiler::default();
+        // for reg in 0..256 {
             
-        }
+        // }
+        todo!()
     }
     fn compile(&mut self, g: &GraphBuilder) {
 
@@ -386,27 +387,27 @@ struct RegisterAllocation {
 }
 
 fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocation {
-    let lifetimes = analyze_value_lifetimes(g);
-    let equivalences = equivalence_preferences(g);
-    let remat_costs = remat_cost(g, &lifetimes, 100);
+    // let lifetimes = analyze_value_lifetimes(g);
+    // let equivalences = equivalence_preferences(g);
+    // let remat_costs = remat_cost(g, &lifetimes, 100);
 
-    let get_equivalence_preferences = |val: ValueId| equivalences.range((val, ValueId(1))..=(val, ValueId(i32::MAX))).map(|c| (c.0.1, *c.1));
-    let find_already_assigned = |val: ValueId| {
-        let eqs1 = get_equivalence_preferences(val);
-        let eqs2 = eqs1.flat_map(|(val, count)| get_equivalence_preferences(val).map(move |(val2, count2)| (val2, count2.saturating_add(count))).chain([(val, count)]));
-        let mut res = BTreeMap::new();
-        for (val, count) in eqs2 {
-            let x = res.entry(val).or_insert(0u32);
-            *x = x.saturating_add(count);
-        }
-        let mut res: Vec<_> = res.into_iter().collect();
-        res.sort_by_key(|x| cmp::Reverse(x.1));
-        res
-    };
+    // let get_equivalence_preferences = |val: ValueId| equivalences.range((val, ValueId(1))..=(val, ValueId(i32::MAX))).map(|c| (c.0.1, *c.1));
+    // let find_already_assigned = |val: ValueId| {
+    //     let eqs1 = get_equivalence_preferences(val);
+    //     let eqs2 = eqs1.flat_map(|(val, count)| get_equivalence_preferences(val).map(move |(val2, count2)| (val2, count2.saturating_add(count))).chain([(val, count)]));
+    //     let mut res = BTreeMap::new();
+    //     for (val, count) in eqs2 {
+    //         let x = res.entry(val).or_insert(0u32);
+    //         *x = x.saturating_add(count);
+    //     }
+    //     let mut res: Vec<_> = res.into_iter().collect();
+    //     res.sort_by_key(|x| cmp::Reverse(x.1));
+    //     res
+    // };
 
-    let mut spill_vals = HashMap::<ValueId, u32>::new();
-    let mut spills = Vec::<(ValueId, InstrId)>::new();
-    let mut unspills = Vec::<(ValueId, InstrId)>::new();
+    // let mut spill_vals = HashMap::<ValueId, u32>::new();
+    // let mut spills = Vec::<(ValueId, InstrId)>::new();
+    // let mut unspills = Vec::<(ValueId, InstrId)>::new();
 
     todo!()
 }

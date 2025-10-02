@@ -374,6 +374,10 @@ impl GraphBuilder {
             }
         }
 
+        if instr.out == ValueId(0) && instr.effect == OpEffect::None {
+            return (out_val, None)
+        }
+
         if value_numbering {
             self.value_numbering_store(instr.op.clone(), &instr.inputs, out_val, instr.id);
         }
@@ -536,6 +540,12 @@ impl GraphBuilder {
         used.into_iter().collect()
     }
 
+    pub fn get_defined_at<'a>(&'a self, v: ValueId) -> Option<&'a OptInstr> {
+        if v.is_constant() { return None }
+        self.val_info(v).and_then(|info| info.assigned_at)
+                        .and_then(|at| self.get_instruction(at))
+    }
+
     pub fn val_info<'a>(&'a self, v: ValueId) -> Option<Cow<'a, ValueInfo>> {
         if v.is_constant() {
             let c = self.get_constant_(v);
@@ -656,7 +666,7 @@ impl GraphBuilder {
             let val_id  = val.id;
             if val.used_at.is_empty() && !self.stack.lookup.contains_key(&val_id) {
                 let Some(instruction_id) = val.assigned_at else {
-                    todo!("should not happen?")
+                    return // it's a parameter or something like that
                 };
                 if instruction_id.is_block_head() {
                     todo!("phis (BB parameters)")

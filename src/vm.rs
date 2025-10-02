@@ -1029,7 +1029,7 @@ pub fn run_with_stats<T: Tracer>(
 }
 
 #[inline]
-pub fn run_state<'a, T: Tracer>(
+fn run_state<'a, T: Tracer>(
     s: &mut State<'a, T>,
     options: &VMOptions
 ) -> Result<(), RunError> {
@@ -1330,11 +1330,10 @@ impl ActualTracer {
         };
 
         current_block_ix.into_iter().chain(
-            opt.into_iter().flat_map(|(block_end, traces)| traces.iter().cloned())
+            opt.into_iter().flat_map(|(_block_end, traces)| traces.iter().cloned())
                 .filter(move |(block_start, _)| if rev { *block_start >= ip } else { *block_start <= ip })
                 .map(move |(block_start, (trace_start, trace_end))| {
                     let offset = if rev { block_start - ip } else { ip - block_start };
-                    assert!(offset >= 0);
                     assert!(trace_start + offset < trace_end);
                     trace_start + offset
                 })
@@ -1412,9 +1411,8 @@ impl OptimizingVM {
         }
     }
 
-    fn optimize<'a>(&mut self, mut s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
+    fn optimize<'a>(&mut self, s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
         let limit = 10_000;
-        let mut opt = Optimizer::default();
         let (optimizer, mut st) = s.swap_tracer(ActualTracer::default());
         st.tracer.start_block_location = st.ip;
         st.tracer.max_count = 4_000;
@@ -1423,7 +1421,7 @@ impl OptimizingVM {
         let reversed = st.reversed;
         let result = run_state(&mut st, options);
 
-        let (trace, s) = st.swap_tracer(opt);
+        let (trace, s) = st.swap_tracer(optimizer);
 
         if result.as_ref().is_err_and(|e| matches!(e, RunError::TracerInterrupt(_, _))) {
             return (s, result);

@@ -2,7 +2,7 @@ use std::{borrow::Cow, cmp, ops::RangeInclusive};
 
 use smallvec::{smallvec, SmallVec, ToSmallVec};
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, utils::{abs_range, sort_tuple}, vm_code::Condition}, ops::Op, vm::OperationError};
+use crate::{compiler::{cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::{self, OptOptPattern}, range_ops::{range_mod, range_signum}, utils::{abs_range, sort_tuple, union_range, FULL_RANGE}, vm_code::Condition}, ops::Op, vm::OperationError};
 
 fn overlap(a: RangeInclusive<i64>, b: RangeInclusive<i64>) -> Option<RangeInclusive<i64>> {
     let start = *a.start().max(b.start());
@@ -75,7 +75,6 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
             }
         }
         Condition::Lt(a, b) => {
-            let (a, b) = sort_tuple(a, b);
             let ar = cfg.val_range(a);
             let br = cfg.val_range(b);
             if ar.end() < br.start() {
@@ -87,7 +86,6 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
             }
         }
         Condition::Leq(a, b) => {
-            let (a, b) = sort_tuple(a, b);
             let ar = cfg.val_range(a);
             let br = cfg.val_range(b);
             if ar.end() <= br.start() {
@@ -99,7 +97,6 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
             }
         }
         Condition::Gt(a, b) => {
-            let (a, b) = sort_tuple(a, b);
             let ar = cfg.val_range(a);
             let br = cfg.val_range(b);
             if ar.start() > br.end() {
@@ -111,7 +108,6 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
             }
         }
         Condition::Geq(a, b) => {
-            let (a, b) = sort_tuple(a, b);
             let ar = cfg.val_range(a);
             let br = cfg.val_range(b);
             if ar.start() >= br.end() {
@@ -386,6 +382,8 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None),
             OptOp::Select(Condition::False) =>
                 return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None),
+            OptOp::Assert(Condition::True, _) | OptOp::DeoptAssert(Condition::True) | OptOp::Jump(Condition::False, _) =>
+                return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
             // degenerate expressions are all simplified to degenerate Add, which is the only thing user then has to handle
             OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Gcd | OptOp::Max | OptOp::Min if i.inputs.len() == 1 =>
                 return (i.clone().with_op(OptOp::Add, &i.inputs, OpEffect::None), None),
@@ -393,7 +391,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::AbsSub | OptOp::Sub if i.inputs[0] == i.inputs[1] =>
                 // abs(a - a) -> 0
                 return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), None),
-            
+
             OptOp::AbsSub => {
                 let (start_a, end_a) = ranges[0].clone().into_inner();
                 let (start_b, end_b) = ranges[1].clone().into_inner();
@@ -415,13 +413,17 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
             }
 
+            OptOp::Add if i.inputs[0] == ValueId::C_ZERO => {
+                i.inputs.remove(0);
+            }
+
             OptOp::Mod | OptOp::ModEuclid | OptOp::Div | OptOp::CursedDiv if ranges[1] == (0..=0) =>
                 // a % 0 or a / 0 -> always error
                 return (i.with_op(OptOp::Assert(Condition::False, OperationError::DivisionByZero), &[], OpEffect::None), None),
 
             OptOp::Mod | OptOp::ModEuclid if i.inputs[0] == i.inputs[1] => {
                 // a % a -> 0
-                let br = &ranges[2];
+                let br = &ranges[1];
                 if br.contains(&0) {
                     cfg.push_assert(Condition::NeqConst(i.inputs[1], 0), OperationError::DivisionByZero, None);
                 }
@@ -446,6 +448,14 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 i.op = OptOp::Sub;
                 i.inputs = smallvec![ValueId::C_ZERO, i.inputs[0]];
             }
+            OptOp::Div | OptOp::CursedDiv if i.inputs[0] == i.inputs[1] => {
+                // a / a -> 1
+                let br = &ranges[1];
+                if br.contains(&0) {
+                    cfg.push_assert(Condition::NeqConst(i.inputs[1], 0), OperationError::DivisionByZero, None);
+                }
+                return (i.clone().with_op(OptOp::Const(1), &[], OpEffect::None), None);
+            }
             OptOp::Mul if i.inputs.contains(&ValueId::C_ZERO) =>
                 // a * 0 -> 0
                 return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), Some(0..=0)),
@@ -464,6 +474,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 let Some(mul) = 1i64.checked_shl(shift as u32) else {
                     break 'main;
                 };
+                if mul.checked_mul(*ranges[0].start()).is_none() || mul.checked_mul(*ranges[0].end()).is_none() {
+                    break 'main;
+                }
                 i.op = OptOp::Mul;
                 i.inputs = smallvec![i.inputs[0], cfg.store_constant(mul)];
                 continue;
@@ -500,7 +513,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 };
                 let div_2 = cfg.value_numbering(OptOp::Div, &[a, ValueId::C_TWO], None, Some(OpEffect::None));
                 let const_c = cfg.store_constant(c / 2);
-                return (i.clone().with_op(OptOp::Add, &[ div_2, const_c ], OpEffect::None), None);
+                i.op = OptOp::Add;
+                i.inputs = smallvec![const_c, div_2];
+                i.effect = OpEffect::None;
             }
 
             OptOp::Median if i.inputs.len() == 3 && i.inputs[0].is_constant() && i.inputs[1].is_constant() => {
@@ -527,11 +542,119 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             }
         }
 
+        if OptOp::Add == i.op {
+            // inline (a + const1) + const2, (a + const1) + (b + const2)
+            let defines = i.inputs.iter().map(|v|
+                if v.is_constant() { Err(cfg.get_constant_(*v)) }
+                else {
+                    Ok(cfg.val_info(*v).and_then(|i| i.assigned_at).and_then(|i| cfg.get_instruction(i)))
+                }
+            ).collect::<Vec<_>>();
+            let add_or_const = defines.iter().copied().filter(|c| c.is_err() || c.unwrap().is_some_and(|i| i.op == OptOp::Add && i.inputs.iter().any(|v| v.is_constant()))).collect::<Vec<_>>();
+
+            if add_or_const.len() >= 2 {
+                let mut constant = 0;
+                let mut promoted_positive = false;
+                let mut promoted_negative = false;
+                let mut new_args = SmallVec::new();
+                for (def, arg) in defines.iter().zip(&i.inputs) {
+                    match def {
+                        Err(c) => constant += c,
+                        Ok(None) => new_args.push(*arg),
+                        Ok(Some(i)) => {
+                            if i.op == OptOp::Add && i.inputs.len() == 2 && i.inputs[0].is_constant() {
+                                let c =  cfg.get_constant_(i.inputs[0]);
+                                if c > 0 { promoted_positive = true; }
+                                else if c < 0 { promoted_negative = true; }
+                                constant += c;
+                                new_args.extend_from_slice(&i.inputs[1..]);
+                            } else {
+                                new_args.push(*arg)
+                            }
+                        }
+                    }
+                }
+
+                let is_unsafe = promoted_positive && promoted_negative &&
+                    OpEffect::None != OptOp::<ValueId>::Add.effect_based_on_ranges(&new_args.iter().map(|a| cfg.val_range(*a)).collect::<Vec<_>>());
+                if !is_unsafe {
+                    i.op = OptOp::Add;
+                    if constant != 0 {
+                        new_args.push(cfg.store_constant(constant));
+                    }
+                    new_args.sort();
+                    i.inputs = new_args;
+                }
+            }
+        }
+
+        if OptOp::Mul == i.op && i.inputs[0].is_constant() && i.inputs.len() == 2 {
+            let c = cfg.get_constant_(i.inputs[0]);
+            if let Some(def) = cfg.get_defined_at(i.inputs[1]) {
+                let def_ranges = get_ranges(cfg, def.inputs.iter().copied());
+                // (-x) * const => x * (-const)
+                if def.op == OptOp::Sub && def.inputs[0] == ValueId::C_ZERO && i.inputs[0] != ValueId::C_IMIN {
+                    i.effect = OpEffect::worse_of(i.effect, def.effect);
+                    i.inputs[1] = def.inputs[1];
+                    i.inputs[0] = cfg.store_constant(-c);
+                    changed = true;
+                    continue;
+                }
+                // if def.op == OptOp::Sub {
+                //
+                // }
+                // if def.op == OptOp::Add {
+                //     let is_valid = def_ranges.
+                // }
+                if def.op == OptOp::Mul && def.inputs[0].is_constant() {
+                    let c2 = cfg.get_constant_(def.inputs[0]);
+                    i.effect = OpEffect::worse_of(i.effect, def.effect);
+                    i.inputs[1] = def.inputs[1];
+                    i.inputs[0] = cfg.store_constant(c * c2);
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+
+        if OptOp::Mul == i.op {
+            // (a + b) * c => a * c + b * c
+            // only valid if at all a, b have the same sign, otherwise we are introducing overfows
+            println!("DEBUG Mul OPT1: {}", i);
+            for (arg_ix, &val) in i.inputs.clone().iter().enumerate() {
+                let Some(def) = cfg.get_defined_at(val) else { continue };
+                if def.op == OptOp::Add {
+                    let def_rs = get_ranges(cfg, def.inputs.iter().copied());
+                    let is_valid = def_rs.iter().cloned().map(range_signum).reduce(union_range).unwrap().count() <= 2 || {
+                        let mut range_clone = ranges.clone();
+                        def_rs.iter().all(move |add_input| {
+                            range_clone[arg_ix] = add_input.clone();
+                            OptOp::<ValueId>::Mul.effect_based_on_ranges(&range_clone) == OpEffect::None
+                        })
+                    };
+                    println!("DEBUG Mul OPT: {} {} {}", i, is_valid, def);
+                    if is_valid {
+                        let new_args = def.inputs.clone().iter().map(|v| {
+                            let mut in_clone = i.inputs.clone();
+                            in_clone[arg_ix] = *v;
+                            cfg.value_numbering(OptOp::Mul, &in_clone, None, Some(i.effect))
+                        }).collect();
+
+                        i.inputs = new_args;
+                        i.op = OptOp::Add;
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // pattern::OptOptPattern::new(OptOp::Mul, vec![] ])
+
         if OptOp::Div == i.op && !i.inputs[0].is_constant() {
+            // a * x / x -> a
             let divisor = i.inputs[1];
-            if let Some(defined_at) = cfg.val_info(i.inputs[0])
-                                                    .and_then(|i| i.assigned_at)
-                                                    .and_then(|id| cfg.get_instruction(id)) {
+            if let Some(defined_at) = cfg.get_defined_at(i.inputs[0]) {
                 if defined_at.op == OptOp::Mul && defined_at.inputs.contains(&divisor) {
                     let divisor_index = defined_at.inputs.iter().position(|&x| x == divisor).unwrap();
                     let other_mul = if defined_at.inputs.len() == 2 {
@@ -545,9 +668,92 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 }
             }
         }
+        // TODO: this breaks other optimizations
+        // if OptOp::Mul == i.op && i.inputs[0].is_constant() {
+        //     // a / c * c => a - (a % c)
+        //     let c = cfg.get_constant_(i.inputs[0]);
+        //     if let Some(defined_at) = cfg.get_defined_at(i.inputs[1]) {
+        //         if defined_at.op == OptOp::Div && defined_at.inputs[1] == i.inputs[0] && c.abs() > 1 {
+        //             let a = defined_at.inputs[0];
+        //             let c_val = cfg.store_constant(c.abs());
+        //             let modulo = cfg.value_numbering(OptOp::Mod, &[a, c_val], None, None);
+        //             i.op = OptOp::Sub;
+        //             i.effect = OpEffect::None;
+        //             i.inputs = smallvec![a, modulo];
+        //             changed = true; continue;
+        //         }
+        //     }
+        // }
+
+
+        // used in duplication:
+        // a + ((a / 2) + 1) * -2
+        // OR a + ((a / 2) * -2 - 2)
+        // which is equivalent to (a % 2) - 2
+        if OptOp::Add == i.op && !i.inputs[0].is_constant() && i.inputs.len() == 2 && i.inputs[0] != i.inputs[1] {
+            let mul_pattern =
+                OptOptPattern::new(OptOp::Mul, vec![
+                    OptOptPattern::new_const(-2),
+                    OptOptPattern::new(OptOp::Add, vec![
+                        OptOptPattern::new_const(1),
+                        OptOptPattern::new(OptOp::Div, vec![
+                            OptOptPattern::new_any().named("v2"),
+                            OptOptPattern::new_const(2)
+                        ])
+                    ])
+                ]).or_op(OptOp::Add, vec![
+                    OptOptPattern::new_const(-2),
+                    OptOptPattern::new(OptOp::Mul, vec![
+                        OptOptPattern::new_const(-2),
+                        OptOptPattern::new(OptOp::Div, vec![
+                            OptOptPattern::new_any().named("v2"),
+                            OptOptPattern::new_const(2)
+                        ])
+                    ])
+                ]);
+            if let Ok(r) = mul_pattern.try_match(cfg, &i.inputs) {
+                let a = r.get_named_single("v2").unwrap();
+                if i.inputs.contains(&a) {
+                    println!("DEBUG: bingo {:?}", r);
+                    // rewrite to (a % 2) - 2
+                    let modulo = cfg.value_numbering(OptOp::Mod, &[a, ValueId::C_TWO], None, None);
+                    i.op = OptOp::Add;
+                    i.inputs = smallvec![ValueId::C_NEG_TWO, modulo];
+                    i.effect = OpEffect::None;
+                }
+            }
+        }
+
+        // used in duplication:
+        // (a / 2 * 2) + (a % 2) which is equivalent to a
+        // TODO: do the transform whenever (a / 2 * 2) is used in additive context?
+        if OptOp::Add == i.op && !i.inputs[0].is_constant() && i.inputs.len() == 2 && i.inputs[0] != i.inputs[1] {
+            let mul_pattern =
+                OptOptPattern::new(OptOp::Mul, vec![
+                    OptOptPattern::new_constant(2..=i64::MAX).named("div1"),
+                    OptOptPattern::new(OptOp::Div, vec![
+                        OptOptPattern::new_any().named("v2"),
+                        OptOptPattern::new_constant(2..=i64::MAX).named("div2")
+                    ])
+                ]);
+            if let Ok(r) = mul_pattern.try_match(cfg, &i.inputs) {
+                if r.get_named_single("div1") == r.get_named_single("div2") {
+                    let a = r.get_named_single("v2").unwrap();
+                    let c = cfg.get_constant_(r.get_named_single("div1").unwrap());
+                    return (i.with_op(OptOp::Add, &[a], OpEffect::None), None)
+                }
+            }
+        }
     }
 
 
 
     (i, None)
+}
+
+fn get_defs(g: &GraphBuilder, vals: impl Iterator<Item = ValueId>) -> SmallVec<[Option<&OptInstr>; 4]> {
+    vals.map(|v| g.get_defined_at(v)).collect()
+}
+fn get_ranges(g: &GraphBuilder, vals: impl Iterator<Item = ValueId>) -> SmallVec<[RangeInclusive<i64>; 4]> {
+    vals.map(|v| g.val_range(v)).collect()
 }
