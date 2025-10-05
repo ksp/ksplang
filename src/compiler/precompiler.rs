@@ -1,9 +1,9 @@
-use std::{cmp, collections::{BTreeSet, HashSet}, ops::RangeInclusive, result, vec};
+use std::{cmp, ops::RangeInclusive, vec};
 
 use num_integer::Integer;
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{OpEffect, OptOp, ValueId, ValueInfo}, range_ops::{eval_combi, range_num_digits}, utils::{abs_range, add_range, eval_combi_u64, range_2_i64, sort_tuple}, vm_code::Condition}, digit_sum::digit_sum_range, funkcia::funkcia, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
+use crate::{compiler::{cfg::GraphBuilder, ops::{OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, range_2_i64, sort_tuple}, vm_code::Condition}, digit_sum::digit_sum, funkcia::funkcia, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
 
 pub struct Options {
     pub allow_pruning: bool
@@ -51,6 +51,23 @@ pub struct Precompiler<'a, TP: TraceProvider> {
     pub tracer: TP
 }
 
+#[derive(Debug, Clone)]
+pub struct PrecompileStepResultBranch {
+    pub target: usize,
+    pub condition: Condition<ValueId>,
+    pub stack: (usize, Vec<ValueId>),
+    pub call_ret: Option<ValueId>,
+    pub additional_instr: Vec<(OptOp<ValueId>, Vec<ValueId>, ValueId)>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PrecompileStepResult {
+    Continue,
+    NevimJak,
+    NevimJakChteloByToKonstantu(Vec<ValueId>),
+    Branching(Vec<PrecompileStepResultBranch>),
+}
+
 impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
     pub fn new(
         ops: &'a [crate::ops::Op],
@@ -89,16 +106,72 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         self.g.value_numbering(OptOp::Add, &[a, b], None, None)
     }
 
-    pub fn step(&mut self) -> Result<(), ()> {
+    fn branching(&mut self, target: ValueId, is_relative: bool, is_call: bool, condition: Condition<ValueId>) -> PrecompileStepResult {
+        let condition = simplifier::canonicalize_condition(&mut self.g, condition);
+        if condition == Condition::False {
+            return PrecompileStepResult::Continue;
+        }
+    
+        if let Some(target_const) = self.g.get_constant(target) {
+            let target_ip = if is_relative {
+                if self.reversed_direction {
+                    self.position.checked_sub(target_const as usize + 1)
+                } else {
+                    self.position.checked_add(target_const as usize + 1)
+                }
+            } else {
+                Some(target_const as usize)
+            };
+            println!("Branching to constant target {target_const} {}->{target_ip:?} (relative={is_relative}, call={is_call}, condition={condition:?})", self.position);
+
+            if target_ip.is_none_or(|target_ip | target_ip >= self.ops.len()) {
+                // branching out of the program
+                self.g.push_deopt_assert(condition.neg(), false);
+                return PrecompileStepResult::Continue;
+            }
+
+            let call_ret = if is_call {
+                Some(self.g.store_constant(self.next_position() as i64))
+            } else {
+                None
+            };
+
+            let branch = PrecompileStepResultBranch {
+                target: target_ip.unwrap(),
+                condition: condition.clone(),
+                stack: (0, call_ret.into_iter().collect()),
+                call_ret,
+                additional_instr: vec![],
+            };
+
+            let no_branch = PrecompileStepResultBranch {
+                target: self.next_position(),
+                condition: Condition::True,
+                stack: (0, vec![]),
+                call_ret: None,
+                additional_instr: vec![],
+            };
+            if condition == Condition::True {
+                return PrecompileStepResult::Branching(vec![branch]);
+            } else {
+                return PrecompileStepResult::Branching(vec![branch, no_branch]);
+            }
+        }
+
+        PrecompileStepResult::NevimJakChteloByToKonstantu(vec![target])
+    }
+
+    pub fn step(&mut self) -> PrecompileStepResult {
+        use PrecompileStepResult::*;
         let op = self.ops[self.position as usize];
 
         match op {
-            crate::ops::Op::Nop => Ok(()),
+            crate::ops::Op::Nop => Continue,
             crate::ops::Op::Praise => {
                 let n = self.g.peek_stack();
                 if let Some(constant) = self.g.get_constant(n) {
                     if constant > 100 || constant < 0 {
-                        return Err(());
+                        return NevimJak;
                     }
 
                     self.g.pop_stack();
@@ -114,20 +187,20 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             for &v in &vals { self.g.stack.push(v); }
                         }
                     }
-                    Ok(())
+                    Continue
                 } else {
-                    Err(())
+                    NevimJakChteloByToKonstantu(vec![n])
                 }
             }
             crate::ops::Op::Pop => {
                 self.g.pop_stack();
-                Ok(())
+                Continue
             }
             crate::ops::Op::Pop2 => {
                 let orig = self.g.pop_stack();
                 self.g.pop_stack();
                 self.g.stack.push(orig);
-                Ok(())
+                Continue
             }
             crate::ops::Op::Max => {
                 let a = self.g.pop_stack();
@@ -135,7 +208,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 let out = self.g.value_numbering(OptOp::Max, &[a, b], None, None);
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::LSwap => {
                 let x = self.g.peek_stack();
@@ -145,7 +218,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.stack.push(out);
 
                 self.g.push_instr_may_deopt(OptOp::Nop, &[]); // checkpoint after side effect
-                Ok(())
+                Continue
             }
             crate::ops::Op::Swap => {
                 let (i, x) = self.g.peek_stack_2();
@@ -156,32 +229,32 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.stack.push(out);
 
                 self.g.push_instr_may_deopt(OptOp::Nop, &[]); // after side effect
-                Ok(())
+                Continue
             }
             crate::ops::Op::Roll => {
                 let (n, x) = self.g.peek_stack_2();
 
                 let Some(n) = self.g.get_constant(n) else {
-                    return Err(());
+                    return NevimJakChteloByToKonstantu(vec![n]);
                 };
 
-                if n > 128 { return Err(()) }
+                if n > 128 { return NevimJak; }
 
                 if n == 0 {
                     self.g.pop_stack_n(2);
-                    return Ok(())
+                    return Continue
                 }
 
                 if n < 0 {
                     self.g.push_assert(Condition::False, OperationError::NegativeLength { value: n }, None);
-                    return Ok(())
+                    return Continue
                 }
 
                 if let Some(x) = self.g.get_constant(x) {
                     self.g.pop_stack_n(2);
                     let rotate_by = x.rem_euclid(n);
                     if rotate_by == 0 {
-                        return Ok(())
+                        return Continue
                     }
                     let mut vals = self.g.pop_stack_n(n as usize);
                     println!("Roll({n}, {rotate_by}) {vals:?}");
@@ -190,18 +263,19 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     for v in vals.iter().rev() {
                         self.g.stack.push(*v)
                     }
-                    return Ok(())
+                    return Continue
                 }
 
-                return Err(()) // TODO:
+                return NevimJak // TODO:
             }
-            crate::ops::Op::FF => Err(()),
-            crate::ops::Op::KPi => Err(()),
+            crate::ops::Op::FF => NevimJak,
+            crate::ops::Op::KPi => NevimJak,
             crate::ops::Op::Increment => {
                 let a = self.g.peek_stack();
                 let (start, _end) = self.g.val_range(a).into_inner();
                 if start == i64::MAX {
-                    return Err(());
+                    self.g.push_assert(Condition::False, OperationError::IntegerOverflow, None);
+                    return Continue;
                 }
                 let out = if a.is_constant() {
                     let c = self.g.get_constant_(a);
@@ -211,7 +285,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 };
                 self.g.pop_stack();
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::Universal => {
                 let control = self.g.peek_stack();
@@ -271,12 +345,16 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.pop_stack();
                         let a = self.g.pop_stack();
                         self.g.value_numbering(OptOp::Sgn, &[a], None, None)
+                    },
+                    (a, a2) if a == a2 => {
+                        self.g.push_assert(Condition::False, OperationError::InvalidArgumentForUniversal { argument: a }, None);
+                        return Continue
                     }
 
-                    _ => return Err(()),
+                    _ => return NevimJakChteloByToKonstantu(vec![control]),
                 };
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::Remainder | crate::ops::Op::Modulo => {
                 let a = self.g.pop_stack();
@@ -286,7 +364,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let op = if euclidean { OptOp::ModEuclid } else { OptOp::Mod };
                 let out = self.g.value_numbering(op, &[a, b], None, None);
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::TetrationNumIters | crate::ops::Op::TetrationItersNum => {
                 let val1 = self.g.pop_stack();
@@ -306,15 +384,24 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 let out = self.g.value_numbering(OptOp::Tetration, &[num, iters], range, None);
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::Median => {
                 let n = self.g.peek_stack();
                 let n_range = self.g.val_range(n);
 
-                if *n_range.end() > 64 || *n_range.end() <= 0 {
+                if *n_range.end() <= 0 {
+                    self.g.push_assert(Condition::False, OperationError::NonpositiveLength { value: 0 }, Some(n));
+                    return Continue
+                }
+
+                if *n_range.end() > 64 {
                     println!("Median range too crazy: {n} {n_range:?}");
-                    return Err(());
+                    return if *n_range.start() <= 60 {
+                        NevimJakChteloByToKonstantu(vec![n])
+                    } else {
+                        NevimJak
+                    }
                 }
 
                 let vals = self.g.peek_stack_n(0..*n_range.end() as usize);
@@ -327,7 +414,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     let out = self.g.value_numbering(OptOp::MedianCursed, &vals, None, None);
                     self.g.stack.push(out);
                 }
-                Ok(())
+                Continue
             }
             crate::ops::Op::DigitSum => {
                 let x = self.g.peek_stack();
@@ -335,12 +422,18 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 if *range.start() >= 0 && *range.end() < 10 {
                     self.g.stack.push(x);
-                    return Ok(());
+                    return Continue;
+                }
+
+                if *range.start() == *range.end() {
+                    let c = self.g.store_constant(digit_sum(*range.start()));
+                    self.g.stack.push(c);
+                    return Continue;
                 }
 
                 let out = self.g.value_numbering(OptOp::DigitSum, &[x], None, None);
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::LenSum => {
                 let a = self.g.pop_stack();
@@ -369,17 +462,19 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     };
 
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::Bitshift => {
                 let bits = self.g.pop_stack();
                 let num = self.g.pop_stack();
                 let bits_range = self.g.val_range(bits);
-                let num_range = self.g.val_range(num);
+                // let num_range = self.g.val_range(num);
 
                 if *bits_range.end() < 0 || *bits_range.start() > 63 {
-                    return Err(());
+                    return NevimJak;
                 }
+
+                // let range = eval_combi(num_range, bits_range, 1024, |num, bits| Some(num.checked_shl(rhs) << bits));
 
                 let out = self.g.value_numbering(OptOp::ShiftL, &[num, bits], None, None);
                     // let (num_start, num_end) = num_range.into_inner(); // TODO: migrate to simplifier
@@ -399,7 +494,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     // let max_result = *candidates.iter().max().unwrap();
                     // info.range = min_result..=max_result;
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::And => {
                 let a = self.g.pop_stack();
@@ -411,19 +506,23 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 let out = self.g.value_numbering(OptOp::And, &[a, b], range, None);
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::Funkcia => {
                 let a = self.g.pop_stack();
                 let b = self.g.pop_stack();
+                if a == b {
+                    self.g.stack.push(ValueId::C_ZERO);
+                    return Continue;
+                }
                 let (a, b) = sort_tuple(a, b);
 
                 let (a_start, a_end) = self.g.val_range(a).into_inner();
                 let (b_start, b_end) = self.g.val_range(b).into_inner();
 
-                if a == b || a_end <= 1 && b_end <= 1 {
+                if a_end <= 1 && b_end <= 1 {
                     self.g.stack.push(ValueId::C_ZERO);
-                    return Ok(());
+                    return Continue;
                 }
 
                 let range = eval_combi(
@@ -433,10 +532,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     |a, b: i64| Some(funkcia(a, b) as i64),
                 );
 
-                let out = self.g.value_numbering(OptOp::Funkcia, &[a, b], None, None);
+                let out = self.g.value_numbering(OptOp::Funkcia, &[a, b], range, None);
 
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::Gcd2 => {
                 let a = self.g.pop_stack();
@@ -450,16 +549,16 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 let out = self.g.value_numbering(OptOp::Gcd, &[a, b], range.map(range_2_i64), None);
                 self.g.stack.push(out);
-                Ok(())
+                Continue
             }
             crate::ops::Op::GcdN => {
                 let n = self.g.peek_stack();
                 let Some(n_const) = self.g.get_constant(n) else {
-                    return Err(())
+                    return NevimJakChteloByToKonstantu(vec![n])
                 };
 
                 if n_const > 128 || n_const <= 0 {
-                    return Err(())
+                    return NevimJakChteloByToKonstantu(vec![n])
                 }
 
                 self.g.pop_stack();
@@ -472,11 +571,11 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 // if const_gcd == Some(1) || vals.len() == 0 {
                 //     if const_gcd.unwrap() > i64::MAX as u64 {
                 //         self.g.push_instr_internal(OptOp::Assert(Condition::False, OperationError::IntegerOverflow), &[], ValueId(0));
-                //         return Ok(());
+                //         return Continue;
                 //     }
                 //     let result = self.g.store_constant(const_gcd.unwrap() as i64);
                 //     self.g.stack.push(result);
-                //     return Ok(());
+                //     return Continue;
                 // }
 
                 // let ranges: Vec<RangeInclusive<u64>> = vals.iter().map(|v| abs_range(self.g.val_range(*v))).collect();
@@ -487,7 +586,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 //         self.g.push_assert(Condition::Neq(val, ValueId::C_IMIN), OperationError::IntegerOverflow, None);
                 //     }
                 //     self.g.stack.push(val);
-                //     return Ok(());
+                //     return Continue;
                 // }
 
                 // let min_end = ranges.iter().map(|r| *r.end())
@@ -505,7 +604,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 self.g.stack.push(result);
 
-                Ok(())
+                Continue
             },
             crate::ops::Op::Qeq => {
                 let (a, b, c) = self.g.peek_stack_3();
@@ -528,7 +627,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         }
 
                         // zero solutions:
-                        return Ok(())
+                        return Continue
                     }
 
                     if b_start <= 0 && b_end >= 0 {
@@ -539,7 +638,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         // -c
                         let r = self.g.value_numbering(OptOp::Sub, &[ValueId::C_ZERO, c], None, None);
                         self.g.stack.push(r);
-                        return Ok(())
+                        return Continue
                     }
 
                     // result = -(c / b) assuming b divides c
@@ -552,7 +651,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                     if out_range.as_ref().is_some_and(|r| r.is_empty()) {
                         self.g.push_assert(Condition::False, OperationError::IntegerOverflow, None);
-                        return Ok(())
+                        return Continue
                     }
                     if (must_assert_divisibility || out_range.is_none()) &&
                         !matches!((b_start, b_end), (1, 1) | (-1, -1) | (-1, 1)) {
@@ -591,7 +690,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.stack.push(div);
                     }
 
-                    return Ok(())
+                    return Continue
                 }
 
                 if a_start == a_end && b_start == b_end && c_start == c_end {
@@ -613,18 +712,18 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             self.g.push_assert(Condition::False, error, None);
                         }
                     }
-                    return Ok(())
+                    return Continue
                 }
 
-                Err(())
+                NevimJak
             },
             crate::ops::Op::BulkXor => {
                 let n = self.g.peek_stack();
                 let Some(n) = self.g.get_constant(n) else {
-                    return Err(())
+                    return NevimJakChteloByToKonstantu(vec![n])
                 };
                 if n < 0 || n > 2 * self.g.stack.stack.len() as i64 + 64 {
-                    return Err(())
+                    return NevimJak
                 }
 
                 let vals = self.g.peek_stack_n(1..n as usize * 2 + 1);
@@ -647,7 +746,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 }
 
                 if xors.iter().filter(|x| x.is_err()).count() > 8 {
-                    return Err(())
+                    return NevimJak
                 }
 
                 self.g.pop_stack_n(n as usize + 1);
@@ -682,18 +781,40 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     }
                 }
 
-                Ok(())
+                Continue
             },
-            crate::ops::Op::BranchIfZero => todo!(),
-            crate::ops::Op::Call => todo!(),
-            crate::ops::Op::Goto => todo!(),
-            crate::ops::Op::Jump => todo!(),
-            crate::ops::Op::Rev => Err(()),
-            crate::ops::Op::Sleep => Err(()),
-            crate::ops::Op::Deez => Err(()),
-            crate::ops::Op::Sum => Err(()),
+            crate::ops::Op::BranchIfZero => {
+                let (target, val) = self.g.peek_stack_2();
+                return self.branching(target, true, false, Condition::EqConst(val, 0));
+            }
+            crate::ops::Op::Call => {
+                let t = self.g.peek_stack();
+                return self.branching(t, true, true, Condition::True);
+            }
+            crate::ops::Op::Goto => {
+                let t = self.g.peek_stack();
+                return self.branching(t, true, false, Condition::True);
+            }
+            crate::ops::Op::Jump => {
+                let t = self.g.peek_stack();
+                return self.branching(t, true, false, Condition::True);
+            }
+            // BS instrukce
+            crate::ops::Op::Rev | crate::ops::Op::Sleep | crate::ops::Op::Deez | crate::ops::Op::Sum => NevimJak,
         }
     }
+
+    // fn condition_cnf(&mut self, cnf: &[Vec<Condition<ValueId>>]) -> Condition<ValueId> { if cnf.len() == 0 { return Condition::True; }
+    //     if cnf.len() == 1 && cnf[0].len() == 0 { return Condition::False; }
+    //     if cnf.len() == 1 && cnf[0].len() == 1 { return cnf[0][0].clone(); }
+
+    //     let mut acc = vec![];
+    //     for and in cnf {
+    //         let mut acc_and = None;
+    //         for cond in and {
+    //             let val = self.g.
+    //         }
+    // }
 
 
     pub fn interpret(&mut self) -> () {
@@ -718,13 +839,23 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             let stack_counts = (self.g.stack.push_count, self.g.stack.pop_count);
             let result = self.step();
             match result {
-                Ok(()) => {}
-                Err(()) => {
+                PrecompileStepResult::Continue => {}
+                PrecompileStepResult::NevimJak | PrecompileStepResult::NevimJakChteloByToKonstantu(_) => {
                     if stack_counts != (self.g.stack.push_count, self.g.stack.pop_count) {
                         panic!("Error when interpreting OP {} {:?}: modifed stack, but then returned Err()", self.position, self.ops[self.position])
                     }
                     break;
-                }
+                },
+                PrecompileStepResult::Branching(branches) if branches.len() == 1 => {
+                    let b = &branches[0];
+                    assert_eq!(b.condition, Condition::True);
+                    if b.additional_instr.len() > 0 { todo!("{:?}", b) }
+                    self.g.pop_stack_n(b.stack.0 as usize);
+                    for v in &b.stack.1 { self.g.stack.push(*v); }
+                    self.position = b.target;
+                    continue;
+                },
+                x => todo!("Unhandled branching result: {:?}", x),
             }
 
 

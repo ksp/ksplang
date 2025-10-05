@@ -407,6 +407,9 @@ impl GraphBuilder {
     }
 
     pub fn push_deopt_assert(&mut self, c: Condition<ValueId>, precise_deoptinfo: bool) {
+        let c = simplifier::canonicalize_condition(self, c);
+        if c == Condition::True { return; }
+
         if precise_deoptinfo {
             self.push_instr_may_deopt(OptOp::DeoptAssert(c), &[]);
         } else {

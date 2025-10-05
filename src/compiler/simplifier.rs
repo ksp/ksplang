@@ -2,9 +2,9 @@ use std::{borrow::Cow, cmp, collections::HashSet, iter::Copied, ops::RangeInclus
 
 use smallvec::{smallvec, SmallVec, ToSmallVec};
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::{self, OptOptPattern}, range_ops::{range_mod, range_signum}, utils::{abs_range, sort_tuple, union_range, FULL_RANGE}, vm_code::Condition}, ops::Op, vm::OperationError};
+use crate::{compiler::{cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::{self, OptOptPattern}, range_ops::{range_mod, range_signum}, utils::{abs_range, range_is_signless, sort_tuple, union_range, FULL_RANGE}, vm_code::Condition}, ops::Op, vm::OperationError};
 
-fn overlap(a: RangeInclusive<i64>, b: RangeInclusive<i64>) -> Option<RangeInclusive<i64>> {
+fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeInclusive<i64>> {
     let start = *a.start().max(b.start());
     let end = *a.end().min(b.end());
     if start <= end {
@@ -15,7 +15,7 @@ fn overlap(a: RangeInclusive<i64>, b: RangeInclusive<i64>) -> Option<RangeInclus
 }
 
 pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<ValueId>) -> Condition<ValueId> {
-    match condition {
+    match condition.clone() {
         Condition::EqConst(a, b) => {
             let b = cfg.store_constant(b as i64);
             canonicalize_condition(cfg, Condition::Eq(a, b))
@@ -54,91 +54,98 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
             if a == b => Condition::True,
         Condition::Neq(a, b) | Condition::Lt(a, b) | Condition::Gt(a, b) | Condition::NotDivides(a, b)
             if a == b => Condition::False,
-        Condition::Eq(a, b) => {
-            let (a, b) = sort_tuple(a, b);
+        Condition::Eq(a, b) if a > b => canonicalize_condition(cfg, Condition::Eq(b, a)),
+        Condition::Neq(a, b) if a > b => canonicalize_condition(cfg, Condition::Neq(b, a)),
+        Condition::Lt(a, b) if a > b => canonicalize_condition(cfg, Condition::Gt(b, a)),
+        Condition::Gt(a, b) if a > b => canonicalize_condition(cfg, Condition::Lt(b, a)),
+        Condition::Leq(a, b) if a > b => canonicalize_condition(cfg, Condition::Geq(b, a)),
+        Condition::Geq(a, b) if a > b => canonicalize_condition(cfg, Condition::Leq(b, a)),
+        Condition::Eq(a, b) | Condition::Neq(a, b) | Condition::Lt(a, b) | Condition::Gt(a, b) | Condition::Leq(a, b) | Condition::Geq(a, b) => {
+            assert!(a.is_constant() || !b.is_constant()); // we depend on the ordering
             let ar = cfg.val_range(a);
             let br = cfg.val_range(b);
-            if overlap(ar, br).is_none() {
-                Condition::False
-            } else {
-                Condition::Eq(a, b)
+
+            match condition {
+                Condition::Eq(_, _) if overlap(&ar, &br).is_none() => return Condition::False,
+                Condition::Neq(_, _) if overlap(&ar, &br).is_none() => return Condition::True,
+                // Condition::Neq(_, _) if *ar.start() == *ar.end() && *br.start().wrapping_add(1) == *br.end() =>
+                Condition::Lt(_, _) if ar.end() < br.start() => return Condition::True,
+                Condition::Lt(_, _) if ar.start() >= br.end() => return Condition::False,
+                // Condition::Lt(_, _) if ar.end() == br.start() 
+                Condition::Gt(_, _) if ar.start() > br.end() => return Condition::True,
+                Condition::Gt(_, _) if ar.end() <= br.start() => return Condition::False,
+                Condition::Leq(_, _) if ar.end() <= br.start() => return Condition::True,
+                Condition::Leq(_, _) if ar.start() > br.end() => return Condition::False,
+                Condition::Geq(_, _) if ar.start() >= br.end() => return Condition::True,
+                Condition::Geq(_, _) if ar.end() < br.start() => return Condition::False,
+                _ => {}
             }
-        }
-        Condition::Neq(a, b) => {
-            let (a, b) = sort_tuple(a, b);
-            let ar = cfg.val_range(a);
-            let br = cfg.val_range(b);
-            if overlap(ar, br).is_none() {
-                Condition::True
-            } else {
-                Condition::Neq(a, b)
+            // Min/Max comparison simplification
+            //  min(k, x) == k  -> x <= k
+            if a.is_constant() {
+                let ac = *ar.start();
+                if let Some(def) = cfg.get_defined_at(b) {
+                    if matches!(def.op, OptOp::Min | OptOp::Max) && def.inputs.len() == 2 && def.inputs[0].is_constant() {
+                        let k = cfg.get_constant_(def.inputs[0]);
+                        let x = def.inputs[1];
+                        if matches!(def.op, OptOp::Min) {
+                            assert!(k >= ac); // should be eliminated by previous checks
+                        } else {
+                            assert!(k <= ac);
+                        }
+                        return canonicalize_condition(cfg, match (&condition, &def.op) {
+                            // min(10, x) == 10 -> x >= 10
+                            (Condition::Eq(_, _) | Condition::Geq(_, _), OptOp::Min) if ac == k => Condition::Geq(x, a),
+                            // max(5, x) == 5 -> x <= 5
+                            (Condition::Eq(_, _) | Condition::Leq(_, _), OptOp::Max) if ac == k => Condition::Leq(x, a),
+                            // min(10, x) == 5 -> x == 5
+                            (Condition::Eq(_, _), _) if ac != k => Condition::Eq(x, a),
+                            // same for Neq
+                            (Condition::Neq(_, _) | Condition::Lt(_, _), OptOp::Min) if ac == k => Condition::Lt(x, a),
+                            (Condition::Neq(_, _) | Condition::Gt(_, _), OptOp::Max) if ac == k => Condition::Gt(x, a),
+                            (Condition::Neq(_, _), _) if ac != k => Condition::Neq(x, a),
+                            // rest should be handled
+                            (Condition::Leq(_, _), _) if ac != k => Condition::Leq(x, a),
+                            (Condition::Geq(_, _), _) if ac != k => Condition::Geq(x, a),
+                            (Condition::Lt(_, _), _) if ac != k => Condition::Lt(x, a),
+                            (Condition::Gt(_, _), _) if ac != k => Condition::Gt(x, a),
+
+                            _ => unreachable!("{:?} {:?} {} {}", condition, def, k, ac),
+                        })
+                    }
+                }
             }
+
+            condition
         }
-        Condition::Lt(a, b) => {
-            let ar = cfg.val_range(a);
-            let br = cfg.val_range(b);
-            if ar.end() < br.start() {
-                Condition::True
-            } else if ar.start() >= br.end() {
-                Condition::False
-            } else {
-                Condition::Lt(a, b)
-            }
-        }
-        Condition::Leq(a, b) => {
-            let ar = cfg.val_range(a);
-            let br = cfg.val_range(b);
-            if ar.end() <= br.start() {
-                Condition::True
-            } else if ar.start() > br.end() {
-                Condition::False
-            } else {
-                Condition::Leq(a, b)
-            }
-        }
-        Condition::Gt(a, b) => {
-            let ar = cfg.val_range(a);
-            let br = cfg.val_range(b);
-            if ar.start() > br.end() {
-                Condition::True
-            } else if ar.end() <= br.start() {
-                Condition::False
-            } else {
-                Condition::Gt(a, b)
-            }
-        }
-        Condition::Geq(a, b) => {
-            let ar = cfg.val_range(a);
-            let br = cfg.val_range(b);
-            if ar.start() >= br.end() {
-                Condition::True
-            } else if ar.end() < br.start() {
-                Condition::False
-            } else {
-                Condition::Geq(a, b)
-            }
-        }
+
         Condition::Divides(a, b) => {
-            let ar = abs_range(cfg.val_range(a));
-            let br = abs_range(cfg.val_range(b));
-            if *ar.end() < *br.start() || *br.end() == 0 {
-                return if *ar.start() == 0 {
-                    Condition::Eq(b, ValueId::C_ZERO)
+            let (ar, br) = (cfg.val_range(a), cfg.val_range(b));
+            let ara = abs_range(ar.clone());
+            let bra = abs_range(br.clone());
+            if *ara.end() < *bra.start() || *bra.end() == 0 {
+                return if *ara.start() == 0 {
+                    canonicalize_condition(cfg, Condition::Eq(b, ValueId::C_ZERO))
                 } else {
                     Condition::False
                 };
             }
+            if *ara.end() == 0 {
+                return canonicalize_condition(cfg, Condition::Neq(b, ValueId::C_ZERO));
+            }
+
             // if *br.end() > *ar.end() / 2 && ar.start() != 0 {
             //     return Condition::Eq(a, b);
             // }
-            if let Some(bc) = cfg.get_constant(b) {
+            if *br.end() == *br.start() {
+                let bc = *br.start();
                 if bc == 1 || bc == -1 {
                     return Condition::True
                 }
-                if (*ar.end() / bc.abs_diff(0)) * bc.abs_diff(0) < *ar.start() {
+                if (*ara.end() / bc.abs_diff(0)) * bc.abs_diff(0) < *ara.start() {
                     return Condition::False;
                 }
-                if (*ar.end() / bc.abs_diff(0)) * bc.abs_diff(0) < *ar.start() + bc.abs_diff(0) {
+                if (*ara.end() / bc.abs_diff(0)) * bc.abs_diff(0) < *ara.start() + bc.abs_diff(0) {
                     return Condition::Eq(a, b);
                 }
                 if bc < 0 && bc != i64::MIN {
@@ -147,12 +154,52 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                 }
             }
 
+            if range_is_signless(&br) && range_is_signless(&ar) && !(ara.contains(&1) && ara.contains(&cmp::max(2, *bra.start()))) {
+                // Try to reduce 3 % x == 0 into 3 == x
+                let mindiv = if *ar.start() == *ar.end() {
+                    let ac = *ar.start();
+                    if ac == 1 || ac == -1 {
+                        return canonicalize_condition(cfg, Condition::Eq(b, if *br.start() >= 0 { ValueId::C_ONE } else { ValueId::C_NEG_ONE }));
+                    }
+                    try_get_lowest_divisor(ac.unsigned_abs()).unwrap_or(*SOME_PRIMES.last().unwrap() as u64)
+                } else {
+                    2 // assume it can be divided by 2
+                };
+
+                let min_divided = *bra.start() / mindiv;
+                if *bra.start() > min_divided {
+                    // so, condition is only true if |b| == |a|
+                    // we just need to go though some hoops to express that...
+                    if (*br.start() >= 0) == (*ar.start() >= 0) {
+                        return canonicalize_condition(cfg, Condition::Eq(a, b));
+                    }
+
+                    if *ar.start() == *ar.end() {
+                        // flip sign, but it's a constant
+                        let a_flip = cfg.store_constant(-*ar.start());
+                        return canonicalize_condition(cfg, Condition::Eq(a_flip, b));
+                    }
+                    // IDK, maybe later...
+                }
+                // TODO: maybe also check if there is some other number which is the only divisor of A
+            }
+
             Condition::Divides(a, b)
         }
         Condition::NotDivides(a, b) => {
             canonicalize_condition(cfg, Condition::Divides(a, b)).neg()
         }
     }
+}
+
+const SOME_PRIMES: [u8; 54] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241, 251];
+fn try_get_lowest_divisor(a: u64) -> Option<u64> {
+    for p in SOME_PRIMES {
+        if a % (p as u64) == 0 {
+            return Some(p as u64);
+        }
+    }
+    None
 }
 
 pub fn extract_effect(g: &mut GraphBuilder, current_effect: OpEffect, op: &OptOp<ValueId>, args: &[ValueId]) -> (OpEffect, Vec<(OptOp<ValueId>, SmallVec<[ValueId; 4]>)>) {
@@ -373,6 +420,40 @@ pub fn get_values_offset(g: &GraphBuilder, val1: ValueId, val2: ValueId) -> Opti
     None
 }
 
+/// Flattens nested associative / commutative variadic operations (Add, Mul, And, Or, Xor, Max, Min, Gcd).
+/// Returns true if any change (inputs replaced) so caller can restart simplification loop.
+fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit: i64) -> bool {
+    let op = &instr.op;
+    let mut changed = false;
+    let mut new_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
+    for &v in &instr.inputs {
+        if limit <= new_inputs.len() as i64 + 1 {
+            return false;
+        }
+        let def = cfg.get_defined_at(v);
+        if let Some(d) = def {
+            if d.op == *op {
+                if dedup {
+                    for iv in &d.inputs {
+                        if !new_inputs.contains(iv) {
+                            new_inputs.push(*iv);
+                        }
+                    }
+                } else {
+                    new_inputs.extend_from_slice(&d.inputs);
+                }
+                changed = true;
+                continue;
+            }
+        }
+        new_inputs.push(v);
+    }
+    if changed {
+        instr.inputs = new_inputs;
+    }
+    changed
+}
+
 /// Returns (changed, new instruction)
 pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Option<RangeInclusive<i64>>) {
     if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::Const(_)) {
@@ -387,6 +468,12 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         if iter > 100 {
             println!("Warning: simplify_instr infinite loop detected: {i:?}");
             break;
+        }
+
+        // Generic flattening for associative non-overflowing ops
+        if matches!(i.op, OptOp::Max | OptOp::Min | OptOp::Gcd | OptOp::And | OptOp::Or | OptOp::Xor) && i.inputs.len() >= 2 {
+            let dedup = !matches!(i.op, OptOp::Xor);
+            flatten_variadic(cfg, &mut i, dedup, /* limit */ 32);
         }
 
         if !matches!(i.op, OptOp::Const(_) | OptOp::StackSwap | OptOp::Pop | OptOp::Push) &&
@@ -409,6 +496,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 i.inputs[comm.clone()].sort();
             }
         }
+        if matches!(i.op, OptOp::Min | OptOp::Max | OptOp::Gcd | OptOp::And | OptOp::Or) {
+            i.inputs.dedup();
+        }
 
         match i.op.clone() {
             OptOp::Condition(cond) => i.op = OptOp::Condition(canonicalize_condition(cfg, cond)),
@@ -416,7 +506,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Jump(cond, to) => i.op = OptOp::Jump(canonicalize_condition(cfg, cond), to),
             OptOp::Assert(cond, err) => i.op = OptOp::Assert(canonicalize_condition(cfg, cond), err),
             OptOp::DeoptAssert(cond) => i.op = OptOp::DeoptAssert(canonicalize_condition(cfg, cond)),
-            x => { }
+            _ => { }
         };
 
         let ranges = i.inputs.iter().map(|a| cfg.val_range(*a)).collect::<SmallVec<[_; 4]>>();
@@ -606,6 +696,39 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 }
             }
 
+            OptOp::Max => {
+                // Elide redundant arguments: in max(vs...), remove any argument 'a'
+                // for which there exists some 'b' with max(range_a) <= min(range_b),
+                // since b is always >= a.
+                let keep: SmallVec<[ValueId; 4]> = i.inputs.iter().enumerate().filter(|(ix_a, _)| {
+                    let a_range = &ranges[*ix_a];
+                    ranges.iter().enumerate().all(|(ix_b, b_range)| {
+                        *ix_a == ix_b || a_range.end() > b_range.start() // b always >= a
+                    })
+                }).map(|(_, a)| *a).collect();
+                if keep.len() != i.inputs.len() {
+                    i.inputs = keep;
+                    continue;
+                } else {
+                    changed = false;
+                }
+            }
+            OptOp::Min => {
+                // Elide redundant arguments: same as in Max
+                let keep: SmallVec<[ValueId; 4]> = i.inputs.iter().enumerate().filter(|(ix_a, _)| {
+                    let a_range = &ranges[*ix_a];
+                    ranges.iter().enumerate().all(|(ix_b, b_range)| {
+                        *ix_a == ix_b || a_range.start() < b_range.end() // b always <= a
+                    })
+                }).map(|(_, a)| *a).collect();
+                if keep.len() != i.inputs.len() {
+                    i.inputs = keep;
+                    continue;
+                } else {
+                    changed = false;
+                }
+            }
+
             _ => {
                 changed = false;
             }
@@ -660,7 +783,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         if OptOp::Mul == i.op && i.inputs[0].is_constant() && i.inputs.len() == 2 {
             let c = cfg.get_constant_(i.inputs[0]);
             if let Some(def) = cfg.get_defined_at(i.inputs[1]) {
-                let def_ranges = get_ranges(cfg, def.inputs.iter().copied());
+                // let def_ranges = get_ranges(cfg, def.inputs.iter().copied());
                 // (-x) * const => x * (-const)
                 if def.op == OptOp::Sub && def.inputs[0] == ValueId::C_ZERO && i.inputs[0] != ValueId::C_IMIN {
                     i.effect = OpEffect::worse_of(i.effect, def.effect);
@@ -808,7 +931,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             if let Ok(r) = mul_pattern.try_match(cfg, &i.inputs) {
                 if r.get_named_single("div1") == r.get_named_single("div2") {
                     let a = r.get_named_single("v2").unwrap();
-                    let c = cfg.get_constant_(r.get_named_single("div1").unwrap());
+                    // let c = cfg.get_constant_(r.get_named_single("div1").unwrap());
                     return (i.with_op(OptOp::Add, &[a], OpEffect::None), None)
                 }
             }
@@ -820,9 +943,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
     (i, None)
 }
 
-fn get_defs(g: &GraphBuilder, vals: impl Iterator<Item = ValueId>) -> SmallVec<[Option<&OptInstr>; 4]> {
-    vals.map(|v| g.get_defined_at(v)).collect()
-}
+// fn get_defs(g: &GraphBuilder, vals: impl Iterator<Item = ValueId>) -> SmallVec<[Option<&OptInstr>; 4]> {
+//     vals.map(|v| g.get_defined_at(v)).collect()
+// }
 fn get_ranges(g: &GraphBuilder, vals: impl Iterator<Item = ValueId>) -> SmallVec<[RangeInclusive<i64>; 4]> {
     vals.map(|v| g.val_range(v)).collect()
 }

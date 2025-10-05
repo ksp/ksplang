@@ -52,6 +52,23 @@ pub fn sub_range(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> RangeInclu
     start..=end
 }
 
+/// Returns true if the range does not include both negative and positive numbers
+#[inline]
+pub fn range_is_signless(r: &RangeInclusive<i64>) -> bool {
+    *r.start() >= 0 || *r.end() <= 0
+}
+
+#[inline]
+pub fn range_sign(r: &RangeInclusive<i64>) -> i64 {
+    if *r.start() >= 0 {
+        1
+    } else if *r.end() <= 0 {
+        -1
+    } else {
+        0
+    }
+}
+
 pub fn mul_range(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> (RangeInclusive<i64>, bool) {
     let candidates = [
         a.start().saturating_mul(b.start()),
