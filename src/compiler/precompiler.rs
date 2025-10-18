@@ -1,9 +1,9 @@
-use std::{cmp, ops::RangeInclusive, vec};
+use std::{cmp, collections::{HashMap, HashSet, VecDeque}, default, ops::RangeInclusive, vec};
 
 use num_integer::Integer;
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, range_2_i64, sort_tuple}, vm_code::Condition}, digit_sum::digit_sum, funkcia::funkcia, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
+use crate::{compiler::{cfg::{BasicBlock, GraphBuilder, StackState}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, vm_code::Condition}, digit_sum::digit_sum, funkcia::{self, funkcia}, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
 
 pub struct Options {
     pub allow_pruning: bool
@@ -37,6 +37,22 @@ impl TraceProvider for NoTrace {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PendingBranchInfo {
+    pub target: usize,
+    pub reversed_direction: bool,
+    pub b: Vec<PrecompileStepResultBranch>,
+    pub from: Vec<InstrId>,
+    pub to_bb: BlockId,
+    pub stack_snapshot: Vec<StackState>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct VisitedIpStats {
+    pub visits: usize,
+    pub branches: HashMap<usize, usize>, // from IP -> count
+}
+
 pub struct Precompiler<'a, TP: TraceProvider> {
     pub ops: &'a [crate::ops::Op],
     pub initial_stack_size: usize,
@@ -47,6 +63,8 @@ pub struct Precompiler<'a, TP: TraceProvider> {
     pub position: usize,
     pub interpretation_limit: usize,
     pub termination_ip: Option<usize>,
+    pub visited_ips: HashMap<usize, VisitedIpStats>,
+    pub pending_branches: VecDeque<PendingBranchInfo>,
     pub opt: Options,
     pub tracer: TP
 }
@@ -88,6 +106,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             interpretation_limit,
             g: initial_graph,
             termination_ip,
+            visited_ips: HashMap::new(),
+            pending_branches: VecDeque::new(),
             opt: Options::default(),
             tracer
         }
@@ -511,17 +531,36 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             crate::ops::Op::Funkcia => {
                 let a = self.g.pop_stack();
                 let b = self.g.pop_stack();
+                let (a, b) = sort_tuple(a, b);
                 if a == b {
                     self.g.stack.push(ValueId::C_ZERO);
                     return Continue;
                 }
-                let (a, b) = sort_tuple(a, b);
+
+                if a.is_constant() && b.is_constant() {
+                    let result = funkcia(self.g.get_constant_(a), self.g.get_constant_(b)) as i64;
+                    let c = self.g.store_constant(result);
+                    self.g.stack.push(c);
+                    return Continue;
+                }
 
                 let (a_start, a_end) = self.g.val_range(a).into_inner();
                 let (b_start, b_end) = self.g.val_range(b).into_inner();
 
                 if a_end <= 1 && b_end <= 1 {
                     self.g.stack.push(ValueId::C_ZERO);
+                    return Continue;
+                }
+
+                if a == ValueId::C_ONE || a == ValueId::C_ZERO {
+                    if b_end < 1_000_000_007 {
+                        self.g.stack.push(b);
+                        return Continue;
+                    }
+
+                    let mod_c = self.g.store_constant(1_000_000_007);
+                    let out = self.g.value_numbering(OptOp::Mod, &[b, mod_c], None, None);
+                    self.g.stack.push(out);
                     return Continue;
                 }
 
@@ -630,10 +669,6 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         return Continue
                     }
 
-                    if b_start <= 0 && b_end >= 0 {
-                        self.g.push_deopt_assert(Condition::NeqConst(b, 0), false);
-                    }
-
                     if b_start == 1 && b_end == 1 {
                         // -c
                         let r = self.g.value_numbering(OptOp::Sub, &[ValueId::C_ZERO, c], None, None);
@@ -641,22 +676,59 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         return Continue
                     }
 
+                    if b_start <= 0 && b_end >= 0 {
+                        self.g.push_deopt_assert(Condition::NeqConst(b, 0), false);
+                    }
+
                     // result = -(c / b) assuming b divides c
-                    let can_overflow = a_start == i64::MIN && b_start <= 1 && b_end >= 1;
+                    let can_overflow = c_start == i64::MIN && b_start <= 1 && b_end >= 1;
                     let mut must_assert_divisibility = false;
-                    let out_range = eval_combi(c_start..=c_end, b_start..=b_end, 256, |c, b| {
+                    let bruteforced_div_range = eval_combi(c_start..=c_end, b_start..=b_end, 256, |c, b| {
                             if c % b == 0 { Some(c / b) }
                             else { must_assert_divisibility = true; None }
                     });
 
-                    if out_range.as_ref().is_some_and(|r| r.is_empty()) {
+                    if bruteforced_div_range.as_ref().is_some_and(|r| r.is_empty()) {
                         self.g.push_assert(Condition::False, OperationError::IntegerOverflow, None);
                         return Continue
                     }
-                    if (must_assert_divisibility || out_range.is_none()) &&
+                    let div_range = bruteforced_div_range.clone().unwrap_or_else(|| {
+                        range_div(&(c_start..=c_end), &(b_start..=b_end))
+                    });
+                    let negated_range = sub_range(&(0..=0), &div_range);
+                    let mut alt_branch = vec![];
+                    if (must_assert_divisibility || bruteforced_div_range.is_none()) &&
                         !matches!((b_start, b_end), (1, 1) | (-1, -1) | (-1, 1)) {
 
-                        self.g.push_deopt_assert(Condition::Divides(c, b), false);
+                        // if B does not divide C, there is no solution
+                        // usually, we can assume this won't happen because the KSPlang programmer did not want to handle Qeq
+                        // retuning variable number of results
+                        // However, if we can prove that the states are distinguishable (result range and stack.peek() range do not overlap),
+                        // let's make a branch for this, since it can be legitimately useful in some cases (for duplication 😭)
+
+                        let are_states_distinguishable =
+                            self.g.stack.peek().is_some_and(|v| intersect_range(&self.g.val_range(v), &negated_range).is_empty());
+
+                        let divisibility = simplifier::canonicalize_condition(&mut self.g, Condition::Divides(c, b));
+
+                        if divisibility == Condition::False {
+                            // no solutions
+                            return Continue
+                        }
+
+                        if !are_states_distinguishable || divisibility == Condition::True {
+                            self.g.push_deopt_assert(divisibility, false);
+                        } else {
+                            // ok branching...
+                            // we put the branch after all instruction, as that's easier to implement
+                            alt_branch.push(PrecompileStepResultBranch {
+                                target: self.next_position(),
+                                condition: divisibility.neg(),
+                                stack: (0, vec![]),
+                                call_ret: None,
+                                additional_instr: vec![],
+                            });
+                        }
                     }
 
                     let (elide_neg, dividend, divisor) = if b_start == b_end && b_start != i64::MIN {
@@ -674,23 +746,32 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.push_deopt_assert(Condition::Neq(c, ValueId::C_IMIN), false);
                     }
 
-                    let negated_range =
-                        out_range.as_ref().map(|r| r.end().saturating_neg()..=r.start().saturating_neg())
-                                          .unwrap_or(i64::MIN+1..=i64::MAX);
 
-                    let div = self.g.value_numbering(OptOp::Div, &[dividend, divisor], if elide_neg { Some(negated_range.clone()) } else { out_range.clone() }, Some(OpEffect::None)); // all failures must be handled specially here
+                    let div = self.g.value_numbering(OptOp::Div, &[dividend, divisor], if elide_neg { Some(negated_range.clone()) } else { Some(div_range.clone()) }, Some(OpEffect::None)); // all failures must be handled specially here
 
-                    if !elide_neg {
+                    let result = if !elide_neg {
                         let neg = self.g.value_numbering(OptOp::Sub, &[ValueId::C_ZERO, div],
                             Some(negated_range),
                             Some(if can_overflow { OpEffect::MayFail } else { OpEffect::None })
                         );
-                        self.g.stack.push(neg);
+                        neg
                     } else {
-                        self.g.stack.push(div);
-                    }
+                        div
+                    };
 
-                    return Continue
+                    if alt_branch.len() == 0 {
+                        self.g.stack.push(result);
+                        return Continue
+                    } else {
+                        alt_branch.push(PrecompileStepResultBranch {
+                            target: self.next_position(),
+                            condition: Condition::True,
+                            stack: (0, vec![result]),
+                            call_ret: None,
+                            additional_instr: vec![],
+                        });
+                        return Branching(alt_branch)
+                    }
                 }
 
                 if a_start == a_end && b_start == b_end && c_start == c_end {
@@ -816,8 +897,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
     //         }
     // }
 
-
-    pub fn interpret(&mut self) -> () {
+    fn interpret_block(&mut self) -> () {
         loop {
             if self.termination_ip == Some(self.position) || self.position >= self.ops.len() {
                 break;
@@ -837,12 +917,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             println!("  Current Block: {}", self.g.current_block_ref());
 
             let stack_counts = (self.g.stack.push_count, self.g.stack.pop_count);
+            self.visited_ips.entry(self.position).or_default().visits += 1;
             let result = self.step();
             match result {
                 PrecompileStepResult::Continue => {}
                 PrecompileStepResult::NevimJak | PrecompileStepResult::NevimJakChteloByToKonstantu(_) => {
                     if stack_counts != (self.g.stack.push_count, self.g.stack.pop_count) {
-                        panic!("Error when interpreting OP {} {:?}: modifed stack, but then returned Err()", self.position, self.ops[self.position])
+                        panic!("Error when interpreting OP {} {:?}: modifed stack, but then returned {result:?}", self.position, self.ops[self.position])
                     }
                     break;
                 },
@@ -855,7 +936,41 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     self.position = b.target;
                     continue;
                 },
-                x => todo!("Unhandled branching result: {:?}", x),
+                PrecompileStepResult::Branching(branches) => {
+                    println!("  Branching: {:?}", branches);
+                    for branch in branches {
+                        *self.visited_ips.entry(branch.target).or_default().branches.entry(self.position).or_default() += 1;
+
+                        let mut stack_snapshot = self.g.stack.save();
+                        stack_snapshot.stack.truncate(stack_snapshot.stack.len() - branch.stack.0 as usize);
+                        stack_snapshot.stack.extend(&branch.stack.1);
+
+
+                        let new_block = self.g.new_block(false, vec![]);
+                        let new_block_id = new_block.id;
+
+                        // TODO: merging, ordering heuristics
+
+                        let Some(branch_id) = self.g.push_instr(OptOp::Jump(branch.condition.clone(), new_block_id), &stack_snapshot.stack, false, None, None).1.map(|i| i.id) else {
+                            // branch was optimized out right away
+                            continue
+                        };
+
+                        println!("    Created branch to {} with condition {:?}, stack: {} {:?}", branch.target, branch.condition, stack_snapshot.depth, stack_snapshot.stack);
+
+                        self.pending_branches.push_back(PendingBranchInfo {
+                            target: branch.target,
+                            reversed_direction: self.reversed_direction,
+                            b: vec![branch],
+                            from: vec![branch_id],
+                            to_bb: new_block_id,
+                            stack_snapshot: vec![stack_snapshot],
+                        });
+                    }
+                    self.g.current_block_mut().is_finalized = true;
+                    return;
+                },
+                // x => todo!("Unhandled branching result: {:?}", x),
             }
 
 
@@ -865,11 +980,86 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
             self.position = self.next_position();
         }
+    }
 
+
+    pub fn interpret(&mut self) -> () {
         self.g.set_program_position(Some(self.position));
-        self.g.push_instr_may_deopt(OptOp::DeoptAssert(Condition::False), &[]);
+
+        loop {
+            self.interpret_block();
+
+            let Some(pb) = self.pending_branches.pop_front() else {
+                break;
+            };
+            let bid = pb.to_bb;
+            println!("Continuing on pending branch {pb:?}");
+            assert_eq!(self.g.block_(bid).parameters, []);
+            let stack_depth = pb.stack_snapshot[0].depth;
+            for s in &pb.stack_snapshot {
+                assert_eq!(s.depth, stack_depth);
+            }
+            // let common_vals = get_common_vals(&pb.stack_snapshot);
+            // // remove parameters which are the same on all incoming edges
+            // for &incoming in &pb.from {
+            //     let instr = self.g.instr_mut(incoming).unwrap();
+            //     let mut index = 0;
+            //     instr.inputs.retain(|_| {
+            //         index += 1;
+            //         !common_vals[index - 1]
+            //     });
+            // }
+            // for (i, &is_common) in common_vals.iter().enumerate() {
+            //     if is_common {
+
+            //     }
+            // }
+            let mut preds = pb.from.iter()
+                .map(|inc| self.g.block_(inc.0))
+                .min_by_key(|p| p.predecessors.len())
+                .map(|b| {
+                    let mut p = b.predecessors.clone();
+                    p.insert(b.id);
+                    p
+                }).unwrap();
+            for &inc in &pb.from {
+                let block_preds = &self.g.block_(inc.0).predecessors;
+                preds.retain(|p| *p == inc.0 || block_preds.contains(p));
+            }
+            {
+                let block_mut = self.g.block_mut(bid).unwrap();
+                block_mut.incoming_jumps.extend_from_slice(&pb.from);
+                block_mut.predecessors = preds;
+            }
+            // stack will be created by seal_block from auto-created parameters
+            self.position = pb.target;
+            self.g.switch_to_block(bid, pb.stack_snapshot[0].depth, vec![]);
+            assert_eq!(self.g.stack.stack, []);
+            self.g.seal_block(bid);
+            assert_eq!(self.g.stack.stack.len(), pb.stack_snapshot[0].stack.len());
+        }
+        self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
+
+        // kill remaining pending branches
+        while let Some(pb) = self.pending_branches.pop_front() {
+            println!("Killing pending branch to {} with {} branches", pb.target, pb.b.len());
+            todo!()
+        }
+
         self.g.set_program_position(None);
         println!("F Stack: {}", self.g.fmt_stack());
-        println!("  FINAL   Block: {}", self.g.current_block_ref());
+        println!("FINAL Program:");
+        for b in &self.g.blocks {
+            println!("{b}");
+        }
     }
+}
+
+fn get_common_vals(stack_snapshots: &[StackState]) -> Vec<bool> {
+    let mut stack_all_eq = vec![false; stack_snapshots[0].stack.len()];
+    for i in 0..stack_snapshots[0].stack.len() {
+        let val = stack_snapshots[0].stack[i];
+        stack_all_eq[i] = stack_snapshots.iter().all(|s| s.stack[i] == val);
+    }
+    stack_all_eq
 }

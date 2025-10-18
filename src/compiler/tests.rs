@@ -18,7 +18,7 @@ fn test_constant(prog: &str, c: i64) {
     }
     println!("Stack: {}", g.fmt_stack());
     assert_eq!(g.stack.stack_depth, 1);
-    assert_eq!(g.stack.stack_position, -1);
+    assert_eq!(g.stack.stack_position(), 1);
     assert_eq!(g.get_constant(g.stack.peek().unwrap()), Some(c));
     assert_eq!(g.current_block_ref().instructions.len(), 2);
 }

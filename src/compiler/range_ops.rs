@@ -148,16 +148,18 @@ pub fn range_div(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> RangeInclu
     let max = if *b.start() >= 0 {
         *a.end() / cmp::max(1, *b.start())
     } else if *b.end() <= 0 {
-        *a.start() / cmp::min(-1, *b.end())
+        a.start().checked_div(cmp::min(-1, *b.end())).unwrap_or(i64::MAX)
     } else {
-        cmp::max(*a.end() / 1, *a.start() / -1)
+        // may divide by 1 or -1
+        cmp::max(*a.end(), a.start().saturating_neg())
     };
     let min = if *b.start() >= 0 {
         *a.start() / cmp::max(1, *b.end())
     } else if *b.end() <= 0 {
-        *a.end() / cmp::min(-1, *b.start())
+        a.end().checked_div(cmp::min(-1, *b.end())).unwrap_or(i64::MAX)
     } else {
-        cmp::min(*a.start() / -1, *a.end() / 1)
+        // may divide by 1 or -1
+        cmp::min(a.end().saturating_neg(), *a.start())
     };
     min..=max
 }
@@ -358,4 +360,17 @@ fn test_euclid_negative_b() {
     // Euclidean modulo uses absolute value of divisor
     assert_eq!(range_mod_euclid(0..=10, -5..=-3), 0..=4);
     assert_eq!(range_mod_euclid(-10..=-1, -5..=-3), 0..=4);
+}
+
+
+#[test]
+fn test_range_div() {
+    assert_eq!(i64::MIN..=i64::MAX, range_div(&(i64::MIN..=i64::MAX), &(i64::MIN..=i64::MAX)));
+    assert_eq!(i64::MIN..=i64::MAX, range_div(&(i64::MIN..=i64::MAX), &(1..=1)));
+    assert_eq!((i64::MIN + 1)..=i64::MAX, range_div(&(i64::MIN..=i64::MAX), &(-1..=-1)));
+    assert_eq!((i64::MIN + 1)..=i64::MAX, range_div(&(i64::MIN..=i64::MAX), &(i64::MIN..=0)));
+    assert_eq!(42..=42, range_div(&(22806..=23348), &(543..=543)));
+    assert_eq!(42..=43, range_div(&(22806..=23349), &(543..=543)));
+    assert_eq!(0..=1, range_div(&(i64::MIN..=i64::MAX), &(i64::MIN..=i64::MIN)));
+    assert_eq!(1..=1, range_div(&(i64::MIN..=i64::MIN), &(i64::MIN..=i64::MIN)));
 }

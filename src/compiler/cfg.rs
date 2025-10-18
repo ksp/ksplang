@@ -1,10 +1,10 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, cmp, collections::{BTreeMap, HashMap, HashSet}, fmt::Display, i32, mem, ops::{Range, RangeInclusive}
+    borrow::Cow, collections::{BTreeMap, BTreeSet, HashMap, HashSet}, i32, mem, ops::{Range, RangeInclusive}
 };
 
 use arrayvec::ArrayVec;
-use smallvec::{SmallVec, ToSmallVec};
+use smallvec::{SmallVec, ToSmallVec, smallvec};
 
 use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier, utils::intersect_range, vm_code::Condition}, vm::OperationError};
 
@@ -26,12 +26,15 @@ pub struct BasicBlock {
     pub incoming_jumps: Vec<InstrId>,
     pub outgoing_jumps: Vec<(InstrId, BlockId)>,
     pub next_instr_id: u32,
+    pub is_sealed: bool,    // no more incoming_jumps will be added
+    pub is_finalized: bool, // no more instructions will be added
+    pub is_terminated: bool, // has terminal instruction (deopt false, jump true, etc)
     pub predecessors: HashSet<BlockId>, // all dominators
                                         // pub successors: Vec<BlockId>,
 }
 
 impl BasicBlock {
-    pub fn new(id: BlockId, parameters: Vec<ValueId>) -> Self {
+    pub fn new(id: BlockId, is_sealed: bool, parameters: Vec<ValueId>) -> Self {
         Self {
             id,
             parameters,
@@ -40,6 +43,9 @@ impl BasicBlock {
             outgoing_jumps: Vec::new(),
             next_instr_id: 1,
             predecessors: HashSet::new(),
+            is_finalized: false,
+            is_terminated: false,
+            is_sealed,
         }
     }
 
@@ -87,6 +93,12 @@ pub struct StackHistory {
     pub push: Box<[ValueId]>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StackState {
+    pub depth: u32,
+    pub stack: Vec<ValueId>,
+}
+
 // #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 // pub enum ConstOrVal { Const(i64), Val(ValueId) }
 
@@ -96,7 +108,6 @@ pub struct StackStateTracker {
     pub lookup: HashMap<ValueId, Vec<u32>>,
     pub poped_values: Vec<ValueId>, // values that were popped from the stack (will be checked if used somewhere, and maybe removed)
     pub stack_depth: u32,
-    pub stack_position: i32,
     pub push_count: u32,
     pub pop_count: u32,
     pub stack_history: Vec<StackHistory>,
@@ -111,7 +122,6 @@ impl StackStateTracker {
             lookup: HashMap::new(),
             poped_values: Vec::new(),
             stack_depth: 0,
-            stack_position: 0,
             stack_history: vec![],
             pop_from_last_history: 0,
             push_from_last_history: 0,
@@ -120,11 +130,12 @@ impl StackStateTracker {
         }
     }
 
+    pub fn stack_position(&self) -> i32 {
+        self.stack.len() as i32 - self.stack_depth as i32
+    }
+
     pub fn record_real_pop(&mut self) {
-        self.stack_position -= 1;
-        if self.stack_position < 0 {
-            self.stack_depth = cmp::max(self.stack_depth, -self.stack_position as u32);
-        }
+        self.stack_depth += 1;
     }
 
     pub fn peek(&self) -> Option<ValueId> {
@@ -180,6 +191,19 @@ impl StackStateTracker {
         self.push_from_last_history = 0;
         self.stack_history.len() as u32
     }
+
+    pub fn save(&mut self) -> StackState {
+        StackState {
+            depth: self.stack_depth,
+            stack: self.stack.clone(),
+        }
+    }
+    pub fn restore(&mut self, state: StackState) {
+        self.pop_from_last_history = self.stack.len() as u32;
+        self.push_from_last_history = state.stack.len() as u32;
+        self.stack = state.stack;
+        self.stack_depth = state.depth;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -199,7 +223,7 @@ impl GraphBuilder {
     pub fn new() -> Self {
         Self {
             values: HashMap::new(),
-            blocks: vec![BasicBlock::new(BlockId(0), vec![])],
+            blocks: vec![BasicBlock::new(BlockId(0), true, vec![])],
             current_block: BlockId(0),
             stack: StackStateTracker::new(),
             next_val_id: 1,
@@ -226,6 +250,167 @@ impl GraphBuilder {
         InstrId(self.current_block, self.current_block_ref().next_instr_id)
     }
 
+    pub fn new_block(&mut self, is_sealed: bool, parameters: Vec<ValueId>) -> &mut BasicBlock {
+        let id = BlockId(self.blocks.len() as u32);
+        self.blocks.push(BasicBlock::new(id, is_sealed, parameters));
+        self.block_mut(id).unwrap()
+    }
+
+    pub fn get_phi_sources(&self, val: ValueId) -> SmallVec<[ValueId; 4]> {
+        let mut result: SmallVec<[ValueId; 4]> = smallvec![];
+        let mut visited: SmallVec<[ValueId; 4]> = smallvec![val];
+        let mut stack: SmallVec<[ValueId; 4]> = smallvec![val];
+
+        while let Some(val) = stack.pop() {
+            let x = self.val_info(val).and_then(|info| info.assigned_at);
+            match x {
+                Some(instr_id) if instr_id.is_block_head() => {
+                    let block = self.block_(instr_id.block_id());
+                    if !block.is_sealed {
+                        // treat this as normal value, we don't know where it will come from
+                        if !result.contains(&val) {
+                            result.push(val);
+                        }
+                        continue;
+                    }
+
+                    let param_index = block.parameters.iter().position(|&v| v == val).unwrap();
+                    for incoming in &block.incoming_jumps {
+                        let jump = self.get_instruction(*incoming).unwrap();
+                        let source_val = jump.inputs[param_index];
+                        if !visited.contains(&source_val) {
+                            stack.push(source_val);
+                            visited.push(val);
+                        }
+                    }
+                }
+                _ => {
+                    if !result.contains(&val) {
+                        result.push(val);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    pub fn seal_block(&mut self, id: BlockId) {
+        let (block_id, params, incoming) = {
+            let block = self.block_mut(id).unwrap();
+            if block.is_sealed { return; }
+            block.is_sealed = true;
+            (block.id, block.parameters.clone(), block.incoming_jumps.clone())
+        };
+
+        // remove trivial phis (params) and tighten ranges for real phis; lazily create params if needed
+        let mut replacements: BTreeMap<ValueId, ValueId> = BTreeMap::new();
+        let mut tighten_ranges: BTreeMap<usize, RangeInclusive<i64>> = BTreeMap::new();
+
+        if incoming.is_empty() {
+            assert_eq!(0, params.len());
+        } else if incoming.len() == 1 {
+            // all parameters are trivial
+            let jump_id = incoming[0];
+            if params.is_empty() {
+                // init the stack with jump inputs
+                let jump = self.get_instruction_(jump_id);
+                for src in jump.inputs.clone() {
+                    self.stack.push(src);
+                }
+            } else {
+                let jump = self.get_instruction_(jump_id);
+                for (&src, &p) in params.iter().zip(&jump.inputs) {
+                    if p != src { replacements.insert(p, src); }
+                }
+                self.block_mut(block_id).unwrap().parameters.clear();
+            }
+
+            self.instr_mut(jump_id).unwrap().inputs.clear();
+        } else {
+            let jumps: Vec<&OptInstr> = incoming.iter().map(|j| self.get_instruction(*j).unwrap()).collect();
+            let arg_count = jumps[0].inputs.len();
+            for j in &jumps {
+                assert_eq!(j.inputs.len(), arg_count, "Inconsistent number of arguments to block {}: expected {}, got {} from jump {}", block_id, arg_count, j.inputs.len(), j.id);
+            }
+
+            let mut resolved: Vec<Option<ValueId>> = vec![None; arg_count];
+            for i in 0..arg_count {
+                let vals: BTreeSet<ValueId> = jumps.iter().flat_map(|j| self.get_phi_sources(j.inputs[i])).collect();
+                assert!(!vals.is_empty());
+                if vals.len() == 1 {
+                    resolved[i] = Some(*vals.iter().next().unwrap());
+                } else {
+                    let range = vals.iter().map(|v| self.val_range(*v))
+                        .reduce(|a, b| intersect_range(&a, &b))
+                        .unwrap();
+                    tighten_ranges.insert(i, range);
+                }
+            }
+
+            let keep_ix: Vec<usize> = (0..arg_count).filter(|i| resolved[*i].is_none()).collect();
+
+            if params.is_empty() {
+                // lazy-init: create parameters for non-trivial phis; drop trivial ones entirely
+                //  + also append all jump values to the stack
+                let mut new_params: Vec<ValueId> = Vec::with_capacity(keep_ix.len());
+                let mut new_stack: Vec<ValueId> = resolved.iter().map(|x| x.unwrap_or(ValueId(0))).collect();
+                for &i in &keep_ix {
+                    // create a new parameter value anchored at block head and with tightened range
+                    let vi = self.new_value();
+                    vi.assigned_at = Some(InstrId(block_id, 0));
+                    vi.range = tighten_ranges.get(&i).cloned().unwrap_or(i64::MIN..=i64::MAX);
+                    new_params.push(vi.id);
+                    new_stack[i] = vi.id;
+                }
+                assert!(!new_stack.contains(&ValueId(0)));
+                self.block_mut(block_id).unwrap().parameters = new_params;
+                for val in new_stack {
+                    self.stack.push(val);
+                }
+            } else {
+                for i in 0..arg_count {
+                    if let Some(val) = resolved[i] {
+                        if let Some(&param) = params.get(i) {
+                            if param != val { replacements.insert(param, val); }
+                        }
+                    }
+                }
+                
+                // filter block params
+                let new_params = keep_ix.iter().map(|&i| params[i]).collect();
+                self.block_mut(block_id).unwrap().parameters = new_params;
+            }
+            // filter jumps
+            for &jid in &incoming {
+                if let Some(instr) = self.instr_mut(jid) {
+                    let filtered = keep_ix.iter().map(|&i| instr.inputs[i]).collect();
+                    instr.inputs = filtered;
+                }
+            }
+        }
+
+        self.replace_values(replacements);
+
+        // tighten ranges of remaining params
+        for (ix, p) in params.iter().enumerate() {
+            if let Some(new_range) = tighten_ranges.get(&ix) {
+                if let Some(info) = self.values.get_mut(&p) {
+                    let new_range = intersect_range(&info.range.clone(), new_range);
+                    assert!(!new_range.is_empty(), "Empty range for parameter {} of block {} after tightening ({:?}, {:?})", p, block_id, info.range, new_range);
+                    info.range = new_range;
+                }
+            }
+        }
+    }
+
+    pub fn switch_to_block(&mut self, id: BlockId, stack_depth: u32, stack_state: Vec<ValueId>) {
+        self.current_block = id;
+        self.stack.restore(StackState {
+            depth: stack_depth,
+            stack: stack_state,
+        });
+    }
+
     pub fn new_value(&mut self) -> &mut ValueInfo {
         let id = ValueId(self.next_val_id);
         self.next_val_id += 1;
@@ -240,12 +425,15 @@ impl GraphBuilder {
         entry.or_insert(info)
     }
 
-    pub fn value_numbering_try_lookup(&self, op: OptOp<ValueId>, args: &[ValueId]) -> Option<ValueId> {
+    pub fn value_numbering_try_lookup(&self, op: OptOp<ValueId>, args: &[ValueId], at: InstrId) -> Option<ValueId> {
         let instr = (op, args.to_smallvec());
         if let Some(vals) = self.value_index.get(&instr) {
             for (val, instr) in vals {
-                if instr.block_id() == self.current_block
-                    || instr.block_id().is_first_block()
+                if instr.block_id() == at.block_id() {
+                    if instr.instr_ix() < at.instr_ix() {
+                        return Some(*val);
+                    }
+                } else if instr.block_id().is_first_block()
                     || self.current_block_ref().predecessors.contains(&instr.block_id())
                 {
                     return Some(*val);
@@ -253,6 +441,45 @@ impl GraphBuilder {
             }
         }
         None
+    }
+
+    fn replace_values(&mut self, mut replace: BTreeMap<ValueId, ValueId>) {
+        while !replace.is_empty() {
+            let (old, new) = replace.pop_first().unwrap();
+            if old == new {
+                continue;
+            }
+            assert!(old.is_computed(), "non-computed value {:?} {}", old, old);
+            if let Some(is) = self.stack.lookup.remove(&old) {
+                for &i in &is {
+                    self.stack.stack[i as usize] = new;
+                }
+                let xs = self.stack.lookup.entry(new).or_default();
+                xs.extend(&is);
+                xs.sort();
+            }
+
+            let info = self.values.remove(&old).unwrap();
+            for &instr_id in &info.used_at {
+                let instr = self.instr_mut(instr_id).unwrap();
+                for inp in &mut instr.inputs {
+                    if *inp == old {
+                        *inp = new;
+                    }
+                }
+
+                let instr = self.get_instruction(instr_id).unwrap();
+
+                // simplifier::simplify_instr(cfg, i) TODO
+
+                if instr.effect.allows_value_numbering() {
+                    if let Some(v) = self.value_numbering_try_lookup(instr.op.clone(), &instr.inputs, instr_id) {
+                        replace.insert(instr.out, v);
+                        // self.instr_mut(instr_id).unwrap().effect = OpEffect::None;
+                    }
+                }
+            }
+        }
     }
 
     fn value_numbering_store(&mut self, op: OptOp<ValueId>, args: &[ValueId], val: ValueId, defined_at: InstrId) {
@@ -309,12 +536,13 @@ impl GraphBuilder {
     pub fn push_instr(&mut self, op: OptOp<ValueId>, args: &[ValueId], value_numbering: bool, out_range: Option<RangeInclusive<i64>>, effect: Option<OpEffect>) -> (ValueId, Option<&mut OptInstr>) {
         // assert!(!out.is_constant(), "Cannot assign to constant: {:?} <- {:?}{:?}", out, op, args);
         assert!(!args.contains(&ValueId(0)), "Cannot use null ValueId: {:?}{:?}", op, args);
+        assert!(!self.current_block_ref().is_finalized, "Cannot add instruction to finalized block: {:?}", self.current_block_ref());
 
         let effect2 = match effect {
             Some(e) => OpEffect::better_of(e, op.worst_case_effect()),
             None => op.worst_case_effect()
         };
-        let value_numbering = value_numbering && !matches!(effect2, OpEffect::StackWrite | OpEffect::StackRead);
+        let value_numbering = value_numbering && effect2.allows_value_numbering();
 
         let has_output = op.has_output();
 
@@ -346,7 +574,7 @@ impl GraphBuilder {
         }
 
         if value_numbering {
-            if let Some(existing_val) = self.value_numbering_try_lookup(instr.op.clone(), &instr.inputs) {
+            if let Some(existing_val) = self.value_numbering_try_lookup(instr.op.clone(), &instr.inputs, instr.id) {
                 return (existing_val, None);
             }
         }
@@ -376,6 +604,11 @@ impl GraphBuilder {
 
         if instr.out == ValueId(0) && instr.effect == OpEffect::None {
             return (out_val, None)
+        }
+
+        assert!(self.current_block_ref().is_finalized == false, "Cannot add instruction to finalized block: {:?}", self.current_block_ref());
+        if instr.op.is_terminal() {
+            self.current_block_mut().is_terminated = true;
         }
 
         if value_numbering {
@@ -504,6 +737,16 @@ impl GraphBuilder {
         b.instructions.get(&id.instr_ix())
     }
 
+    pub fn get_instruction_(&self, id: InstrId) -> &OptInstr {
+        let Some(b) = self.blocks.get(id.0.0 as usize) else {
+            panic!("Block of instr {id} does not exist (there is {} BBs)", self.blocks.len());
+        };
+        let Some(instr) = b.instructions.get(&id.instr_ix()) else {
+            panic!("Instruction {id} does not exist. Block: {}",  b);
+        };
+        instr
+    }
+
     pub fn get_constant(&self, id: ValueId) -> Option<i64> {
         if id.is_constant() {
             id.to_predefined_const().or_else(|| Some(self.constants[(-id.0 - 1 - ValueId::PREDEF_RANGE) as usize]))
@@ -577,7 +820,7 @@ impl GraphBuilder {
 
     pub fn fmt_stack(&self) -> String {
         let mut parts = vec![];
-        for (i, val) in self.stack.stack.iter().rev().enumerate() {
+        for val in self.stack.stack.iter().rev() {
             if val.is_constant() {
                 parts.push(self.get_constant_(*val).to_string());
             } else {

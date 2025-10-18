@@ -233,6 +233,10 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         }
     }
 
+    pub fn deopt_always() -> Self {
+        OptOp::DeoptAssert(Condition::False)
+    }
+
     pub fn is_commutative(&self, arg_count: usize) -> Range<usize> {
         match self {
             OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Gcd | OptOp::Max | OptOp::Min | OptOp::AbsSub | OptOp::Median | OptOp::Funkcia | OptOp::LenSum => 0..arg_count,
@@ -600,6 +604,10 @@ pub enum OpEffect {
 impl OpEffect {
     pub fn only_if(&mut self, condition: bool) {
         if condition { *self = OpEffect::None }
+    }
+
+    pub fn allows_value_numbering(&self) -> bool {
+        !matches!(self, OpEffect::StackRead | OpEffect::StackWrite)
     }
 
     pub fn better_of(a: OpEffect, b: OpEffect) -> OpEffect {
