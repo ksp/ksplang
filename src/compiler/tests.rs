@@ -1,17 +1,26 @@
 use std::ops::RangeInclusive;
 
-use crate::{compiler::{cfg::GraphBuilder, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser};
+use crate::{compiler::{cfg::GraphBuilder, ops::ValueId, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser};
 
-fn precompile(ksplang: &str, terminate_at: Option<usize>) -> GraphBuilder {
+fn precompile(ksplang: &str, terminate_at: Option<usize>, initial_values: &[RangeInclusive<i64>]) -> (GraphBuilder, Vec<ValueId>) {
     let parsed = parser::parse_program(ksplang).unwrap();
-    let g = GraphBuilder::new();
+    let mut g = GraphBuilder::new();
+    for r in initial_values {
+        let val = {
+            let info = g.new_value();
+            info.range = r.clone();
+            info.id
+        };
+        g.stack.push(val);
+    }
+    let vals = g.stack.stack.clone();
     let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, terminate_at, g, NoTrace());
     precompiler.interpret();
-    precompiler.g
+    (precompiler.g, vals)
 }
 
 fn test_constant(prog: &str, c: i64) {
-    let g = precompile(prog, None);
+    let g = precompile(prog, None, &[]).0;
 
     for bb in &g.blocks {
         println!("{}", bb);
@@ -27,6 +36,22 @@ fn test_constant(prog: &str, c: i64) {
 fn test_constant_0() {
     test_constant("CS CS lensum CS funkcia", 0);
 }
+#[test]
+fn test_constant_0b() {
+    test_constant("CS CS lensum ++ CS %", 0);
+}
+#[test]
+fn test_constant_0c() {
+    test_constant("CS CS CS CS funkcia pop2 pop2", 0);
+}
+#[test]
+fn test_constant_0d() {
+    test_constant("CS CS CS ++ CS CS % pop2 pop2 pop2", 0);
+}
+// #[test]
+// fn test_constant_0e() {
+//     test_constant("CS CS ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ ++ bitshift", 0);
+// }
 #[test]
 fn test_constant_n4611686018427387904() {
     test_constant("CS CS lensum ++ CS lensum ++ CS bitshift CS ++ bitshift CS ++ CS funkcia bitshift", -4611686018427387904);
@@ -90,6 +115,13 @@ fn test_dup(ksplang: &str, input_range: RangeInclusive<i64>) {
     assert_eq!(1, g.current_block_ref().instructions.len());
 }
 
+#[test]
+fn test_neg_a() {
+    // let (g, vals) = precompile("CS CS lensum CS funkcia ++ CS CS % qeq", None, &[(FULL_RANGE)]);
+    let (g, vals) = precompile("CS CS lensum CS funkcia ++ CS CS % qeq", None, &[(FULL_RANGE)]);
+    assert!(false)
+}
+
 // Duplikace ze vzoráku KSP
 const VZORAKOVA_DUP: &str = "CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum ++ CS lensum CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u";
 const SEJSELOVA_DUP: &str = "CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd ++ max CS CS % qeq CS CS CS ++ ++ qeq pop2 CS j ++ CS praise qeq qeq pop2 funkcia funkcia ++ % bitshift CS CS gcd CS ++ lroll CS u CS CS pop2 CS lensum m pop2 pop2";
@@ -97,10 +129,19 @@ const SEJSELOVA_DUP: &str = "CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd 
 fn test_dup1() {
     test_dup(VZORAKOVA_DUP, FULL_RANGE);
 }
+#[test]
+fn test_dup1_trochu_jina() {
+    test_dup("CS CS lensum CS funkcia ++ ++ m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum CS funkcia ++ ++ m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia ++ ++ CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u", FULL_RANGE);
+}
 
 #[test]
 fn test_dup2() {
     test_dup(SEJSELOVA_DUP, FULL_RANGE);
+}
+
+#[test]
+fn test_dup_32bit_vzorak() {
+    todo!()
 }
 
 #[test]

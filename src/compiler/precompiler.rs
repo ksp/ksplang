@@ -490,8 +490,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let bits_range = self.g.val_range(bits);
                 // let num_range = self.g.val_range(num);
 
-                if *bits_range.end() < 0 || *bits_range.start() > 63 {
-                    return NevimJak;
+                if *bits_range.end() < 0 {
+                    self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
+                    return Continue;
                 }
 
                 // let range = eval_combi(num_range, bits_range, 1024, |num, bits| Some(num.checked_shl(rhs) << bits));
@@ -973,13 +974,14 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 // x => todo!("Unhandled branching result: {:?}", x),
             }
 
-
             if self.opt.allow_pruning {
                 self.g.clean_poped_values();
             }
 
             self.position = self.next_position();
         }
+        self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
+        self.g.current_block_mut().is_finalized = true;
     }
 
 
@@ -1038,7 +1040,6 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             self.g.seal_block(bid);
             assert_eq!(self.g.stack.stack.len(), pb.stack_snapshot[0].stack.len());
         }
-        self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
 
         // kill remaining pending branches
         while let Some(pb) = self.pending_branches.pop_front() {
