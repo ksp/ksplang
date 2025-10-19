@@ -69,18 +69,27 @@ impl BasicBlock {
 
 impl fmt::Display for BasicBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "BB {}({}) {{", self.id, self.parameters.iter().map(|v| format!("{}", v)).collect::<Vec<_>>().join(", "))?;
+        writeln!(f, "BB {}({}) {{",
+            self.id,
+            self.parameters.iter().map(|v| format!("{}", v)).collect::<Vec<_>>().join(", ")
+        )?;
         if !self.predecessors.is_empty() {
             writeln!(f, "    // preds: {}", self.predecessors.iter().map(|b| format!("{}", b)).collect::<Vec<_>>().join(", "))?;
         }
-        if !self.incoming_jumps.is_empty() {
-            writeln!(f, "    // incoming: {}", self.incoming_jumps.iter().map(|j| format!("{}", j)).collect::<Vec<_>>().join(", "))?;
+        if !self.incoming_jumps.is_empty() || !self.is_sealed {
+            writeln!(f, "    // incoming: {}{}",
+                self.incoming_jumps.iter().map(|j| format!("{}", j)).collect::<Vec<_>>().join(", "),
+                if self.is_sealed { "" } else { " (not sealed)" }
+            )?;
         }
         if !self.outgoing_jumps.is_empty() {
             writeln!(f, "    // outgoing: {}", self.outgoing_jumps.iter().map(|(j, b)| format!("i{} -> bb{}", j.1, b)).collect::<Vec<_>>().join(", "))?;
         }
         for instr in self.instructions.values() {
             writeln!(f, "    {}", instr)?;
+        }
+        if !self.is_finalized {
+            writeln!(f, "    ...")?;
         }
         Ok(())
     }
