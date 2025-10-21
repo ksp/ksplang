@@ -247,7 +247,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
 
     pub fn worst_case_effect(&self) -> OpEffect {
         match self {
-            OptOp::Push | OptOp::Pop => OpEffect::None, // stack push/pop bound checks are tracked separately
+            OptOp::Push | OptOp::Pop => OpEffect::StackWrite,
             OptOp::Nop | OptOp::Const(_) | OptOp::Condition(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn => OpEffect::None,
 
             // overflow checks, div by zero
@@ -642,6 +642,7 @@ pub struct OptInstr {
     pub out: ValueId,
     pub stack_state: Option<u32>, // stack state before this instruction (for deoptimization)
     pub program_position: usize, // u64::MAX if unknown
+    pub ksp_instr_count: u32,
     pub effect: OpEffect,
 }
 
@@ -655,6 +656,7 @@ impl OptInstr {
             out,
             stack_state: None,
             program_position: usize::MAX,
+            ksp_instr_count: 0,
             effect,
         }
     }

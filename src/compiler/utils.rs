@@ -1,9 +1,6 @@
-use std::{cmp, collections::HashSet, hash::Hash, ops::RangeInclusive};
+use std::{cmp, collections::HashSet, ops::RangeInclusive};
 
-use num_integer::Integer;
-use num_traits::{CheckedAdd, CheckedMul, CheckedSub, One, SaturatingAdd, SaturatingMul, SaturatingSub, Zero};
-
-use crate::vm;
+use num_traits::{CheckedMul, One, SaturatingAdd, SaturatingMul, SaturatingSub, Zero};
 
 pub const EMPTY_RANGE: RangeInclusive<i64> = 1..=0;
 pub const FULL_RANGE: RangeInclusive<i64> = i64::MIN..=i64::MAX;

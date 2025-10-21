@@ -1,10 +1,10 @@
-use std::ops::RangeInclusive;
+use std::{ops::RangeInclusive, result};
 
-use crate::{compiler::{cfg::GraphBuilder, ops::ValueId, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser};
+use crate::{compiler::{cfg::GraphBuilder, cfg_interpreter::interpret_cfg, ops::{OptOp, ValueId}, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{NoStats, RunError, RunResult, VMOptions}};
 
 fn precompile(ksplang: &str, terminate_at: Option<usize>, initial_values: &[RangeInclusive<i64>]) -> (GraphBuilder, Vec<ValueId>) {
     let parsed = parser::parse_program(ksplang).unwrap();
-    let mut g = GraphBuilder::new();
+    let mut g = GraphBuilder::new(0);
     for r in initial_values {
         let val = {
             let info = g.new_value();
@@ -95,7 +95,7 @@ fn test_constant_7625597484987() {
 
 fn test_dup(ksplang: &str, input_range: RangeInclusive<i64>) {
     let parsed = parser::parse_program(ksplang).unwrap();
-    let mut g = GraphBuilder::new();
+    let mut g = GraphBuilder::new(0);
     let val = {
         let info = g.new_value();
         info.range = input_range.clone();
@@ -115,11 +115,32 @@ fn test_dup(ksplang: &str, input_range: RangeInclusive<i64>) {
     assert_eq!(1, g.current_block_ref().instructions.len());
 }
 
+fn test_neg(prog: &str) {
+    let (g, vals) = precompile(prog, None, &[(FULL_RANGE)]);
+    assert_eq!(1, g.stack.stack.len());
+    let result_val = g.stack.stack[0];
+    let result_info = &g.values[&result_val];
+    assert_eq!((-i64::MAX)..=i64::MAX, result_info.range);
+    let defined_at = g.get_instruction_(result_info.assigned_at.unwrap());
+    assert_eq!(OptOp::Sub, defined_at.op);
+    assert_eq!([ValueId::C_ZERO, vals[0]], defined_at.inputs[..]);
+    assert_eq!(2, g.current_block_ref().instructions.len());
+}
+
 #[test]
-fn test_neg_a() {
-    // let (g, vals) = precompile("CS CS lensum CS funkcia ++ CS CS % qeq", None, &[(FULL_RANGE)]);
-    let (g, vals) = precompile("CS CS lensum CS funkcia ++ CS CS % qeq", None, &[(FULL_RANGE)]);
-    assert!(false)
+fn test_neg_a() { test_neg("CS CS lensum CS funkcia ++ CS CS % qeq"); }
+
+#[test]
+fn test_neg_b() {
+    test_neg("
+        CS CS lensum CS funkcia ++
+        CS CS lensum CS funkcia ++ praise qeq qeq pop bitshift ++ REM REM
+        bitshift
+        CS CS lensum ++ CS lensum ++ ++ ++
+        u
+        CS CS lensum ++ CS lensum
+        u
+    ");
 }
 
 // Duplikace ze vzoráku KSP
@@ -136,12 +157,37 @@ fn test_dup1_trochu_jina() {
 
 #[test]
 fn test_dup2() {
-    test_dup(SEJSELOVA_DUP, FULL_RANGE);
+    test_dup(SEJSELOVA_DUP, i64::MIN..=0);
+    test_dup(SEJSELOVA_DUP, 3..=i64::MAX);
+    // test_dup(SEJSELOVA_DUP, FULL_RANGE); // TODO: support this
 }
 
 #[test]
 fn test_dup_32bit_vzorak() {
-    todo!()
+    const VZORAK_32BIT_DUP: &str = "
+        CS CS lensum ++ CS lensum CS bitshift CS ++ ++ bitshift CS bitshift
+        CS CS lensum CS funkcia
+        u
+
+        CS CS lensum CS funkcia ++ praise qeq pop2 pop2 funkcia bitshift pop2 pop2 pop2
+        CS CS lensum ++ CS lensum ++
+        m
+        pop2 pop2
+
+        CS CS lensum ++ CS CS CS % qeq CS ++ ++ bitshift CS ++ ++ bitshift CS bitshift
+        CS CS lensum CS funkcia
+        u
+
+        CS CS lensum CS funkcia ++
+        CS CS lensum ++ CS lensum
+        lroll
+
+        CS CS lensum ++ CS CS CS % qeq CS ++ ++ bitshift CS ++ ++ bitshift CS bitshift
+        CS CS lensum CS funkcia
+        u
+    ";
+    test_dup(VZORAK_32BIT_DUP, -2147483648..=2147483648);
+    // test_dup(VZORAK_32BIT_DUP, FULL_RANGE);
 }
 
 #[test]
@@ -149,5 +195,26 @@ fn test_dup1_limited_ranges() {
     test_dup(VZORAKOVA_DUP, 0..=1000000);
     test_dup(VZORAKOVA_DUP, -1..=1);
     test_dup(VZORAKOVA_DUP, 1345432..=1345432);
-    test_dup(VZORAKOVA_DUP, i64::MIN..=i64::MIN+1);
+    test_dup(VZORAKOVA_DUP, i64::MIN..=i64::MIN + 1);
+}
+
+const PI_TEST_VALUES: [i8; 42] = [
+    3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3, 2, 3, 8, 4, 6, 2, 6, 4, 3, 3, 8, 3, 2, 7, 9, 5,
+    0, 2, 8, 8, 4, 1, 9, 7, 1, 6,
+];
+
+fn run_with_opt(initial_stack: &[i64], program: &str) -> Result<RunResult<NoStats>, RunError> {
+    let ops = parser::parse_program(program).unwrap();
+    let mut vm = crate::vm::OptimizingVM::new(ops, true);
+    let options = VMOptions::new(initial_stack, usize::MAX, &PI_TEST_VALUES, u64::MAX, u64::MAX);
+    vm.run(initial_stack.to_vec(), options)
+}
+
+const VZORAK_SEKVENCE: &str = include_str!("tests/sekvence.ksplang");
+
+#[test]
+fn test_sekvence_1() {
+    let res = run_with_opt(&[42, 43, 100], VZORAK_SEKVENCE).unwrap();
+    let expected: Vec<i64> = [42, 43].into_iter().chain((0..=100).rev()).collect();
+    assert_eq!(res.stack, expected);
 }

@@ -1,9 +1,9 @@
-use std::{cmp, collections::{HashMap, HashSet, VecDeque}, default, ops::RangeInclusive, vec};
+use std::{cmp, collections::{HashMap, VecDeque}, ops::RangeInclusive, vec};
 
 use num_integer::Integer;
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::{BasicBlock, GraphBuilder, StackState}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, vm_code::Condition}, digit_sum::digit_sum, funkcia::{self, funkcia}, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
+use crate::{compiler::{cfg::{GraphBuilder, StackState}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, vm_code::Condition}, digit_sum::digit_sum, funkcia::funkcia, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
 
 pub struct Options {
     pub allow_pruning: bool
@@ -291,19 +291,16 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             crate::ops::Op::FF => NevimJak,
             crate::ops::Op::KPi => NevimJak,
             crate::ops::Op::Increment => {
-                let a = self.g.peek_stack();
-                let (start, _end) = self.g.val_range(a).into_inner();
-                if start == i64::MAX {
-                    self.g.push_assert(Condition::False, OperationError::IntegerOverflow, None);
-                    return Continue;
-                }
-                let out = if a.is_constant() {
-                    let c = self.g.get_constant_(a);
+                let a = self.g.pop_stack();
+                let out = if let Some(c) = self.g.get_constant(a) {
+                    if c == i64::MAX {
+                        self.g.push_assert(Condition::False, OperationError::IntegerOverflow, None);
+                        return Continue;
+                    }
                     self.g.store_constant(c + 1)
                 } else {
                     self.instr_add(a, ValueId::C_ONE)
                 };
-                self.g.pop_stack();
                 self.g.stack.push(out);
                 Continue
             }
@@ -815,13 +812,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     let ar = self.g.val_range(a);
                     let br = self.g.val_range(b);
                     if *ar.start() > 0 && *br.start() > 0 {
-                        xors.push(Ok(ValueId::C_ONE))
+                        xors.push(Ok(ValueId::C_ZERO))
                     } else if *ar.start() > 0 && *br.end() <= 0 {
-                        xors.push(Ok(ValueId::C_ZERO))
-                    } else if *ar.end() <= 0 && *br.end() > 0 {
-                        xors.push(Ok(ValueId::C_ZERO))
-                    } else if *ar.end() <= 0 && *br.end() <= 0 {
                         xors.push(Ok(ValueId::C_ONE))
+                    } else if *ar.end() <= 0 && *br.end() > 0 {
+                        xors.push(Ok(ValueId::C_ONE))
+                    } else if *ar.end() <= 0 && *br.end() <= 0 {
+                        xors.push(Ok(ValueId::C_ZERO))
                     } else {
                         xors.push(Err((a, ar, b, br)))
                     }
@@ -831,7 +828,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     return NevimJak
                 }
 
-                self.g.pop_stack_n(n as usize + 1);
+                self.g.pop_stack_n(n as usize * 2 + 1);
 
                 for x in xors {
                     match x {
@@ -866,16 +863,17 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 Continue
             },
             crate::ops::Op::BranchIfZero => {
-                let (target, val) = self.g.peek_stack_2();
-                return self.branching(target, true, false, Condition::EqConst(val, 0));
+                let (val, target) = self.g.peek_stack_2();
+                println!("BranchIfZero to {} if {} == 0", target, val);
+                return self.branching(target, false, false, Condition::EqConst(val, 0));
             }
             crate::ops::Op::Call => {
                 let t = self.g.peek_stack();
-                return self.branching(t, true, true, Condition::True);
+                return self.branching(t, false, true, Condition::True);
             }
             crate::ops::Op::Goto => {
                 let t = self.g.peek_stack();
-                return self.branching(t, true, false, Condition::True);
+                return self.branching(t, false, false, Condition::True);
             }
             crate::ops::Op::Jump => {
                 let t = self.g.peek_stack();
@@ -900,10 +898,11 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
     fn interpret_block(&mut self) -> () {
         loop {
+            self.g.set_program_position(Some(self.position));
             if self.termination_ip == Some(self.position) || self.position >= self.ops.len() {
                 break;
             }
-            if self.g.stack.stack.len() + 1 >= self.initial_stack_size {
+            if self.g.stack.stack_depth as usize + 1 >= self.initial_stack_size {
                 break;
             }
             if self.interpretation_limit == 0 {
@@ -911,8 +910,14 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             self.interpretation_limit -= 1;
 
-            self.g.set_program_position(Some(self.position));
+            let trace_results_fmt: String =
+                self.tracer.get_results(self.position)
+                    .map(|r| format!("{}:{:?}; ", r.0, r.1))
+                    .collect();
             println!("Interpreting op {}: {:?}", self.position, self.ops[self.position]);
+            if trace_results_fmt.len() > 0 {
+                println!("Trace results: {}", trace_results_fmt);
+            }
 
             println!("  Stack: {}", self.g.fmt_stack());
             println!("  Current Block: {}", self.g.current_block_ref());
@@ -920,9 +925,11 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             let stack_counts = (self.g.stack.push_count, self.g.stack.pop_count);
             self.visited_ips.entry(self.position).or_default().visits += 1;
             let result = self.step();
+            self.g.current_block_mut().ksplang_instr_count += 1;
             match result {
                 PrecompileStepResult::Continue => {}
                 PrecompileStepResult::NevimJak | PrecompileStepResult::NevimJakChteloByToKonstantu(_) => {
+                    self.g.current_block_mut().ksplang_instr_count -= 1;
                     if stack_counts != (self.g.stack.push_count, self.g.stack.pop_count) {
                         panic!("Error when interpreting OP {} {:?}: modifed stack, but then returned {result:?}", self.position, self.ops[self.position])
                     }
@@ -947,7 +954,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         stack_snapshot.stack.extend(&branch.stack.1);
 
 
-                        let new_block = self.g.new_block(false, vec![]);
+                        let new_block = self.g.new_block(branch.target, false, vec![]);
                         let new_block_id = new_block.id;
 
                         // TODO: merging, ordering heuristics

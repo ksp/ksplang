@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{char::MAX, cmp, collections::{BTreeMap, BTreeSet, HashMap, HashSet}, fmt::Display, mem, u32};
+use std::{collections::{BTreeMap, BTreeSet, HashMap, HashSet}, fmt::Display, mem, u32};
 use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 
@@ -611,7 +611,7 @@ pub struct BBOrderInfo {
 //         })
 // }
 
-fn postorder(g: &GraphBuilder) -> Vec<BlockId> {
+pub fn postorder(g: &GraphBuilder) -> Vec<BlockId> {
     let mut visited = vec![false; g.blocks.len()];
     let mut result = vec![];
 

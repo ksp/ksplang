@@ -6,7 +6,7 @@ use std::{
 use arrayvec::ArrayVec;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier, utils::intersect_range, vm_code::Condition}, vm::OperationError};
+use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier, utils::intersect_range, vm_code::{self, Condition}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -29,12 +29,15 @@ pub struct BasicBlock {
     pub is_sealed: bool,    // no more incoming_jumps will be added
     pub is_finalized: bool, // no more instructions will be added
     pub is_terminated: bool, // has terminal instruction (deopt false, jump true, etc)
+    pub ksplang_start_ip: usize,
+    pub ksplang_instr_count: u32,
+    pub ksplang_instr_count_additional: Vec<ValueId>,
     pub predecessors: HashSet<BlockId>, // all dominators
                                         // pub successors: Vec<BlockId>,
 }
 
 impl BasicBlock {
-    pub fn new(id: BlockId, is_sealed: bool, parameters: Vec<ValueId>) -> Self {
+    pub fn new(id: BlockId, start_ip: usize, is_sealed: bool, parameters: Vec<ValueId>) -> Self {
         Self {
             id,
             parameters,
@@ -42,6 +45,9 @@ impl BasicBlock {
             incoming_jumps: Vec::new(),
             outgoing_jumps: Vec::new(),
             next_instr_id: 1,
+            ksplang_start_ip: start_ip,
+            ksplang_instr_count_additional: Vec::new(),
+            ksplang_instr_count: 0,
             predecessors: HashSet::new(),
             is_finalized: false,
             is_terminated: false,
@@ -54,6 +60,7 @@ impl BasicBlock {
     }
 
     pub fn add_instruction(&mut self, mut instr: OptInstr) -> &mut OptInstr {
+        instr.ksp_instr_count = self.ksplang_instr_count;
         let id = InstrId(self.id, self.next_instr_id);
         assert!(instr.id == InstrId(BlockId(0), 0) || instr.id == id, "Instruction already has an id: {:?}, expected {:?}", instr.id, id);
         instr.id = id;
@@ -69,9 +76,12 @@ impl BasicBlock {
 
 impl fmt::Display for BasicBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "BB {}({}) {{",
+        writeln!(f, "BB {}({}) [{}...{}{}] {{",
             self.id,
-            self.parameters.iter().map(|v| format!("{}", v)).collect::<Vec<_>>().join(", ")
+            self.parameters.iter().map(|v| format!("{}", v)).collect::<Vec<_>>().join(", "),
+            self.ksplang_start_ip,
+            self.ksplang_instr_count,
+            self.ksplang_instr_count_additional.iter().map(|v| format!(" + {}", v)).collect::<String>()
         )?;
         if !self.predecessors.is_empty() {
             writeln!(f, "    // preds: {}", self.predecessors.iter().map(|b| format!("{}", b)).collect::<Vec<_>>().join(", "))?;
@@ -229,10 +239,10 @@ pub struct GraphBuilder {
 }
 
 impl GraphBuilder {
-    pub fn new() -> Self {
+    pub fn new(start_ip: usize) -> Self {
         Self {
             values: HashMap::new(),
-            blocks: vec![BasicBlock::new(BlockId(0), true, vec![])],
+            blocks: vec![BasicBlock::new(BlockId(0), start_ip, true, vec![])],
             current_block: BlockId(0),
             stack: StackStateTracker::new(),
             next_val_id: 1,
@@ -259,9 +269,9 @@ impl GraphBuilder {
         InstrId(self.current_block, self.current_block_ref().next_instr_id)
     }
 
-    pub fn new_block(&mut self, is_sealed: bool, parameters: Vec<ValueId>) -> &mut BasicBlock {
+    pub fn new_block(&mut self, start_ip: usize, is_sealed: bool, parameters: Vec<ValueId>) -> &mut BasicBlock {
         let id = BlockId(self.blocks.len() as u32);
-        self.blocks.push(BasicBlock::new(id, is_sealed, parameters));
+        self.blocks.push(BasicBlock::new(id, start_ip, is_sealed, parameters));
         self.block_mut(id).unwrap()
     }
 
@@ -545,7 +555,7 @@ impl GraphBuilder {
     pub fn push_instr(&mut self, op: OptOp<ValueId>, args: &[ValueId], value_numbering: bool, out_range: Option<RangeInclusive<i64>>, effect: Option<OpEffect>) -> (ValueId, Option<&mut OptInstr>) {
         // assert!(!out.is_constant(), "Cannot assign to constant: {:?} <- {:?}{:?}", out, op, args);
         assert!(!args.contains(&ValueId(0)), "Cannot use null ValueId: {:?}{:?}", op, args);
-        assert!(!self.current_block_ref().is_finalized, "Cannot add instruction to finalized block: {:?}", self.current_block_ref());
+        let explicit_nop = !value_numbering && op == OptOp::Nop;
 
         let effect2 = match effect {
             Some(e) => OpEffect::better_of(e, op.worst_case_effect()),
@@ -561,6 +571,7 @@ impl GraphBuilder {
             inputs: args.into(),
             out: if has_output { ValueId(i32::MAX) } else { ValueId(0) },
             stack_state: None,
+            ksp_instr_count: self.current_block_ref().ksplang_instr_count,
             program_position: self.assumed_program_position.unwrap_or(usize::MAX),
             effect: effect2
         };
@@ -569,7 +580,7 @@ impl GraphBuilder {
         instr.id = InstrId(self.current_block, self.current_block_ref().next_instr_id);
         assert_eq!(has_output, instr.op.has_output());
 
-        if instr.op == OptOp::Nop {
+        if instr.op == OptOp::Nop && !explicit_nop {
             return (ValueId(0), None);
         }
 
@@ -611,7 +622,7 @@ impl GraphBuilder {
             }
         }
 
-        if instr.out == ValueId(0) && instr.effect == OpEffect::None {
+        if instr.out == ValueId(0) && instr.effect == OpEffect::None && !explicit_nop {
             return (out_val, None)
         }
 
@@ -894,6 +905,7 @@ impl GraphBuilder {
                     stack_state: Some(stack_state),
                     program_position,
                     effect: OpEffect::None,
+                    ksp_instr_count: u32::MAX,
                 });
             }
         }
@@ -948,5 +960,23 @@ impl GraphBuilder {
         for val in mem::take(&mut self.stack.poped_values) {
             self.clean_value(val);
         }
+    }
+}
+
+
+impl fmt::Display for GraphBuilder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut block_order = vm_code::postorder(self);
+        block_order.reverse();
+        writeln!(f, "CFG(blocks={}/{}):", self.blocks.len(), block_order.len())?;
+        writeln!(f, "    current_block={}, Stack: {}", self.current_block, self.fmt_stack())?;
+        for (id, v) in self.list_used_constants() {
+            writeln!(f, "{id} = {v}")?
+        }
+
+        for bid in block_order {
+            writeln!(f, "{}", self.block_(bid))?;
+        }
+        Ok(())
     }
 }

@@ -37,6 +37,9 @@ struct Args {
     /// The file should contain ASCII digits 0-9 (other characters are ignored) and should start with 3.
     #[arg(long)]
     pi_digit_file: Option<String>,
+    /// Allow optimizing tracing JIT
+    #[arg(long, short='o')]
+    optimize: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -69,7 +72,12 @@ fn main() -> anyhow::Result<()> {
     );
 
     let start_time = std::time::Instant::now();
-    let result = ksplang::vm::run(&ops, options)?;
+    let result = if args.optimize {
+        let mut vm = ksplang::vm::OptimizingVM::new(ops, true);
+        vm.run(stack.clone(), options)?
+    } else {
+        ksplang::vm::run(&ops, options)?
+    };
     let elapsed = start_time.elapsed();
 
     if args.stats {

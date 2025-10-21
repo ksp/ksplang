@@ -1,8 +1,8 @@
-use std::{borrow::Cow, cmp, collections::HashSet, iter::Copied, ops::RangeInclusive};
+use std::{cmp, ops::RangeInclusive};
 
 use smallvec::{smallvec, SmallVec, ToSmallVec};
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::{self, OptOptPattern}, range_ops::{range_mod, range_signum}, utils::{abs_range, range_is_signless, sort_tuple, union_range, FULL_RANGE}, vm_code::Condition}, ops::Op, vm::OperationError};
+use crate::{compiler::{cfg::GraphBuilder, ops::{OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, vm_code::Condition}, vm::OperationError};
 
 fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeInclusive<i64>> {
     let start = *a.start().max(b.start());
@@ -603,9 +603,14 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Mul if i.inputs.contains(&ValueId::C_ZERO) =>
                 // a * 0 -> 0
                 return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), Some(0..=0)),
-            &OptOp::Mul if i.inputs[0] == ValueId::C_ONE =>
+            &OptOp::Mul if i.inputs[0] == ValueId::C_ONE && i.inputs.len() == 2 =>
                 // 1 * a -> a
                 return (i.clone().with_op(OptOp::Add, &[ i.inputs[1] ], OpEffect::None), Some(ranges[1].clone())),
+            &OptOp::Mul if i.inputs[0] == ValueId::C_NEG_ONE && i.inputs.len() == 2 => {
+                // -1 * a -> 0 - a
+                i.op = OptOp::Sub;
+                i.inputs = smallvec![ValueId::C_ZERO, i.inputs[1]];
+            }
 
             OptOp::ShiftL if i.inputs[1].is_constant() => {
                 let shift = cfg.get_constant_(i.inputs[1]);
