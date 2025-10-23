@@ -15,6 +15,7 @@ fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeIncl
 }
 
 pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<ValueId>) -> Condition<ValueId> {
+    println!("canonicalize_condition({condition})");
     match condition.clone() {
         Condition::EqConst(a, b) => {
             let b = cfg.store_constant(b as i64);
@@ -80,6 +81,17 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                 Condition::Geq(_, _) if ar.end() < br.start() => return Condition::False,
                 _ => {}
             }
+            let condition = match condition {
+                Condition::Geq(a, b) if ar.end() == br.start() =>
+                    Condition::Eq(a, b),
+                Condition::Gt(a, b) if ar.start() == br.end() => // a > b => a != b IF a is always >= b
+                    Condition::Neq(a, b),
+                Condition::Leq(a, b) if ar.start() == br.end() =>
+                    Condition::Eq(a, b),
+                Condition::Lt(a, b) if ar.end() == br.start() =>
+                    Condition::Neq(a, b),
+                x => x
+            };
             // Min/Max comparison simplification
             //  min(k, x) == k  -> x <= k
             if a.is_constant() {
@@ -95,24 +107,78 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                         }
                         return canonicalize_condition(cfg, match (&condition, &def.op) {
                             // min(10, x) == 10 -> x >= 10
-                            (Condition::Eq(_, _) | Condition::Geq(_, _), OptOp::Min) if ac == k => Condition::Geq(x, a),
+                            (Condition::Eq(_, _) | Condition::Leq(_, _), OptOp::Min) if ac == k => Condition::Leq(a, x),
                             // max(5, x) == 5 -> x <= 5
-                            (Condition::Eq(_, _) | Condition::Leq(_, _), OptOp::Max) if ac == k => Condition::Leq(x, a),
+                            (Condition::Eq(_, _) | Condition::Geq(_, _), OptOp::Max) if ac == k => Condition::Geq(a, x),
                             // min(10, x) == 5 -> x == 5
-                            (Condition::Eq(_, _), _) if ac != k => Condition::Eq(x, a),
+                            (Condition::Eq(_, _), _) if ac != k => Condition::Eq(a, x),
                             // same for Neq
-                            (Condition::Neq(_, _) | Condition::Lt(_, _), OptOp::Min) if ac == k => Condition::Lt(x, a),
-                            (Condition::Neq(_, _) | Condition::Gt(_, _), OptOp::Max) if ac == k => Condition::Gt(x, a),
-                            (Condition::Neq(_, _), _) if ac != k => Condition::Neq(x, a),
+                            (Condition::Neq(_, _) | Condition::Gt(_, _), OptOp::Min) if ac == k => Condition::Gt(a, x),
+                            (Condition::Neq(_, _) | Condition::Lt(_, _), OptOp::Max) if ac == k => Condition::Lt(a, x),
+                            (Condition::Neq(_, _), _) if ac != k => Condition::Neq(a, x),
                             // rest should be handled
-                            (Condition::Leq(_, _), _) if ac != k => Condition::Leq(x, a),
-                            (Condition::Geq(_, _), _) if ac != k => Condition::Geq(x, a),
-                            (Condition::Lt(_, _), _) if ac != k => Condition::Lt(x, a),
-                            (Condition::Gt(_, _), _) if ac != k => Condition::Gt(x, a),
+                            (Condition::Leq(_, _), _) if ac != k => Condition::Leq(a, x),
+                            (Condition::Geq(_, _), _) if ac != k => Condition::Geq(a, x),
+                            (Condition::Lt(_, _), _) if ac != k => Condition::Lt(a, x),
+                            (Condition::Gt(_, _), _) if ac != k => Condition::Gt(a, x),
 
                             _ => unreachable!("{:?} {:?} {} {}", condition, def, k, ac),
                         })
                     }
+
+                    if ac == 0 && matches!(def.op, OptOp::DigitSum) {
+                        let b2 = def.inputs[0];
+                        // DigitSum preserves zero, some programs use this when branching
+                        return canonicalize_condition(cfg, match condition {
+                            Condition::Eq(_, _) => Condition::Eq(a, b2),
+                            Condition::Neq(_, _) => Condition::Neq(a, b2),
+                            Condition::Lt(_, _) => Condition::Neq(a, b2), // 0 < CS(b) => 0 != b
+                            Condition::Leq(_, _) => Condition::True, // 0 <= CS(b)
+                            Condition::Gt(_, _) => Condition::False, // 0 > CS(b)
+                            Condition::Geq(_, _) => Condition::Eq(a, b2), // 0 >= CS(b)
+                            x => return x
+                        })
+                    }
+
+                    if matches!(def.op, OptOp::Sgn) {
+                        let b2 = def.inputs[0];
+                        return canonicalize_condition(cfg, match (ac, condition) {
+                            (0, Condition::Eq(_, _)) => Condition::Eq(a, b2),
+                            (1, Condition::Eq(_, _)) => Condition::Lt(ValueId::C_ZERO, b2), // 0 < b
+                            (-1, Condition::Eq(_, _)) => Condition::Gt(ValueId::C_ZERO, b2), // 0 > b
+                            (0, Condition::Neq(_, _)) => Condition::Neq(a, b2),
+                            (1, Condition::Neq(_, _)) => Condition::Geq(ValueId::C_ZERO, b2), // 0 >= b
+                            (-1, Condition::Neq(_, _)) => Condition::Leq(ValueId::C_ZERO, b2), // 0 <= b
+                            (_, x) => return x
+                        })
+                    }
+
+                    if matches!(def.op, OptOp::Add) && def.inputs.len() == 2 && def.inputs[0].is_constant() {
+                        // A > (b + C) => (A - C) > b
+                        let shift = cfg.get_constant_(def.inputs[0]);
+                        let b2 = def.inputs[1];
+                        let a2 = cfg.store_constant(ac - shift);
+
+                        return canonicalize_condition(cfg, condition.replace_arr(vec![a2, b2]))
+                    }
+
+                    // if matches!(def.op, OptOp::Mul) && def.inputs.len() == 2 && def.inputs[0].is_constant() { // TODO
+                    //     // A > (b * C) => (A / C) > b
+                    //     let mul = cfg.get_constant_(def.inputs[0]);
+                    //     let b2 = def.inputs[1];
+                    //     let ac2 = if ac % mul == 0 {
+                    //         ac / mul
+                    //     } else {
+                    //         match &condition {
+                    //             Condition::Eq(_, _) => return Condition::False,
+                    //             Condition::Neq(_, _) => return Condition::True,
+                    //             _ => todo!()
+                    //         }
+                    //     };
+                    //     let a2 = cfg.store_constant(ac2 / mul);
+                    //
+                    //     return canonicalize_condition(cfg, condition.replace_arr(vec![a2, b2]))
+                    // }
                 }
             }
 
@@ -509,7 +575,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             _ => { }
         };
 
-        let ranges = i.inputs.iter().map(|a| cfg.val_range(*a)).collect::<SmallVec<[_; 4]>>();
+        let ranges = i.inputs.iter().map(|a| cfg.val_range_at(*a, i.id)).collect::<SmallVec<[_; 4]>>();
 
         // if i.effect != OpEffect::None {
         //     match &i.op {

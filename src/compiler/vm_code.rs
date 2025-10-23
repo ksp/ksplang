@@ -189,9 +189,9 @@ pub enum Condition<TReg> {
 
 // New: map registers in conditions (all reads)
 impl<TReg> Condition<TReg> {
-    pub fn replace_regs<TReg2, F>(&self, f: F) -> Condition<TReg2>
+    pub fn replace_regs<TReg2, F>(&self, mut f: F) -> Condition<TReg2>
     where
-        F: Fn(&TReg) -> TReg2,
+        F: FnMut(&TReg) -> TReg2,
     {
         match self {
             Condition::Eq(a, b) => Condition::Eq(f(a), f(b)),
@@ -213,6 +213,13 @@ impl<TReg> Condition<TReg> {
             Condition::True => Condition::True,
             Condition::False => Condition::False,
         }
+    }
+
+    pub fn replace_arr<TReg2>(&self, mut f: Vec<TReg2>) -> Condition<TReg2> {
+        f.reverse();
+        let c2 = self.replace_regs(|_| f.pop().unwrap());
+        assert_eq!(0, f.len());
+        c2
     }
 
     pub fn regs(&self) -> ArrayVec<TReg, 2>

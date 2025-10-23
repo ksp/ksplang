@@ -1,12 +1,13 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, collections::{BTreeMap, BTreeSet, HashMap, HashSet}, i32, mem, ops::{Range, RangeInclusive}
+    borrow::Cow, collections::{BTreeMap, BTreeSet, HashMap}, i32, mem, ops::{Range, RangeInclusive}
 };
 
 use arrayvec::ArrayVec;
+use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier, utils::intersect_range, vm_code::{self, Condition}}, vm::OperationError};
+use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier::{self, canonicalize_condition}, utils::{abs_range, intersect_range, FULL_RANGE}, vm_code::{self, Condition}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -32,7 +33,7 @@ pub struct BasicBlock {
     pub ksplang_start_ip: usize,
     pub ksplang_instr_count: u32,
     pub ksplang_instr_count_additional: Vec<ValueId>,
-    pub predecessors: HashSet<BlockId>, // all dominators
+    pub predecessors: BTreeSet<BlockId>, // all dominators
                                         // pub successors: Vec<BlockId>,
 }
 
@@ -48,7 +49,7 @@ impl BasicBlock {
             ksplang_start_ip: start_ip,
             ksplang_instr_count_additional: Vec::new(),
             ksplang_instr_count: 0,
-            predecessors: HashSet::new(),
+            predecessors: BTreeSet::new(),
             is_finalized: false,
             is_terminated: false,
             is_sealed,
@@ -93,7 +94,7 @@ impl fmt::Display for BasicBlock {
             )?;
         }
         if !self.outgoing_jumps.is_empty() {
-            writeln!(f, "    // outgoing: {}", self.outgoing_jumps.iter().map(|(j, b)| format!("i{} -> bb{}", j.1, b)).collect::<Vec<_>>().join(", "))?;
+            writeln!(f, "    // outgoing: {}", self.outgoing_jumps.iter().map(|(j, b)| format!("i{} -> {}", j.1, b)).collect::<Vec<_>>().join(", "))?;
         }
         for instr in self.instructions.values() {
             writeln!(f, "    {}", instr)?;
@@ -437,7 +438,8 @@ impl GraphBuilder {
             id,
             assigned_at: None,
             range: i64::MIN..=i64::MAX,
-            used_at: HashSet::new(),
+            used_at: BTreeSet::new(),
+            assumptions: Vec::new(),
         };
         let entry = self.values.entry(id);
         assert!(matches!(entry, std::collections::hash_map::Entry::Vacant(_)), "Value ID already exists: {:?}", entry);
@@ -547,6 +549,105 @@ impl GraphBuilder {
         }
     }
 
+
+    pub fn add_assumption_simple(&mut self, at: InstrId, cond: Condition<ValueId>) {
+        for val in cond.regs() {
+            if val.is_computed() {
+                self.add_assumption(val, at, cond.clone(), FULL_RANGE);
+            }
+        }
+    }
+    pub fn add_assumption(&mut self, val: ValueId, at: InstrId, cond: Condition<ValueId>, range: RangeInclusive<i64>) {
+        if cond == Condition::False || range.is_empty() || val.is_constant() {
+            // we are doing deopt false, no reason to add the "void" assumption
+            return
+        }
+        debug_assert!(self.values.contains_key(&val));
+        assert!(cond == Condition::True || cond.regs().contains(&val));
+        debug_assert!(cond == canonicalize_condition(self, cond.clone()));
+
+        let current_range = self.val_range_at(val, at);
+        let pure_range = intersect_range(&range, &current_range);
+
+        let (replace_condition, cond_range) = match &cond {
+            Condition::True => (true, FULL_RANGE),
+            Condition::Eq(other, a) | Condition::Eq(a, other) if *a == val =>
+                (false, self.val_range_at(*other, at)),
+            Condition::Lt(a, other) | Condition::Gt(other, a) if *a == val => { // a < other
+                let other_range = self.val_range_at(*other, at);
+                (other.is_constant(), i64::MIN..=other_range.end().saturating_sub(1))
+            }
+            Condition::Leq(a, other) | Condition::Geq(other, a) if *a == val => { // a <= other
+                let other_range = self.val_range_at(*other, at);
+                (other.is_constant(), i64::MIN..=*other_range.end())
+            }
+            Condition::Gt(a, other) | Condition::Lt(other, a) if *a == val => { // a > other
+                let other_range = self.val_range_at(*other, at);
+                (other.is_constant(), other_range.start().saturating_add(1)..=i64::MAX)
+            }
+            Condition::Geq(a, other) | Condition::Leq(other, a) if *a == val => { // a >= other
+                let other_range = self.val_range_at(*other, at);
+                (other.is_constant(), *other_range.start()..=i64::MAX)
+            }
+            Condition::Neq(c, a) if c.is_constant() => {
+                // TODO: this should probably be moved to canonicalize_condition_at or something
+                let c = self.get_constant_(*c);
+                let blacklisted_values: BTreeSet<i64> =
+                    self.values[&val].iter_assumptions(at, &self.block_(at.0).predecessors)
+                        .filter_map(|(c, _, _, _)| match c {
+                            Condition::Neq(c2, a) if c2.is_constant() => {
+                                assert_eq!(*a, val);
+                                Some(self.get_constant_(*c2))
+                            }
+                            _ => None
+                        })
+                        .filter(|c| pure_range.contains(c))
+                        .chain([c])
+                        .collect();
+                let (mut range_start, mut range_end) = pure_range.clone().into_inner();
+                while range_start < i64::MAX && blacklisted_values.contains(&range_start) {
+                    range_start += 1;
+                }
+                while range_end > i64::MIN && blacklisted_values.contains(&range_end) {
+                    range_end -= 1;
+                }
+                (c < range_start || c > range_end, range_start..=range_end)
+            }
+            Condition::Divides(a, other) if *a == val && other.is_constant() => {
+                // round boundaries to multiple
+                let c = self.get_constant_(*other);
+                (false, pure_range.start().div_ceil(&c) * c ..= pure_range.end().div_floor(&c) * c)
+            }
+            Condition::Divides(other, a) if *a == val => {
+                // other % a == 0 implies that |a| is at most |other|
+                let (_, other_max) = abs_range(self.val_range_at(*other, at)).into_inner();
+                (false, 0i64.saturating_sub_unsigned(other_max) ..= 0i64.saturating_add_unsigned(other_max))
+            }
+            Condition::NotDivides(a, other) if *a == val && other.is_constant() => {
+                // just move boundary by one if it's divisible
+                let c = self.get_constant_(*other);
+                assert!(c != 0 && c != -1 && c != 1);
+                let (range_start, range_end) = pure_range.clone().into_inner();
+                (false, range_start.wrapping_add((range_start % c == 0).into()) ..= range_end.wrapping_sub((range_end % c == 0).into()))
+            }
+            _ => (false, FULL_RANGE)
+        };
+        let range = intersect_range(&pure_range, &cond_range);
+        if range.is_empty() || cond == Condition::False {
+            println!("WARNING: condition {cond} and range got too simplified: {range:?} {current_range:?} {cond_range:?}"); // TODO: error?
+            return
+        }
+        let cond2 = if replace_condition { Condition::True }
+                   else                 { cond };
+        if cond2 == Condition::True && range == current_range {
+            // nothing would be gained
+            return;
+        }
+        // TODO: replace last if it's strictly weaker
+        let info = self.values.get_mut(&val).unwrap();
+        info.assumptions.push((cond2, *range.start(), *range.end(), at));
+    }
+
     fn infer_op_range_effect(&self, op: &OptOp<ValueId>, args: &[ValueId]) -> (Option<RangeInclusive<i64>>, OpEffect) {
         let ranges = args.iter().map(|v| self.val_range(*v)).collect::<Vec<_>>();
         (op.evaluate_range_quick(&ranges), op.effect_based_on_ranges(&ranges))
@@ -629,6 +730,16 @@ impl GraphBuilder {
         assert!(self.current_block_ref().is_finalized == false, "Cannot add instruction to finalized block: {:?}", self.current_block_ref());
         if instr.op.is_terminal() {
             self.current_block_mut().is_terminated = true;
+        } else if instr.effect != OpEffect::None {
+            match &instr.op {
+                OptOp::DeoptAssert(cond) | OptOp::Assert(cond, _) =>
+                     self.add_assumption_simple(instr.id, cond.clone()),
+                OptOp::StackSwap => {
+                    let c = canonicalize_condition(self, Condition::Leq(ValueId::C_ZERO, instr.inputs[0]));
+                    self.add_assumption_simple(instr.id, c)
+                }
+                _ => {}
+            }
         }
 
         if value_numbering {
@@ -832,6 +943,22 @@ impl GraphBuilder {
             Some(reg) => reg.range.clone(),
             None => i64::MIN..=i64::MAX,
         }
+    }
+
+    pub fn val_range_at(&self, v: ValueId, at: InstrId) -> RangeInclusive<i64> {
+        if v.is_constant() {
+            let c = self.get_constant_(v);
+            return c..=c;
+        }
+        let Some(info) = self.values.get(&v) else {
+            return FULL_RANGE
+        };
+        if at != InstrId::default() {
+            for (_condition, range_from, range_to, _from) in info.iter_assumptions(at, &self.block_(at.block_id()).predecessors) {
+                return *range_from..=*range_to
+            }
+        }
+        return info.range.clone()
     }
 
     pub fn stack_top_info<'a>(&'a self, offset: usize) -> Option<Cow<'a, ValueInfo>> {

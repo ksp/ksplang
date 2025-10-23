@@ -301,6 +301,7 @@ pub(crate) fn decimal_len(num: i64) -> i64 {
 }
 
 pub(crate) fn median(values: &mut [i64]) -> i64 {
+    assert_ne!(values.len(), 0);
     values.sort();
     if values.len() % 2 == 0 {
         ((values[values.len() / 2 - 1] as i128 + (values[values.len() / 2] as i128))
@@ -1522,8 +1523,8 @@ impl OptimizingVM {
     fn optimize_start<'a>(&mut self, s: &State<'a, Optimizer>, options: &VMOptions) {
         // try to optimistically optimize from the start
         // makes debugging easier as the VM will just try to optimize the code I give it...
-        let limit = 50_000;
-        // let limit = 387;
+        // let limit = 50_000;
+        let limit = 50000;
         let mut p = Precompiler::new(&s.ops, s.stack.len(), s.reversed, s.ip, limit, None, GraphBuilder::new(s.ip), NoTrace());
         p.interpret();
 

@@ -1,9 +1,9 @@
-use std::{cmp, collections::HashSet, fmt::{self, Debug, Display}, num::NonZeroI32, ops::{Range, RangeInclusive}};
+use std::{cmp, collections::BTreeSet, fmt::{self, Debug, Display}, num::NonZeroI32, ops::{Range, RangeInclusive}};
 
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec};
 
-use crate::{compiler::{range_ops::{range_div, range_mod, range_mod_euclid, range_num_digits}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}, vm_code::Condition}, digit_sum, funkcia, ops::Op, vm::{self, median, OperationError}};
+use crate::{compiler::{range_ops::{range_div, range_mod, range_mod_euclid, range_num_digits}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}, vm_code::Condition}, digit_sum, funkcia, vm::{self, median, OperationError}};
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -114,7 +114,7 @@ fn test_predefined_valueid() {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct BlockId(pub u32);
 impl BlockId {
     pub const UNDEFINED: BlockId = BlockId(u32::MAX);
@@ -142,7 +142,7 @@ impl fmt::Debug for BlockId {
 }
 
 /// Unique identifier for instructions
-#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct InstrId(pub BlockId, pub u32);
 impl InstrId {
     pub const UNDEFINED: InstrId = InstrId(BlockId::UNDEFINED, u32::MAX);
@@ -504,7 +504,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
 
                 let mut min_start = i64::MAX;
                 let mut max_start = i64::MIN;
-                for i in inputs[0].clone() {
+                for i in intersect_range(&inputs[0], &(1..=inputs.len() as i64)) {
                     let med_start = median(&mut starts[..i as usize]);
                     let med_end = median(&mut ends[..i as usize]);
                     min_start = cmp::min(min_start, med_start);
@@ -715,12 +715,13 @@ pub struct ValueInfo {
     pub id: ValueId,
     pub assigned_at: Option<InstrId>,
     pub range: RangeInclusive<i64>,
-    pub used_at: HashSet<InstrId>,
+    pub used_at: BTreeSet<InstrId>,
+    pub assumptions: Vec<(Condition<ValueId>, i64, i64, InstrId)>,
 }
 
 impl ValueInfo {
     pub fn new(id: ValueId) -> Self {
-        Self { id, assigned_at: None, range: i64::MIN..=i64::MAX, used_at: HashSet::new() }
+        Self { id, assigned_at: None, range: i64::MIN..=i64::MAX, used_at: BTreeSet::new(), assumptions: vec![] }
     }
     pub fn is_constant(&self) -> bool {
         self.range.start() == self.range.end()
@@ -731,5 +732,14 @@ impl ValueInfo {
         } else {
             None
         }
+    }
+
+    pub fn iter_assumptions<'a>(&'a self, at: InstrId, preds: &'a BTreeSet<BlockId>) -> impl Iterator<Item = &'a (Condition<ValueId>, i64, i64, InstrId)> + 'a {
+        self.assumptions.iter().rev()
+            .filter(move |(_, _, _, instr)|
+                instr.block_id() == BlockId(0) ||
+                instr.block_id() == at.block_id() && instr.1 < at.1 ||
+                preds.contains(&instr.block_id())
+            )
     }
 }

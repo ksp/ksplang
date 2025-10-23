@@ -1,6 +1,8 @@
-use std::{ops::RangeInclusive, result};
+use std::{ops::RangeInclusive};
 
-use crate::{compiler::{cfg::GraphBuilder, cfg_interpreter::interpret_cfg, ops::{OptOp, ValueId}, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{NoStats, RunError, RunResult, VMOptions}};
+use rand::{Rng, SeedableRng};
+
+use crate::{compiler::{cfg::GraphBuilder, ops::{OptOp, ValueId}, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{NoStats, RunError, RunResult, VMOptions}};
 
 fn precompile(ksplang: &str, terminate_at: Option<usize>, initial_values: &[RangeInclusive<i64>]) -> (GraphBuilder, Vec<ValueId>) {
     let parsed = parser::parse_program(ksplang).unwrap();
@@ -163,6 +165,12 @@ fn test_dup2() {
 }
 
 #[test]
+fn test_dup2_twice() {
+    test_dup(&format!("{SEJSELOVA_DUP} ++ {SEJSELOVA_DUP}"), FULL_RANGE);
+    // test_dup(SEJSELOVA_DUP, FULL_RANGE); // TODO: support this
+}
+
+#[test]
 fn test_dup_32bit_vzorak() {
     const VZORAK_32BIT_DUP: &str = "
         CS CS lensum ++ CS lensum CS bitshift CS ++ ++ bitshift CS bitshift
@@ -218,3 +226,23 @@ fn test_sekvence_1() {
     let expected: Vec<i64> = [42, 43].into_iter().chain((0..=100).rev()).collect();
     assert_eq!(res.stack, expected);
 }
+
+const VZORAK_SORT: &str = include_str!("tests/sort.ksplang");
+
+#[test]
+fn test_sort_1() {
+    let res = run_with_opt(&[3, 4, -4, 1, 1, 5], VZORAK_SORT).unwrap();
+    assert_eq!(res.stack, [-4, 1, 1, 3, 4]);
+}
+
+#[test]
+fn test_sort_2() {
+    let rng = rand::rngs::SmallRng::seed_from_u64(1);
+    let mut input: Vec<i64> = rng.random_iter().take(30).collect();
+    input.push(input.len() as i64);
+    let res = run_with_opt(&input, VZORAK_SORT).unwrap();
+    input.pop();
+    input.sort();
+    assert_eq!(res.stack, input);
+}
+

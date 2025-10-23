@@ -42,6 +42,7 @@ pub struct PendingBranchInfo {
     pub target: usize,
     pub reversed_direction: bool,
     pub b: Vec<PrecompileStepResultBranch>,
+    pub assumes: Vec<Condition<ValueId>>,
     pub from: Vec<InstrId>,
     pub to_bb: BlockId,
     pub stack_snapshot: Vec<StackState>,
@@ -237,7 +238,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.pop_stack();
                 self.g.stack.push(out);
 
-                self.g.push_instr_may_deopt(OptOp::Nop, &[]); // checkpoint after side effect
+                let next_pos = self.next_position();
+                let checkpoint = self.g.push_instr_may_deopt(OptOp::Nop, &[]); // checkpoint after side effect
+                checkpoint.program_position = next_pos;
                 Continue
             }
             crate::ops::Op::Swap => {
@@ -246,9 +249,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 let out = self.g.push_instr_may_deopt(OptOp::StackSwap, &[i, x]).out;
                 self.g.pop_stack();
+                self.g.pop_stack();
                 self.g.stack.push(out);
 
-                self.g.push_instr_may_deopt(OptOp::Nop, &[]); // after side effect
+                let next_pos = self.next_position();
+                let checkpoint = self.g.push_instr_may_deopt(OptOp::Nop, &[]); // checkpoint after side effect
+                checkpoint.program_position = next_pos;
                 Continue
             }
             crate::ops::Op::Roll => {
@@ -946,6 +952,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 },
                 PrecompileStepResult::Branching(branches) => {
                     println!("  Branching: {:?}", branches);
+                    let mut prev_assumptions = vec![];
                     for branch in branches {
                         *self.visited_ips.entry(branch.target).or_default().branches.entry(self.position).or_default() += 1;
 
@@ -964,11 +971,15 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             continue
                         };
 
-                        println!("    Created branch to {} with condition {:?}, stack: {} {:?}", branch.target, branch.condition, stack_snapshot.depth, stack_snapshot.stack);
+                        println!("    Created branch to IP={} {} with condition {:?}, stack: {} {:?}", branch.target, new_block_id, branch.condition, stack_snapshot.depth, stack_snapshot.stack);
 
+                        let mut assumes = prev_assumptions.clone();
+                        assumes.push(branch.condition.clone());
+                        prev_assumptions.push(branch.condition.clone().neg());
                         self.pending_branches.push_back(PendingBranchInfo {
                             target: branch.target,
                             reversed_direction: self.reversed_direction,
+                            assumes,
                             b: vec![branch],
                             from: vec![branch_id],
                             to_bb: new_block_id,
@@ -1045,6 +1056,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             self.g.switch_to_block(bid, pb.stack_snapshot[0].depth, vec![]);
             assert_eq!(self.g.stack.stack, []);
             self.g.seal_block(bid);
+            for assume in pb.assumes {
+                self.g.add_assumption_simple(InstrId(bid, 0), assume);
+            }
             assert_eq!(self.g.stack.stack.len(), pb.stack_snapshot[0].stack.len());
         }
 
