@@ -918,17 +918,19 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             self.interpretation_limit -= 1;
 
-            let trace_results_fmt: String =
-                self.tracer.get_results(self.position)
-                    .map(|r| format!("{}:{:?}; ", r.0, r.1))
-                    .collect();
-            println!("Interpreting op {}: {:?}", self.position, self.ops[self.position]);
-            if trace_results_fmt.len() > 0 {
-                println!("Trace results: {}", trace_results_fmt);
-            }
+            #[cfg(debug_assertions)] {
+                let trace_results_fmt: String =
+                    self.tracer.get_results(self.position)
+                        .map(|r| format!("{}:{:?}; ", r.0, r.1))
+                        .collect();
+                println!("Interpreting op {}: {:?}", self.position, self.ops[self.position]);
+                if trace_results_fmt.len() > 0 {
+                    println!("Trace results: {}", trace_results_fmt);
+                }
 
-            println!("  Stack: {}", self.g.fmt_stack());
-            println!("  Current Block: {}", self.g.current_block_ref());
+                println!("  Stack: {}", self.g.fmt_stack());
+                println!("  Current Block: {}", self.g.current_block_ref());
+            }
 
             let stack_counts = (self.g.stack.push_count, self.g.stack.pop_count);
             self.visited_ips.entry(self.position).or_default().visits += 1;
