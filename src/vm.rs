@@ -1414,7 +1414,7 @@ impl OptimizingVM {
         let program_len = self.program.len();
         let mut s: State<Optimizer> = State::new(opt.max_stack_size, opt.pi_digits, self.program.to_vec(), input_stack);
         s.tracer = mem::take(&mut self.opt);
-        self.optimize_start(&s, &opt);
+        // self.optimize_start(&s, &opt);
 
         let (s, result) = self.run_internal(s, &opt);
 
@@ -1485,7 +1485,8 @@ impl OptimizingVM {
     }
 
     fn optimize<'a>(&mut self, s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
-        let limit = 1_000;
+        // let limit = if s.ip == 167 { 2806 } else { 10_000 };
+        let limit = 10_000;
         let (optimizer, mut st) = s.swap_tracer(ActualTracer::default());
         st.tracer.start_block_location = st.ip;
         st.tracer.max_count = 2_000;

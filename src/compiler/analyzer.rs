@@ -1,8 +1,20 @@
 use std::collections::HashMap;
 
-use crate::compiler::{ops::{InstrId, ValueId}, vm_code::Condition};
+use crate::compiler::{cfg::GraphBuilder, ops::{InstrId, ValueId}, vm_code::Condition};
 
+/// Simplify b assuming a is true
+pub fn cond_implies(_cfg: &GraphBuilder, a: &Condition<ValueId>, b: &Condition<ValueId>, _at: InstrId) -> Option<Condition<ValueId>> {
+    // very naive implementation for now
+    if a == b {
+        return Some(Condition::True);
+    }
+    let b_neg = b.clone().neg();
+    if a == &b_neg {
+        return Some(Condition::False);
+    }
 
+    None
+}
 
 struct TraceTree {
     trace: HashMap<ValueId, InstrId>,

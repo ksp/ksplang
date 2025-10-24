@@ -390,7 +390,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::BinNot => Ok(!inputs[0]),
             OptOp::BoolNot => Ok(if inputs[0] == 0 { 1 } else { 0 }),
             OptOp::Condition(condition) => Ok(if condition.eval(inputs) { 1 } else { 0 }),
-            OptOp::Select(condition) => Ok(if condition.eval(&[inputs[0]]) { inputs[1] } else { inputs[2] }),
+            OptOp::Select(condition) => Ok(if condition.eval(&inputs[0..inputs.len()-2]) { inputs[inputs.len()-2] } else { inputs[inputs.len()-1] }),
             OptOp::DigitSum => Ok(digit_sum::digit_sum(inputs[0])),
             OptOp::Gcd => inputs.iter().map(|x| x.abs_diff(0)).reduce(|a, b| a.gcd(&b)).unwrap().try_into().map_err(|_| Some(OperationError::IntegerOverflow)),
             OptOp::StackSwap => Err(None),
@@ -685,7 +685,7 @@ impl OptInstr {
         self
     }
     pub fn iter_inputs(&self) -> impl Iterator<Item = ValueId> + '_ {
-        self.inputs.iter().copied().chain(self.op.condition().into_iter().flat_map(|cond| cond.regs()))
+        self.op.condition().into_iter().flat_map(|cond| cond.regs()).chain(self.inputs.iter().copied())
     }
 }
 

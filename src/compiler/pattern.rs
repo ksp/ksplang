@@ -166,7 +166,7 @@ impl<'a> OptOptPattern<'a> {
         Err(())
     }
 
-    fn matches_instr(info: &mut MatchInfo<'a>, cfg: &GraphBuilder, val: ValueId, val_info: &ValueInfo, instr: &OptInstr, pattern: &OptOp<Box<OptOptPattern<'a>>>, args: &[OptOptPattern<'a>], allow_commutativity: bool) -> bool {
+    fn matches_instr(info: &mut MatchInfo<'a>, cfg: &GraphBuilder, _val: ValueId, _val_info: &ValueInfo, instr: &OptInstr, pattern: &OptOp<Box<OptOptPattern<'a>>>, args: &[OptOptPattern<'a>], allow_commutativity: bool) -> bool {
         if instr.op.discriminant() != pattern.discriminant() {
             return false;
         }
@@ -445,7 +445,7 @@ impl<'a> MatchInfo<'a> {
         assert_eq!(self.named.len(), sp.named_len);
     }
 
-    fn main_value(&self) -> ValueId {
+    pub fn main_value(&self) -> ValueId {
         *self.values.last().expect("MatchInfo is empty")
     }
 

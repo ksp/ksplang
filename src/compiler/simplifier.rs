@@ -2,7 +2,7 @@ use std::{cmp, ops::RangeInclusive};
 
 use smallvec::{smallvec, SmallVec, ToSmallVec};
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, vm_code::Condition}, vm::OperationError};
+use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, vm_code::Condition}, vm::OperationError};
 
 fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeInclusive<i64>> {
     let start = *a.start().max(b.start());
@@ -14,40 +14,69 @@ fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeIncl
     }
 }
 
-pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<ValueId>) -> Condition<ValueId> {
-    println!("canonicalize_condition({condition})");
+pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: InstrId) -> Condition<ValueId> {
+    let mut cond_mut = condition.clone();
+    loop {
+        let new_cond = simplify_cond_core(cfg, &cond_mut, at);
+        let done = new_cond == cond_mut;
+        cond_mut = new_cond;
+        if done {
+            break;
+        }
+    }
+
+    if let Some(info) =
+        cond_mut.regs().into_iter().filter(|x| x.is_computed()).next()
+        .and_then(|v| cfg.val_info(v)) {
+        for (assumption, _, _, _) in info.iter_assumptions(at, &cfg.block_(at.block_id()).predecessors) {
+            if let Some(implied) = cond_implies(cfg, &assumption, &cond_mut, at) {
+                cond_mut = implied;
+                if cond_mut == Condition::True || cond_mut == Condition::False {
+                    break;
+                }
+            }
+        }
+    }
+    if cond_mut != condition {
+        println!("simplify_cond({condition}, {at}) -> {cond_mut}")
+    }
+    cond_mut
+}
+
+
+fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at: InstrId) -> Condition<ValueId> {
     match condition.clone() {
         Condition::EqConst(a, b) => {
             let b = cfg.store_constant(b as i64);
-            canonicalize_condition(cfg, Condition::Eq(a, b))
+            Condition::Eq(a, b)
         }
         Condition::NeqConst(a, b) => {
             let b = cfg.store_constant(b as i64);
-            canonicalize_condition(cfg, Condition::Neq(a, b))
+            Condition::Neq(a, b)
         }
         Condition::LtConst(a, b) => {
             let b = cfg.store_constant(b as i64);
-            canonicalize_condition(cfg, Condition::Lt(a, b))
+            Condition::Lt(a, b)
         }
         Condition::LeqConst(a, b) => {
             let b = cfg.store_constant(b as i64);
-            canonicalize_condition(cfg, Condition::Leq(a, b))
+            Condition::Leq(a, b)
         }
         Condition::GtConst(a, b) => {
             let b = cfg.store_constant(b as i64);
-            canonicalize_condition(cfg, Condition::Gt(a, b))
+            Condition::Gt(a, b)
         }
         Condition::GeqConst(a, b) => {
             let b = cfg.store_constant(b as i64);
-            canonicalize_condition(cfg, Condition::Geq(a, b))
+            Condition::Geq(a, b)
         }
         Condition::DividesConst(a, b) => {
             let b = cfg.store_constant(b as i64);
-            canonicalize_condition(cfg, Condition::Divides(a, b))
+            Condition::Divides(a, b)
         }
         Condition::NotDividesConst(a, b) => {
             let b = cfg.store_constant(b as i64);
-            canonicalize_condition(cfg, Condition::NotDivides(a, b))
+            Condition::NotDivides(a, b)
         }
         Condition::False => Condition::False,
         Condition::True => Condition::True,
@@ -55,16 +84,16 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
             if a == b => Condition::True,
         Condition::Neq(a, b) | Condition::Lt(a, b) | Condition::Gt(a, b) | Condition::NotDivides(a, b)
             if a == b => Condition::False,
-        Condition::Eq(a, b) if a > b => canonicalize_condition(cfg, Condition::Eq(b, a)),
-        Condition::Neq(a, b) if a > b => canonicalize_condition(cfg, Condition::Neq(b, a)),
-        Condition::Lt(a, b) if a > b => canonicalize_condition(cfg, Condition::Gt(b, a)),
-        Condition::Gt(a, b) if a > b => canonicalize_condition(cfg, Condition::Lt(b, a)),
-        Condition::Leq(a, b) if a > b => canonicalize_condition(cfg, Condition::Geq(b, a)),
-        Condition::Geq(a, b) if a > b => canonicalize_condition(cfg, Condition::Leq(b, a)),
+        Condition::Eq(a, b) if a > b => Condition::Eq(b, a),
+        Condition::Neq(a, b) if a > b => Condition::Neq(b, a),
+        Condition::Lt(a, b) if a > b => Condition::Gt(b, a),
+        Condition::Gt(a, b) if a > b => Condition::Lt(b, a),
+        Condition::Leq(a, b) if a > b => Condition::Geq(b, a),
+        Condition::Geq(a, b) if a > b => Condition::Leq(b, a),
         Condition::Eq(a, b) | Condition::Neq(a, b) | Condition::Lt(a, b) | Condition::Gt(a, b) | Condition::Leq(a, b) | Condition::Geq(a, b) => {
             assert!(a.is_constant() || !b.is_constant()); // we depend on the ordering
-            let ar = cfg.val_range(a);
-            let br = cfg.val_range(b);
+            let ar = cfg.val_range_at(a, at);
+            let br = cfg.val_range_at(b, at);
 
             match condition {
                 Condition::Eq(_, _) if overlap(&ar, &br).is_none() => return Condition::False,
@@ -81,7 +110,7 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                 Condition::Geq(_, _) if ar.end() < br.start() => return Condition::False,
                 _ => {}
             }
-            let condition = match condition {
+            let condition = match condition.clone() {
                 Condition::Geq(a, b) if ar.end() == br.start() =>
                     Condition::Eq(a, b),
                 Condition::Gt(a, b) if ar.start() == br.end() => // a > b => a != b IF a is always >= b
@@ -105,7 +134,7 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                         } else {
                             assert!(k <= ac);
                         }
-                        return canonicalize_condition(cfg, match (&condition, &def.op) {
+                        return match (&condition, &def.op) {
                             // min(10, x) == 10 -> x >= 10
                             (Condition::Eq(_, _) | Condition::Leq(_, _), OptOp::Min) if ac == k => Condition::Leq(a, x),
                             // max(5, x) == 5 -> x <= 5
@@ -123,13 +152,13 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                             (Condition::Gt(_, _), _) if ac != k => Condition::Gt(a, x),
 
                             _ => unreachable!("{:?} {:?} {} {}", condition, def, k, ac),
-                        })
+                        }
                     }
 
                     if ac == 0 && matches!(def.op, OptOp::DigitSum) {
                         let b2 = def.inputs[0];
                         // DigitSum preserves zero, some programs use this when branching
-                        return canonicalize_condition(cfg, match condition {
+                        return match condition {
                             Condition::Eq(_, _) => Condition::Eq(a, b2),
                             Condition::Neq(_, _) => Condition::Neq(a, b2),
                             Condition::Lt(_, _) => Condition::Neq(a, b2), // 0 < CS(b) => 0 != b
@@ -137,12 +166,12 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                             Condition::Gt(_, _) => Condition::False, // 0 > CS(b)
                             Condition::Geq(_, _) => Condition::Eq(a, b2), // 0 >= CS(b)
                             x => return x
-                        })
+                        }
                     }
 
                     if matches!(def.op, OptOp::Sgn) {
                         let b2 = def.inputs[0];
-                        return canonicalize_condition(cfg, match (ac, condition) {
+                        return match (ac, condition) {
                             (0, Condition::Eq(_, _)) => Condition::Eq(a, b2),
                             (1, Condition::Eq(_, _)) => Condition::Lt(ValueId::C_ZERO, b2), // 0 < b
                             (-1, Condition::Eq(_, _)) => Condition::Gt(ValueId::C_ZERO, b2), // 0 > b
@@ -150,7 +179,7 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                             (1, Condition::Neq(_, _)) => Condition::Geq(ValueId::C_ZERO, b2), // 0 >= b
                             (-1, Condition::Neq(_, _)) => Condition::Leq(ValueId::C_ZERO, b2), // 0 <= b
                             (_, x) => return x
-                        })
+                        }
                     }
 
                     if matches!(def.op, OptOp::Add) && def.inputs.len() == 2 && def.inputs[0].is_constant() {
@@ -159,7 +188,7 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                         let b2 = def.inputs[1];
                         let a2 = cfg.store_constant(ac - shift);
 
-                        return canonicalize_condition(cfg, condition.replace_arr(vec![a2, b2]))
+                        return condition.replace_arr(vec![a2, b2])
                     }
 
                     // if matches!(def.op, OptOp::Mul) && def.inputs.len() == 2 && def.inputs[0].is_constant() { // TODO
@@ -186,18 +215,18 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
         }
 
         Condition::Divides(a, b) => {
-            let (ar, br) = (cfg.val_range(a), cfg.val_range(b));
+            let (ar, br) = (cfg.val_range_at(a, at), cfg.val_range_at(b, at));
             let ara = abs_range(ar.clone());
             let bra = abs_range(br.clone());
             if *ara.end() < *bra.start() || *bra.end() == 0 {
                 return if *ara.start() == 0 {
-                    canonicalize_condition(cfg, Condition::Eq(b, ValueId::C_ZERO))
+                    Condition::Eq(b, ValueId::C_ZERO)
                 } else {
                     Condition::False
                 };
             }
             if *ara.end() == 0 {
-                return canonicalize_condition(cfg, Condition::Neq(b, ValueId::C_ZERO));
+                return Condition::Neq(b, ValueId::C_ZERO);
             }
 
             // if *br.end() > *ar.end() / 2 && ar.start() != 0 {
@@ -216,7 +245,7 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                 }
                 if bc < 0 && bc != i64::MIN {
                     let b = cfg.store_constant(-bc);
-                    return canonicalize_condition(cfg, Condition::Divides(a, b));
+                    return Condition::Divides(a, b);
                 }
             }
 
@@ -225,7 +254,7 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                 let mindiv = if *ar.start() == *ar.end() {
                     let ac = *ar.start();
                     if ac == 1 || ac == -1 {
-                        return canonicalize_condition(cfg, Condition::Eq(b, if *br.start() >= 0 { ValueId::C_ONE } else { ValueId::C_NEG_ONE }));
+                        return Condition::Eq(b, if *br.start() >= 0 { ValueId::C_ONE } else { ValueId::C_NEG_ONE });
                     }
                     try_get_lowest_divisor(ac.unsigned_abs()).unwrap_or(*SOME_PRIMES.last().unwrap() as u64)
                 } else {
@@ -237,13 +266,13 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
                     // so, condition is only true if |b| == |a|
                     // we just need to go though some hoops to express that...
                     if (*br.start() >= 0) == (*ar.start() >= 0) {
-                        return canonicalize_condition(cfg, Condition::Eq(a, b));
+                        return Condition::Eq(a, b);
                     }
 
                     if *ar.start() == *ar.end() {
                         // flip sign, but it's a constant
                         let a_flip = cfg.store_constant(-*ar.start());
-                        return canonicalize_condition(cfg, Condition::Eq(a_flip, b));
+                        return Condition::Eq(a_flip, b);
                     }
                     // IDK, maybe later...
                 }
@@ -252,9 +281,8 @@ pub fn canonicalize_condition(cfg: &mut GraphBuilder, condition: Condition<Value
 
             Condition::Divides(a, b)
         }
-        Condition::NotDivides(a, b) => {
-            canonicalize_condition(cfg, Condition::Divides(a, b)).neg()
-        }
+        Condition::NotDivides(a, b) =>
+            simplify_cond_core(cfg, &Condition::Divides(a, b), at).neg()
     }
 }
 
@@ -515,6 +543,7 @@ fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit
         new_inputs.push(v);
     }
     if changed {
+        assert_ne!(0, new_inputs.len());
         instr.inputs = new_inputs;
     }
     changed
@@ -528,13 +557,19 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
     
     let mut iter = 0;
     let mut changed = true;
+    let mut change_path = Vec::new();
     'main: while changed {
+        #[cfg(debug_assertions)] {
+            change_path.push((i.op.clone(), i.inputs.clone(), i.inputs.iter().map(|a| cfg.val_range_at(*a, i.id)).collect::<SmallVec<[_; 4]>>()));
+        }
         changed = true;
         iter += 1;
         if iter > 100 {
-            println!("Warning: simplify_instr infinite loop detected: {i:?}");
+            println!("Warning: simplify_instr infinite loop detected: {i:?} {change_path:?}");
             break;
         }
+
+        assert!(i.op.arity().contains(&i.inputs.len()), "Invalid arity for {:?}: {}. Optimized as {change_path:?}", i.op, i.inputs.len());
 
         // Generic flattening for associative non-overflowing ops
         if matches!(i.op, OptOp::Max | OptOp::Min | OptOp::Gcd | OptOp::And | OptOp::Or | OptOp::Xor) && i.inputs.len() >= 2 {
@@ -567,11 +602,11 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         }
 
         match i.op.clone() {
-            OptOp::Condition(cond) => i.op = OptOp::Condition(canonicalize_condition(cfg, cond)),
-            OptOp::Select(cond) => i.op = OptOp::Select(canonicalize_condition(cfg, cond)),
-            OptOp::Jump(cond, to) => i.op = OptOp::Jump(canonicalize_condition(cfg, cond), to),
-            OptOp::Assert(cond, err) => i.op = OptOp::Assert(canonicalize_condition(cfg, cond), err),
-            OptOp::DeoptAssert(cond) => i.op = OptOp::DeoptAssert(canonicalize_condition(cfg, cond)),
+            OptOp::Condition(cond) => i.op = OptOp::Condition(simplify_cond(cfg, cond, i.id)),
+            OptOp::Select(cond) => i.op = OptOp::Select(simplify_cond(cfg, cond, i.id)),
+            OptOp::Jump(cond, to) => i.op = OptOp::Jump(simplify_cond(cfg, cond, i.id), to),
+            OptOp::Assert(cond, err) => i.op = OptOp::Assert(simplify_cond(cfg, cond, i.id), err),
+            OptOp::DeoptAssert(cond) => i.op = OptOp::DeoptAssert(simplify_cond(cfg, cond, i.id)),
             _ => { }
         };
 
@@ -601,16 +636,28 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::AbsSub | OptOp::Sub if i.inputs[0] == i.inputs[1] =>
                 // abs(a - a) -> 0
                 return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), None),
+            
+            OptOp::Sub if i.inputs[1].is_constant() && i.inputs[1] != ValueId::C_IMIN => {
+                let c = cfg.get_constant_(i.inputs[1]);
+                if c == 0 {
+                    // a - 0 -> a
+                    return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), Some(ranges[0].clone()));
+                }
+                let c2 = cfg.store_constant(-c);
+                i.op = OptOp::Add;
+                i.inputs[1] = c2;
+                continue;
+            }
 
             OptOp::AbsSub => {
                 let (start_a, end_a) = ranges[0].clone().into_inner();
                 let (start_b, end_b) = ranges[1].clone().into_inner();
 
-                if start_a > end_b {
-                    // a - b is always positive
+                if start_a >= end_b {
+                    // a - b is always non-negative
                     i.op = OptOp::Sub;
-                } else if start_b > end_a {
-                    // b - a is always positive
+                } else if start_b >= end_a {
+                    // b - a is always non-negative
                     i.op = OptOp::Sub;
                     i.inputs = smallvec![i.inputs[1], i.inputs[0]];
                 } else {
@@ -619,6 +666,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         i.effect = OpEffect::None;
                     }
                     i.inputs.sort();
+                    changed = false;
                 }
 
             }
@@ -777,7 +825,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         *ix_a == ix_b || a_range.end() > b_range.start() // b always >= a
                     })
                 }).map(|(_, a)| *a).collect();
-                if keep.len() != i.inputs.len() {
+                if keep.len() == 0 {
+                    i.inputs.truncate(1); // keep the constant
+                } else if keep.len() != i.inputs.len() {
                     i.inputs = keep;
                     continue;
                 } else {
@@ -792,7 +842,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         *ix_a == ix_b || a_range.start() < b_range.end() // b always <= a
                     })
                 }).map(|(_, a)| *a).collect();
-                if keep.len() != i.inputs.len() {
+                if keep.len() == 0 {
+                    i.inputs.truncate(1); // keep the constant
+                } else if keep.len() != i.inputs.len() {
                     i.inputs = keep;
                     continue;
                 } else {
@@ -948,6 +1000,38 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         //     }
         // }
 
+        if OptOp::Sgn == i.op {
+            let x = i.inputs[0];
+            if let Some(nested) = cfg.get_defined_at(x) {
+                // sgn(|a - b|) => condition(a != b)
+                if nested.op == OptOp::AbsSub {
+                    i.op = OptOp::Select(Condition::Eq(nested.inputs[0], nested.inputs[1]));
+                    i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                }
+                // sgn(a - b) where a >= b => condition(a != b)
+                else if nested.op == OptOp::Sub && *ranges[0].start() >= 0 {
+                    i.op = OptOp::Select(Condition::Eq(nested.inputs[0], nested.inputs[1]));
+                    i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                }
+                // sgn(a - b) where b >= a => a == b ? 0 : -1
+                else if nested.op == OptOp::Sub && *ranges[0].end() <= 0 {
+                    i.op = OptOp::Select(Condition::Eq(nested.inputs[0], nested.inputs[1]));
+                    i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_NEG_ONE];
+                }
+                // sgn(digit_sum(a)) => condition(a != 0)
+                else if nested.op == OptOp::DigitSum {
+                    i.op = OptOp::Select(Condition::Eq(nested.inputs[0], ValueId::C_ZERO));
+                    i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                }
+                else if *ranges[0].start() >= 0 {
+                    i.op = OptOp::Select(Condition::Eq(x, ValueId::C_ZERO));
+                    i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                } else if *ranges[0].end() <= 0 {
+                    i.op = OptOp::Select(Condition::Eq(x, ValueId::C_ZERO));
+                    i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_NEG_ONE];
+                }
+            }
+        }
 
         // used in duplication:
         // a + ((a / 2) + 1) * -2

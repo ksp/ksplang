@@ -7,7 +7,7 @@ use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier::{self, canonicalize_condition}, utils::{abs_range, intersect_range, FULL_RANGE}, vm_code::{self, Condition}}, vm::OperationError};
+use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier::{self, simplify_cond}, utils::{abs_range, intersect_range, FULL_RANGE}, vm_code::{self, Condition}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -564,7 +564,7 @@ impl GraphBuilder {
         }
         debug_assert!(self.values.contains_key(&val));
         assert!(cond == Condition::True || cond.regs().contains(&val));
-        debug_assert!(cond == canonicalize_condition(self, cond.clone()));
+        debug_assert!(cond == simplify_cond(self, cond.clone(), InstrId::default()));
 
         let current_range = self.val_range_at(val, at);
         let pure_range = intersect_range(&range, &current_range);
@@ -648,8 +648,8 @@ impl GraphBuilder {
         info.assumptions.push((cond2, *range.start(), *range.end(), at));
     }
 
-    fn infer_op_range_effect(&self, op: &OptOp<ValueId>, args: &[ValueId]) -> (Option<RangeInclusive<i64>>, OpEffect) {
-        let ranges = args.iter().map(|v| self.val_range(*v)).collect::<Vec<_>>();
+    fn infer_op_range_effect(&self, op: &OptOp<ValueId>, args: &[ValueId], at: InstrId) -> (Option<RangeInclusive<i64>>, OpEffect) {
+        let ranges = args.iter().map(|v| self.val_range_at(*v, at)).collect::<Vec<_>>();
         (op.evaluate_range_quick(&ranges), op.effect_based_on_ranges(&ranges))
     }
 
@@ -702,7 +702,7 @@ impl GraphBuilder {
 
         let mut out_val = ValueId(0);
         if has_output {
-            let (inferred_range, inferred_effect) = self.infer_op_range_effect(&instr.op, &instr.inputs);
+            let (inferred_range, inferred_effect) = self.infer_op_range_effect(&instr.op, &instr.inputs, instr.id);
             instr.effect = OpEffect::better_of(instr.effect, inferred_effect);
             let val_range =
                 simplifier_range.iter().chain(&out_range).chain(&inferred_range)
@@ -735,7 +735,7 @@ impl GraphBuilder {
                 OptOp::DeoptAssert(cond) | OptOp::Assert(cond, _) =>
                      self.add_assumption_simple(instr.id, cond.clone()),
                 OptOp::StackSwap => {
-                    let c = canonicalize_condition(self, Condition::Leq(ValueId::C_ZERO, instr.inputs[0]));
+                    let c = simplify_cond(self, Condition::Leq(ValueId::C_ZERO, instr.inputs[0]), instr.id);
                     self.add_assumption_simple(instr.id, c)
                 }
                 _ => {}
@@ -771,7 +771,7 @@ impl GraphBuilder {
     }
 
     pub fn push_deopt_assert(&mut self, c: Condition<ValueId>, precise_deoptinfo: bool) {
-        let c = simplifier::canonicalize_condition(self, c);
+        let c = simplifier::simplify_cond(self, c, self.next_instr_id());
         if c == Condition::True { return; }
 
         if precise_deoptinfo {
@@ -834,23 +834,27 @@ impl GraphBuilder {
         }
     }
     pub fn peek_stack_n(&mut self, n: Range<usize>) -> Vec<ValueId> {
-        if n.end <= self.stack.stack.len() {
-            n.into_iter().map(|i| self.stack.get(i).copied().unwrap()).collect()
-        } else {
+        if n.end > self.stack.stack.len() {
+            let pops = n.end - self.stack.stack.len();
             let mut vals = vec![];
-            let mut result = vec![];
-            for i in 0..n.end {
-                let reg = self.pop_stack();
-                vals.push(reg);
-                if i >= n.start {
-                    result.push(reg);
+            for _ in 0..pops {
+                self.stack.record_real_pop();
+                let val = self.push_instr(OptOp::Pop, &[], false, None, None).0;
+                vals.push(val);
+            }
+            vals.reverse();
+            self.stack.stack.splice(0..0, vals.clone());
+            // TODO: track i32 positions in the lookup?
+            for lk in self.stack.lookup.values_mut() {
+                for pos in lk.iter_mut() {
+                    *pos += pops as u32;
                 }
             }
-            for &reg in vals.iter().rev() {
-                self.stack.push(reg);
+            for i in 0..pops {
+                self.stack.lookup.insert(vals[i], vec![i as u32]);
             }
-            result
         }
+        n.into_iter().map(|i| self.stack.get(i).copied().unwrap()).collect()
     }
 
     pub fn peek_stack_2(&mut self) -> (ValueId, ValueId) {

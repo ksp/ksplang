@@ -128,7 +128,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
     }
 
     fn branching(&mut self, target: ValueId, is_relative: bool, is_call: bool, condition: Condition<ValueId>) -> PrecompileStepResult {
-        let condition = simplifier::canonicalize_condition(&mut self.g, condition);
+        let at = self.g.next_instr_id();
+        let condition = simplifier::simplify_cond(&mut self.g, condition, at);
         if condition == Condition::False {
             return PrecompileStepResult::Continue;
         }
@@ -713,7 +714,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         let are_states_distinguishable =
                             self.g.stack.peek().is_some_and(|v| intersect_range(&self.g.val_range(v), &negated_range).is_empty());
 
-                        let divisibility = simplifier::canonicalize_condition(&mut self.g, Condition::Divides(c, b));
+                        let at = self.g.next_instr_id();
+                        let divisibility = simplifier::simplify_cond(&mut self.g, Condition::Divides(c, b), at);
 
                         if divisibility == Condition::False {
                             // no solutions
@@ -937,7 +939,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 PrecompileStepResult::NevimJak | PrecompileStepResult::NevimJakChteloByToKonstantu(_) => {
                     self.g.current_block_mut().ksplang_instr_count -= 1;
                     if stack_counts != (self.g.stack.push_count, self.g.stack.pop_count) {
-                        panic!("Error when interpreting OP {} {:?}: modifed stack, but then returned {result:?}", self.position, self.ops[self.position])
+                        panic!("Error when interpreting OP {} {:?}: modifed stack, but then returned {result:?}. Stack: {}", self.position, self.ops[self.position], self.g.fmt_stack())
                     }
                     break;
                 },
