@@ -63,6 +63,8 @@ pub struct Precompiler<'a, TP: TraceProvider> {
     // deopt_info: HashMap<u32, DeoptInfo<u32>>,
     pub position: usize,
     pub interpretation_limit: usize,
+    pub bb_limit: usize,
+    pub instr_limit: usize,
     pub termination_ip: Option<usize>,
     pub visited_ips: HashMap<usize, VisitedIpStats>,
     pub pending_branches: VecDeque<PendingBranchInfo>,
@@ -105,6 +107,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             initial_position,
             position: initial_position,
             interpretation_limit,
+            bb_limit: usize::MAX,
+            instr_limit: usize::MAX,
             g: initial_graph,
             termination_ip,
             visited_ips: HashMap::new(),
@@ -905,6 +909,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
     // }
 
     fn interpret_block(&mut self) -> () {
+        let baseline_instr_count: usize = self.g.reachable_blocks().filter(|b| b.id != self.g.current_block).map(|b| b.instructions.len()).sum();
+
         loop {
             self.g.set_program_position(Some(self.position));
             if self.termination_ip == Some(self.position) || self.position >= self.ops.len() {
@@ -955,7 +961,20 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     continue;
                 },
                 PrecompileStepResult::Branching(branches) => {
-                    println!("  Branching: {:?}", branches);
+                    let should_deopt = self.g.reachable_blocks().count() >= self.bb_limit ||
+                        baseline_instr_count + self.g.current_block_ref().incoming_jumps.len() >= self.instr_limit;
+                    if self.g.conf.should_log(3) {
+                        println!("  Branching: {:?}", branches);
+                        println!("  Finalizing block at {} {}", self.g.fmt_stack(), self.g.current_block_ref());
+                        if should_deopt {
+                            println!("    (but will deopt due to limits)");
+                        }
+                    }
+                    if should_deopt {
+                        self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
+                        self.g.current_block_mut().is_finalized = true;
+                        return;
+                    }
                     let mut prev_assumptions = vec![];
                     for branch in branches {
                         *self.visited_ips.entry(branch.target).or_default().branches.entry(self.position).or_default() += 1;

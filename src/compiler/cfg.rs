@@ -1,13 +1,13 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, collections::{BTreeMap, BTreeSet, HashMap}, i32, mem, ops::{Range, RangeInclusive}
+    borrow::Cow, collections::{BTreeMap, BTreeSet, HashMap}, i32, mem, ops::{Range, RangeInclusive}, u32
 };
 
 use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier::{self, simplify_cond}, utils::{abs_range, intersect_range, FULL_RANGE}, vm_code::{self, Condition}}, vm::OperationError};
+use crate::{compiler::{config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier::{self, simplify_cond}, utils::{abs_range, intersect_range, FULL_RANGE}, vm_code::{self, Condition}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -30,6 +30,7 @@ pub struct BasicBlock {
     pub is_sealed: bool,    // no more incoming_jumps will be added
     pub is_finalized: bool, // no more instructions will be added
     pub is_terminated: bool, // has terminal instruction (deopt false, jump true, etc)
+    pub is_reachable: bool,
     pub ksplang_start_ip: usize,
     pub ksplang_instr_count: u32,
     pub ksplang_instr_count_additional: Vec<ValueId>,
@@ -52,6 +53,7 @@ impl BasicBlock {
             predecessors: BTreeSet::new(),
             is_finalized: false,
             is_terminated: false,
+            is_reachable: true,
             is_sealed,
         }
     }
@@ -236,7 +238,8 @@ pub struct GraphBuilder {
     pub constants: Vec<i64>,
     pub constant_lookup: HashMap<i64, ValueId>,
     pub value_index: HashMap<(OptOp<ValueId>, SmallVec<[ValueId; 4]>), Vec<(ValueId, InstrId)>>, // value numbering - common subexpression elimination
-    pub assumed_program_position: Option<usize>
+    pub assumed_program_position: Option<usize>,
+    pub conf: &'static JitConfig
 }
 
 impl GraphBuilder {
@@ -251,6 +254,7 @@ impl GraphBuilder {
             constant_lookup: HashMap::new(),
             value_index: HashMap::new(),
             assumed_program_position: None,
+            conf: &get_config()
         }
     }
 
@@ -796,6 +800,10 @@ impl GraphBuilder {
         self.blocks.get_mut(id.0 as usize)
     }
 
+    pub fn reachable_blocks<'a>(&'a self) -> impl Iterator<Item=&'a BasicBlock> + 'a {
+        self.blocks.iter().filter(|b| b.is_reachable)
+    }
+
     pub fn instr_mut(&mut self, id: InstrId) -> Option<&mut OptInstr> {
         self.block_mut(id.block_id())?.instructions.get_mut(&id.instr_ix())
     }
@@ -975,7 +983,7 @@ impl GraphBuilder {
             if val.is_constant() {
                 parts.push(self.get_constant_(*val).to_string());
             } else {
-                let (start, end) = self.val_range(*val).into_inner();
+                let (start, end) = self.val_range_at(*val, InstrId(self.current_block, u32::MAX)).into_inner();
                 if start != i64::MIN && end != i64::MAX {
                     parts.push(format!("{}[{}..={}]", val, start, end));
                 } else if start != i64::MIN {

@@ -164,6 +164,12 @@ impl fmt::Debug for InstrId {
         fmt::Display::fmt(self, f)
     }
 }
+impl Into<(u32, u32)> for InstrId {
+    fn into(self) -> (u32, u32) { (self.0 .0, self.1) }
+}
+impl Into<u64> for InstrId {
+    fn into(self) -> u64 { ((self.0 .0 as u64) << 32) | (self.1 as u64) }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OptOp<TVal: Clone + PartialEq + Eq + Display> {

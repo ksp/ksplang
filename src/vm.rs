@@ -6,7 +6,7 @@ use num_integer::{Integer, Roots};
 use smallvec::{SmallVec, ToSmallVec};
 use thiserror::Error;
 
-use crate::{compiler::{cfg::GraphBuilder, cfg_interpreter::interpret_cfg, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::digit_sum, funkcia, ops::Op};
+use crate::{compiler::{self, cfg::GraphBuilder, cfg_interpreter::interpret_cfg, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::digit_sum, funkcia, ops::Op};
 
 #[cfg(test)]
 mod tests;
@@ -1199,6 +1199,15 @@ struct OptimizedBlock {
     reversed: bool,
 
     cfg: GraphBuilder,
+    stats: BlockStats,
+}
+
+#[derive(Clone, Debug, Default)]
+struct BlockStats {
+    pub exit_count: HashMap<u64, usize>,
+    pub entry_count: usize,
+    pub cfg_op_count: u64,
+    pub ksplang_op_count: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1209,12 +1218,18 @@ struct Optimizer {
     has_jumped: bool,
     // should_optimize: bool,
     has_interrupted: bool,
+    trigger_count: u32
     // is_fake_state: bool,
 }
 impl Optimizer {
     fn get_block(&self, rev: bool, ip: usize) -> Option<&OptimizedBlock> {
         let k = if rev { !ip } else { ip };
         self.optimized_blocks.get(&k)
+    }
+
+    fn get_block_mut(&mut self, rev: bool, ip: usize) -> Option<&mut OptimizedBlock> {
+        let k = if rev { !ip } else { ip };
+        self.optimized_blocks.get_mut(&k)
     }
 
     fn insert_block(&mut self, b: OptimizedBlock) {
@@ -1248,7 +1263,7 @@ impl Tracer for Optimizer {
 
             let ctr = this.visit_counter.entry(k).or_default();
             ctr.counter = ctr.counter.wrapping_add(1);
-            if ctr.supressed || ctr.counter < 3 {
+            if ctr.supressed || ctr.counter < this.trigger_count {
                 this.has_jumped = false;
                 return true;
             }
@@ -1402,12 +1417,15 @@ pub struct OptimizingVM {
     program: Vec<Op>,
     allow_deez: bool,
     opt: Optimizer,
-    verify: bool,
+    conf: &'static compiler::config::JitConfig,
 }
 
 impl OptimizingVM {
     pub fn new(program: Vec<Op>, allow_deez: bool) -> Self {
-        Self { program, allow_deez, opt: Optimizer::default(), verify: true }
+        let conf = compiler::config::get_config();
+        let mut opt = Optimizer::default();
+        opt.trigger_count = conf.trace_trigger_count;
+        Self { program, allow_deez, opt, conf }
     }
 
     pub fn run(&mut self, input_stack: Vec<i64>, opt: VMOptions) -> Result<RunResult<NoStats>, RunError> {
@@ -1433,11 +1451,14 @@ impl OptimizingVM {
     }
 
     fn run_internal<'a>(&mut self, mut s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
+        let should_log_runtime = self.conf.should_log(10);
         loop {
             s.tracer.has_interrupted = false;
 
             if self.opt.get_block(s.reversed, s.ip).is_none() {
-                println!("Running normal interpreter at {} {}", s.ip, s.reversed);
+                if should_log_runtime {
+                    println!("Running normal interpreter at {} {}", s.ip, s.reversed);
+                }
                 let r = self::run_state(&mut s, options);
                 if r.is_err() || !s.tracer.has_interrupted {
                     return (s, r);
@@ -1446,8 +1467,12 @@ impl OptimizingVM {
 
             // add or utilize optimized block:
             if let Some(opt_block) = self.opt.get_block(s.reversed, s.ip) {
-                println!("Running optimized block at {} {} c={}", s.ip, s.reversed, s.instructions_run);
-                let result = if self.verify {
+                if should_log_runtime {
+                    println!("Running optimized block at {} {} c={}", s.ip, s.reversed, s.instructions_run);
+                }
+
+                let verify = self.conf.verify > 1 || (self.conf.verify == 1 && opt_block.stats.entry_count == 0);
+                let result = if verify {
                     let mut state_backup = s.clone().swap_tracer(NoStats::default()).1;
                     let backup2 = state_backup.stack.clone();
                     let r = interpret_cfg(&opt_block.cfg, &mut s.stack, false).unwrap();
@@ -1461,11 +1486,20 @@ impl OptimizingVM {
                     interpret_cfg(&opt_block.cfg, &mut s.stack, true)
                 };
 
-                println!("Optimized block result: {:?}", result);
+                if should_log_runtime {
+                    println!("Optimized block result: {:?}", result);
+                }
 
                 match result {
                     Err(_) => todo!("Will be deopt"),
                     Ok(result) => {
+                        {
+                            let block_stats = self.opt.get_block_mut(s.reversed, s.ip).unwrap();
+                            block_stats.stats.exit_count.entry(result.exit_point).and_modify(|c| *c += 1).or_insert(1);
+                            block_stats.stats.ksplang_op_count += result.executed_ksplang;
+                            block_stats.stats.cfg_op_count += result.executed_cfg_ops;
+                            block_stats.stats.entry_count += 1;
+                        }
                         s.instructions_run += result.executed_ksplang;
                         s.ip = result.next_ip;
                         if !result.deoptimized {
@@ -1486,7 +1520,7 @@ impl OptimizingVM {
 
     fn optimize<'a>(&mut self, s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
         // let limit = if s.ip == 167 { 2806 } else { 10_000 };
-        let limit = 10_000;
+        let limit = self.conf.adhoc_instr_limit as usize;
         let (optimizer, mut st) = s.swap_tracer(ActualTracer::default());
         st.tracer.start_block_location = st.ip;
         st.tracer.max_count = 2_000;
@@ -1508,6 +1542,8 @@ impl OptimizingVM {
         }
 
         let mut p = Precompiler::new(&s.ops, start_stack_size, reversed, start_ip, limit, None, GraphBuilder::new(start_ip), trace);
+        p.bb_limit = self.conf.adhoc_branch_limit as usize;
+        p.instr_limit = self.conf.adhoc_instr_limit as usize;
         p.interpret();
 
         println!("Optimized at {start_ip}({reversed}):");
@@ -1515,7 +1551,7 @@ impl OptimizingVM {
         println!("");
         println!("===================================================================");
 
-        let b = OptimizedBlock { cfg: p.g, reversed, start_ip };
+        let b = OptimizedBlock { cfg: p.g, reversed, start_ip, stats: BlockStats::default() };
         self.opt.insert_block(b);
 
         (s, Ok(()))
@@ -1525,8 +1561,10 @@ impl OptimizingVM {
         // try to optimistically optimize from the start
         // makes debugging easier as the VM will just try to optimize the code I give it...
         // let limit = 50_000;
-        let limit = 50000;
+        let limit = self.conf.start_instr_limit as usize;
         let mut p = Precompiler::new(&s.ops, s.stack.len(), s.reversed, s.ip, limit, None, GraphBuilder::new(s.ip), NoTrace());
+        p.bb_limit = self.conf.start_branch_limit as usize;
+        p.instr_limit = self.conf.start_instr_limit as usize;
         p.interpret();
 
         println!("Optimized at start:");
@@ -1534,7 +1572,7 @@ impl OptimizingVM {
         println!("");
         println!("===================================================================");
 
-        let b = OptimizedBlock { cfg: p.g, reversed: s.reversed, start_ip: s.ip };
+        let b = OptimizedBlock { cfg: p.g, reversed: s.reversed, start_ip: s.ip, stats: BlockStats::default() };
         self.opt.insert_block(b);
     }
 }

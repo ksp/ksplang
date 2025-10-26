@@ -15,6 +15,7 @@ pub struct CfgInterpretStats {
     pub executed_cfg_ops: u64,
     pub next_ip: usize,
     pub deoptimized: bool,
+    pub exit_point: u64,
 }
 
 pub fn interpret_cfg(
@@ -173,6 +174,7 @@ pub fn interpret_cfg(
         executed_cfg_ops,
         next_ip,
         deoptimized: deoptimized.is_some(),
+        exit_point: deoptimized.map_or(0, |id| id.into()),
     })
 }
 

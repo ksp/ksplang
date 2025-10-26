@@ -1,3 +1,4 @@
+pub mod config;
 pub mod cfg;
 pub mod vm_code;
 pub mod ops;

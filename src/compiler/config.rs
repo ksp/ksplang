@@ -1,0 +1,98 @@
+use std::{any::Any, cell::{LazyCell, OnceCell}, cmp, str::FromStr, sync::LazyLock};
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct JitConfig {
+    pub verbosity: u8,
+    pub start_interpret_limit: u32,
+    pub start_instr_limit: u32,
+    pub start_branch_limit: u32,
+    pub adhoc_interpret_limit: u32,
+    pub adhoc_branch_limit: u32,
+    pub adhoc_instr_limit: u32,
+    pub callcache_interpret_limit: u32,
+    pub callcache_branch_limit: u32,
+    pub callcache_instr_limit: u32,
+
+    pub pruning: bool,
+    pub verify: u8, // 0 = off, 1 = first run, 2 = full
+    pub trace_limit: u32,
+    pub trace_trigger_count: u32,
+}
+
+impl JitConfig {
+    #[inline]
+    pub fn verbosity(&self) -> u8 {
+        if cfg!(debug_assertions) {
+            self.verbosity
+        } else {
+            cmp::min(16, self.verbosity)
+        }
+    }
+
+    #[inline]
+    pub fn should_log(&self, level: u8) -> bool {
+        self.verbosity() >= level
+    }
+}
+
+fn parse_env<T>(key: &str, default: T) -> T
+where
+    T: FromStr + 'static, <T as FromStr>::Err: std::fmt::Display
+{
+    if let Ok(mut val) = std::env::var(key) {
+        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<bool>() {
+            val = val.to_lowercase();
+            if val == "1" || val == "yes" {
+                val = "true".to_string();
+            } else if val == "0" || val == "no" {
+                val = "false".to_string();
+            }
+        }
+        match val.parse::<T>() {
+            Ok(v) => v,
+            Err(err) => if val == "" {
+                default
+            } else {
+                panic!("Failed to parse env var {key} with value {val}: {err}");
+            }
+        }
+    } else {
+        default
+    }
+}
+
+fn create_config() -> JitConfig {
+    let c = JitConfig {
+        verbosity: parse_env("KSPLANGJIT_VERBOSITY", if cfg!(debug_assertions) { 10 } else { 1 }),
+        start_interpret_limit: parse_env("KSPLANGJIT_START_LIMIT", 50_000),
+        start_branch_limit: parse_env("KSPLANGJIT_START_BRANCH_LIMIT", 1024),
+        start_instr_limit: parse_env("KSPLANGJIT_START_INSTR_LIMIT", 3000),
+        adhoc_interpret_limit: parse_env("KSPLANGJIT_ADHOC_INTERPRET_LIMIT", 5_000),
+        adhoc_branch_limit: parse_env("KSPLANGJIT_ADHOC_BRANCH_LIMIT", 256),
+        adhoc_instr_limit: parse_env("KSPLANGJIT_ADHOC_INSTR_LIMIT", 600),
+        callcache_interpret_limit: parse_env("KSPLANGJIT_CALLCACHE_INTERPRET_LIMIT", 20_000),
+        callcache_branch_limit: parse_env("KSPLANGJIT_CALLCACHE_BRANCH_LIMIT", 70),
+        callcache_instr_limit: parse_env("KSPLANGJIT_CALLCACHE_INSTR_LIMIT", 200),
+
+        pruning: parse_env("KSPLANGJIT_PRUNING", true),
+        verify: parse_env("KSPLANGJIT_VERIFY", 1),
+        trace_limit: parse_env("KSPLANGJIT_TRACE_LIMIT", 1000),
+        trace_trigger_count: parse_env("KSPLANGJIT_TRIGGER_COUNT", 3),
+    };
+
+    #[cfg(not(debug_assertions))] {
+        if c.verbosity > 16 {
+            panic!("Verbosity level above 16 is only available in debug builds: {}", c.verbosity);
+        }
+    }
+
+    c
+
+}
+
+static CELL: LazyLock<JitConfig> = LazyLock::new(|| create_config());
+
+pub fn get_config() -> &'static JitConfig {
+    &CELL
+}
