@@ -201,7 +201,6 @@ pub enum OptOp<TVal: Clone + PartialEq + Eq + Display> {
 
     BinNot,                        // a <- ~b
     BoolNot,                       // a <- !b
-    Condition(Condition<TVal>), // a <- condition ? 1 : 0
 
     Select(Condition<TVal>), // a <- b ? c : d
 
@@ -230,7 +229,6 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
 
     pub fn condition(&self) -> Option<Condition<TVal>> {
         match self {
-            OptOp::Condition(cond) => Some(cond.clone()),
             OptOp::Select(cond) => Some(cond.clone()),
             OptOp::Jump(cond, _) => Some(cond.clone()),
             OptOp::Assert(cond, _) => Some(cond.clone()),
@@ -254,7 +252,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
     pub fn worst_case_effect(&self) -> OpEffect {
         match self {
             OptOp::Push | OptOp::Pop => OpEffect::StackWrite,
-            OptOp::Nop | OptOp::Const(_) | OptOp::Condition(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn => OpEffect::None,
+            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn => OpEffect::None,
 
             // overflow checks, div by zero
             OptOp::Add | OptOp::Sub | OptOp::AbsSub | OptOp::Mul | OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuclid | OptOp::Tetration | OptOp::ShiftL | OptOp::AbsFactorial =>
@@ -277,7 +275,6 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Tetration => 2..=2,
             OptOp::Funkcia => 2..=2,
             OptOp::Sgn | OptOp::AbsFactorial | OptOp::BinNot | OptOp::BoolNot | OptOp::DigitSum => 1..=1,
-            OptOp::Condition(_) => 0..=0,
             OptOp::Select(_) => 2..=2,
             OptOp::Const(_) => 0..=0,
             OptOp::Jump(_, _) => 0..=usize::MAX,
@@ -322,7 +319,6 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::ShiftR => 24,
             OptOp::BinNot => 25,
             OptOp::BoolNot => 26,
-            OptOp::Condition(condition) => 27 << 16 | condition.discriminant(),
             OptOp::Select(condition) => 28 << 16 | condition.discriminant(),
             OptOp::DigitSum => 29,
             OptOp::Gcd => 30,
@@ -395,7 +391,6 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             },
             OptOp::BinNot => Ok(!inputs[0]),
             OptOp::BoolNot => Ok(if inputs[0] == 0 { 1 } else { 0 }),
-            OptOp::Condition(condition) => Ok(if condition.eval(inputs) { 1 } else { 0 }),
             OptOp::Select(condition) => Ok(if condition.eval(&inputs[0..inputs.len()-2]) { inputs[inputs.len()-2] } else { inputs[inputs.len()-1] }),
             OptOp::DigitSum => Ok(digit_sum::digit_sum(inputs[0])),
             OptOp::Gcd => inputs.iter().map(|x| x.abs_diff(0)).reduce(|a, b| a.gcd(&b)).unwrap().try_into().map_err(|_| Some(OperationError::IntegerOverflow)),
@@ -518,7 +513,6 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                 }
                 Some(min_start..=max_start)
             },
-            OptOp::Condition(_) => Some(0..=1),
             OptOp::Select(_) => inputs.iter().cloned().reduce(union_range),
         }
     }

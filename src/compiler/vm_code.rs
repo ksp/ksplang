@@ -447,7 +447,7 @@ fn remat_cost(g: &GraphBuilder, lr: &LiveRanges, max_cost: u32) -> HashMap<Value
         let Some(i) = v.assigned_at.and_then(|i| g.get_instruction(i)) else { continue; };
         // if i.effect != OpEffect::None && i.effect != OpEffect::MayFail { }
         let rmat_cost = match i.op {
-            OptOp::BinNot | OptOp::ShiftR | OptOp::BoolNot | OptOp::Condition(_) | OptOp::Or | OptOp::And | OptOp::Xor | OptOp::Min | OptOp::Max | OptOp::AbsFactorial | OptOp::Sgn | OptOp::ShiftL | OptOp::DigitSum | OptOp::Add | OptOp::AbsSub | OptOp::Select(_)=>
+            OptOp::BinNot | OptOp::ShiftR | OptOp::BoolNot | OptOp::Or | OptOp::And | OptOp::Xor | OptOp::Min | OptOp::Max | OptOp::AbsFactorial | OptOp::Sgn | OptOp::ShiftL | OptOp::DigitSum | OptOp::Add | OptOp::AbsSub | OptOp::Select(_)=>
                 10,
             OptOp::Mul => 12,
             OptOp::Div | OptOp::CursedDiv | OptOp::LenSum | OptOp::Mod | OptOp::ModEuclid => 14,

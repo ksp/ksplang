@@ -206,18 +206,20 @@ impl<'a> OptOptPattern<'a> {
             (OptOp::Gcd, OptOp::Gcd) => {
                 Self::match_list(info, cfg, &instr.inputs, args, comm)
             },
-            (OptOp::Condition(cond), OptOp::Condition(pcond)) => {
-                assert!(args.is_empty());
-                Self::match_condition(cfg, info, cond, pcond).is_ok()
-            },
-            (OptOp::Select(cond), OptOp::Condition(pcond)) => {
+            (OptOp::Select(cond), OptOp::Select(pcond)) => {
                 let save = info.save_point();
                 if Self::match_condition(cfg, info, cond, pcond).is_ok() &&
-                    Self::match_list(info, cfg, &instr.inputs, args, comm) {
+                    Self::match_list(info, cfg, &instr.inputs, args, comm.clone()) {
                     true
                 } else {
                     info.revert_to(&save);
-                    false
+                    if comm.clone().count() < 2 && Self::match_condition(cfg, info, &cond.clone().neg(), pcond).is_ok() &&
+                        Self::match_list(info, cfg, &[instr.inputs[1], instr.inputs[0]], args, comm) {
+                        true
+                    } else {
+                        info.revert_to(&save);
+                        false
+                    }
                 }
             },
             (OptOp::Assert(cond, err1 ), OptOp::Assert(pcond, err2)) => {

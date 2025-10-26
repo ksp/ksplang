@@ -602,7 +602,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         }
 
         match i.op.clone() {
-            OptOp::Condition(cond) => i.op = OptOp::Condition(simplify_cond(cfg, cond, i.id)),
             OptOp::Select(cond) => i.op = OptOp::Select(simplify_cond(cfg, cond, i.id)),
             OptOp::Jump(cond, to) => i.op = OptOp::Jump(simplify_cond(cfg, cond, i.id), to),
             OptOp::Assert(cond, err) => i.op = OptOp::Assert(simplify_cond(cfg, cond, i.id), err),
@@ -619,14 +618,10 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         // }
 
         match &i.op {
-            OptOp::Condition(Condition::True) =>
-                return (i.with_op(OptOp::Const(1), &[], OpEffect::None), Some(1..=1)),
-            OptOp::Condition(Condition::False) =>
-                return (i.with_op(OptOp::Const(0), &[], OpEffect::None), Some(0..=0)),
             OptOp::Select(Condition::True) =>
-                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None),
+                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), Some(ranges[0].clone())),
             OptOp::Select(Condition::False) =>
-                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None),
+                return (i.clone().with_op(OptOp::Add, &[ i.inputs[1] ], OpEffect::None), Some(ranges[1].clone())),
             OptOp::Assert(Condition::True, _) | OptOp::DeoptAssert(Condition::True) | OptOp::Jump(Condition::False, _) =>
                 return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
             // degenerate expressions are all simplified to degenerate Add, which is the only thing user then has to handle

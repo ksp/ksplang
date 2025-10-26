@@ -851,10 +851,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                                     if br == (0..=1) {
                                         Some(b)
                                     } else {
-                                        Some(self.g.value_numbering(OptOp::Condition(Condition::GtConst(b, 0)), &[], None, None))
+                                        Some(self.g.value_numbering(OptOp::Select(Condition::GtConst(b, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], None, None))
                                     }
                                 } else if *ar.start() > 0 { // 1 ^ b
-                                    Some(self.g.value_numbering(OptOp::Condition(Condition::LeqConst(b, 0)), &[], None, None))
+                                    Some(self.g.value_numbering(OptOp::Select(Condition::LeqConst(b, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], None, None))
                                 } else {
                                     None
                                 }
@@ -863,9 +863,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             let r = try_opt(ar.clone(), b, br.clone())
                                 .or_else(|| try_opt(br, a, ar))
                                 .unwrap_or_else(|| {
-                                    let a_cond = self.g.value_numbering(OptOp::Condition(Condition::GtConst(a, 0)), &[], None, None);
-                                    let b_cond = self.g.value_numbering(OptOp::Condition(Condition::GtConst(b, 0)), &[], None, None);
-                                    self.g.value_numbering(OptOp::Condition(Condition::Neq(a_cond, b_cond)), &[], None, None)
+                                    let a_cond = self.g.value_numbering(OptOp::Select(Condition::GtConst(a, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], None, None);
+                                    let b_cond = self.g.value_numbering(OptOp::Select(Condition::GtConst(b, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], None, None);
+                                    self.g.value_numbering(OptOp::Select(Condition::Neq(a_cond, b_cond)), &[ValueId::C_ONE, ValueId::C_ZERO], None, None)
                                 });
                             self.g.stack.push(r);
                         }
