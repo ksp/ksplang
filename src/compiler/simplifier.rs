@@ -557,7 +557,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
     
     let mut iter = 0;
     let mut changed = true;
-    let mut change_path = Vec::new();
+    let mut change_path: Vec<(OptOp<ValueId>, SmallVec<[ValueId; 4]>, SmallVec<[RangeInclusive<i64>; 4]>)> = Vec::new();
     'main: while changed {
         #[cfg(debug_assertions)] {
             change_path.push((i.op.clone(), i.inputs.clone(), i.inputs.iter().map(|a| cfg.val_range_at(*a, i.id)).collect::<SmallVec<[_; 4]>>()));

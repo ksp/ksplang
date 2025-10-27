@@ -1,9 +1,9 @@
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
 use smallvec::SmallVec;
 
 use crate::compiler::{
-    cfg::{GraphBuilder, StackHistory},
+    cfg::GraphBuilder,
     ops::{BlockId, InstrId, OptInstr, OptOp, ValueId},
     vm_code::Condition,
 };
@@ -33,6 +33,7 @@ pub fn interpret_cfg(
     let mut current_block = g.blocks.first().map(|bb| bb.id).unwrap_or(BlockId(0));
 
     let mut block_iteration_guard = 0usize;
+    let mut arg_values: Vec<i64> = Vec::new();
 
     'block: loop {
         let block = g.block(current_block).expect("Invalid current_block");
@@ -47,7 +48,7 @@ pub fn interpret_cfg(
             let op = &instr.op;
 
             match op {
-                OptOp::Nop => continue,
+                OptOp::Nop | OptOp::Checkpoint => continue,
                 OptOp::Jump(condition, target) => {
                     if eval_condition(g, &values, condition) {
                         let Some(target_block) = g.block(*target) else {
@@ -135,8 +136,15 @@ pub fn interpret_cfg(
                 _ => {}
             }
 
-            let arg_values: SmallVec<[i64; 4]> =
-                instr.iter_inputs().map(|input| resolve_value(g, &values, input)).collect();
+            arg_values.clear();
+            if let Some(cond) = &instr.op.condition() {
+                for r in cond.regs() {
+                    arg_values.push(resolve_value(g, &values, r));
+                }
+            }
+            for &i in &instr.inputs {
+                arg_values.push(resolve_value(g, &values, i));
+            }
 
             match op.evaluate(&arg_values) {
                 Ok(value) => {
@@ -189,8 +197,8 @@ fn restore_deopt_state(
     let block = g.block(block_id).unwrap();
 
     if let Some(instr) = block.instructions.get(&start.1) {
-        if instr.program_position != usize::MAX && instr.stack_state.is_some() {
-            stack.extend(build_stack_from_history(g, values, instr.stack_state.unwrap()));
+        if matches!(instr.op, OptOp::Checkpoint) {
+            stack.extend(build_stack_from_checkpoint(g, values, instr));
             return instr.program_position;
         }
     }
@@ -198,11 +206,8 @@ fn restore_deopt_state(
     for (_, instr) in block.instructions.range(..start.1).rev() {
         revert_stack_effect(g, values, instr, stack);
 
-        if let Some(stack_state) = instr.stack_state {
-            assert_ne!(instr.program_position, usize::MAX, "Invalid CFG: stack_state without program position at instruction {}", instr.id);
-
-            stack.extend(build_stack_from_history(g, values, stack_state));
-
+        if matches!(instr.op, OptOp::Checkpoint) {
+            stack.extend(build_stack_from_checkpoint(g, values, instr));
             return instr.program_position;
         }
     }
@@ -253,39 +258,25 @@ fn revert_stack_effect(
     }
 }
 
-fn build_stack_from_history<'a>(
+fn build_stack_from_checkpoint<'a>(
     g: &'a GraphBuilder,
     values: &'a HashMap<ValueId, i64>,
-    stack_state: u32,
+    checkpoint_instr: &'a OptInstr,
 ) -> impl Iterator<Item = i64> + 'a {
-    let value_ids = unfold_stack_history(&g.stack.stack_history, stack_state);
-    value_ids
-        .into_iter()
-        .map(|value_id| resolve_value(g, values, value_id))
-}
-
-fn unfold_stack_history(histories: &[StackHistory], state: u32) -> Vec<ValueId> {
-    assert_ne!(state, 0);
-    let entry = &histories[state as usize - 1];
-
-    if entry.base == 0 {
-        entry.push.to_vec()
-    } else {
-        let mut stack = unfold_stack_history(histories, entry.base);
-        let pop = entry.pop as usize;
-        assert!(pop <= stack.len(), "stack history pop {pop} larger than stack depth {} for state {state}", stack.len());
-        stack.truncate(stack.len() - pop);
-        stack.extend_from_slice(&entry.push);
-        stack
-    }
+    assert!(matches!(checkpoint_instr.op, OptOp::Checkpoint));
+    assert!(!checkpoint_instr.inputs.is_empty(), "Checkpoint instruction must have at least one input (stack depth)");
+    
+    // First input is stack depth
+    checkpoint_instr.inputs[1..].iter()
+        .map(|value_id| resolve_value(g, values, *value_id))
 }
 
 fn resolve_value(g: &GraphBuilder, values: &HashMap<ValueId, i64>, id: ValueId) -> i64 {
     assert!(!id.is_null(), "Invalid CFG: null ValueId encountered during interpretation");
-    if let Some(value) = id.to_predefined_const() {
-        return value;
-    }
     if id.is_constant() {
+        if let Some(value) = id.to_predefined_const() {
+            return value;
+        }
         return g.get_constant_(id);
     }
     *values.get(&id).unwrap_or_else(|| panic!("Invalid CFG: unresolved ValueId {id:?}"))
@@ -296,6 +287,12 @@ fn eval_condition(
     values: &HashMap<ValueId, i64>,
     condition: &Condition<ValueId>,
 ) -> bool {
+    if condition == &Condition::True {
+        return true;
+    }
+    if condition == &Condition::False {
+        return false;
+    }
     let inputs: SmallVec<[i64; 2]> =
         condition.regs().into_iter().map(|reg| resolve_value(g, values, reg)).collect();
     condition.eval(&inputs)
@@ -369,8 +366,11 @@ mod test {
         let mut g = GraphBuilder::new(0);
         let index = g.store_constant(10);
         let replacement = g.store_constant(3);
+        g.set_program_position(Some(10));
         g.push_instr(OptOp::Pop, &[], false, None, None).1.unwrap().program_position = 10;
+        g.set_program_position(Some(20));
         g.push_instr_may_deopt(OptOp::StackSwap, &[ValueId::C_ZERO, ValueId::C_ZERO]).program_position = 20;
+        g.set_program_position(Some(30));
         g.push_instr_may_deopt(OptOp::StackSwap, &[index, replacement]).program_position = 30;
 
         let mut stack = vec![1, 2, 3, 10, 13];

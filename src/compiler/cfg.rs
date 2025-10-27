@@ -108,13 +108,6 @@ impl fmt::Display for BasicBlock {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct StackHistory {
-    pub base: u32,
-    pub pop: u32,
-    pub push: Box<[ValueId]>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct StackState {
     pub depth: u32,
@@ -132,9 +125,6 @@ pub struct StackStateTracker {
     pub stack_depth: u32,
     pub push_count: u32,
     pub pop_count: u32,
-    pub stack_history: Vec<StackHistory>,
-    pub pop_from_last_history: u32,
-    pub push_from_last_history: u32,
 }
 
 impl StackStateTracker {
@@ -144,9 +134,6 @@ impl StackStateTracker {
             lookup: HashMap::new(),
             poped_values: Vec::new(),
             stack_depth: 0,
-            stack_history: vec![],
-            pop_from_last_history: 0,
-            push_from_last_history: 0,
             push_count: 0,
             pop_count: 0,
         }
@@ -171,11 +158,6 @@ impl StackStateTracker {
     pub fn pop(&mut self) -> Option<ValueId> {
         if let Some(val) = self.stack.pop() {
             self.pop_count += 1;
-            if self.push_from_last_history > 0 {
-                self.push_from_last_history -= 1;
-            } else {
-                self.pop_from_last_history += 1;
-            }
 
             let x = self.lookup.get_mut(&val).unwrap();
             assert_eq!(x.pop(), Some(self.stack.len() as u32));
@@ -191,27 +173,8 @@ impl StackStateTracker {
 
     pub fn push(&mut self, val: ValueId) {
         self.push_count += 1;
-        self.push_from_last_history += 1;
         self.lookup.entry(val).or_insert_with(Vec::new).push(self.stack.len() as u32);
         self.stack.push(val);
-    }
-
-    pub fn save_history(&mut self) -> u32 {
-        let pop = self.pop_from_last_history;
-        let pushes = self.push_from_last_history;
-        let entry = if (pushes as usize) < self.stack.len() && self.stack_history.len() > 0 {
-            StackHistory {
-                base: self.stack_history.len() as u32,
-                pop,
-                push: self.stack[self.stack.len() - pushes as usize..].into(),
-            }
-        } else {
-            StackHistory { base: 0, pop: self.stack_depth, push: self.stack[..].into() }
-        };
-        self.stack_history.push(entry);
-        self.pop_from_last_history = 0;
-        self.push_from_last_history = 0;
-        self.stack_history.len() as u32
     }
 
     pub fn save(&mut self) -> StackState {
@@ -221,8 +184,6 @@ impl StackStateTracker {
         }
     }
     pub fn restore(&mut self, state: StackState) {
-        self.pop_from_last_history = self.stack.len() as u32;
-        self.push_from_last_history = state.stack.len() as u32;
         self.stack = state.stack;
         self.stack_depth = state.depth;
     }
@@ -593,7 +554,7 @@ impl GraphBuilder {
                 let other_range = self.val_range_at(*other, at);
                 (other.is_constant(), *other_range.start()..=i64::MAX)
             }
-            Condition::Neq(c, a) if c.is_constant() => {
+            Condition::Neq(c, _a) if c.is_constant() => {
                 // TODO: this should probably be moved to canonicalize_condition_at or something
                 let c = self.get_constant_(*c);
                 let blacklisted_values: BTreeSet<i64> =
@@ -675,7 +636,6 @@ impl GraphBuilder {
             op: op.clone(),
             inputs: args.into(),
             out: if has_output { ValueId(i32::MAX) } else { ValueId(0) },
-            stack_state: None,
             ksp_instr_count: self.current_block_ref().ksplang_instr_count,
             program_position: self.assumed_program_position.unwrap_or(usize::MAX),
             effect: effect2
@@ -727,7 +687,7 @@ impl GraphBuilder {
             }
         }
 
-        if instr.out == ValueId(0) && instr.effect == OpEffect::None && !explicit_nop {
+        if instr.out == ValueId(0) && instr.effect == OpEffect::None && !explicit_nop && !matches!(instr.op, OptOp::Checkpoint) {
             return (out_val, None)
         }
 
@@ -758,12 +718,35 @@ impl GraphBuilder {
         (out_val, Some(instr))
     }
 
+    pub fn push_checkpoint(&mut self) -> &mut OptInstr {
+        // try to replace previous redundant checkpoint
+        let current_block = self.current_block_ref();
+        let mut last_checkpoint: Option<InstrId> = None;
+
+        for (_, instr) in current_block.instructions.iter().rev() {
+            if matches!(instr.op, OptOp::Checkpoint) {
+                last_checkpoint = Some(instr.id);
+                break;
+            }
+            if instr.effect != OpEffect::None {
+                break;
+            }
+        }
+
+        if let Some(old_checkpoint_id) = last_checkpoint {
+            self.remove_instruction(old_checkpoint_id, false);
+        }
+
+        let stack_depth_const = self.store_constant(self.stack.stack_depth as i64);
+        let mut checkpoint_args: SmallVec<[ValueId; 16]> = smallvec![stack_depth_const];
+        checkpoint_args.extend_from_slice(&self.stack.stack);
+
+        self.push_instr(OptOp::Checkpoint, &checkpoint_args, false, None, None).1.unwrap()
+    }
+
     pub fn push_instr_may_deopt(&mut self, op: OptOp<ValueId>, args: &[ValueId]) -> &mut OptInstr {
-        // TODO: refactor as checkpoint instruction
-        let stack_state = self.stack.save_history();
-        let instr = self.push_instr(op, args, false, None, None).1.unwrap();
-        instr.stack_state = Some(stack_state);
-        instr
+        self.push_checkpoint();
+        self.push_instr(op, args, false, None, None).1.unwrap()
     }
 
     pub fn push_assert(&mut self, c: Condition<ValueId>, error: OperationError, val: Option<ValueId>) {
@@ -1005,8 +988,6 @@ impl GraphBuilder {
             return;
         };
         let args: Vec<ValueId> = instr.iter_inputs().filter(|r| r.is_computed()).collect();
-        let stack_state = instr.stack_state;
-        let program_position = instr.program_position;
         let val_id = instr.out;
         if let Some(out_val) = self.values.get(&val_id) {
             assert!(val_id.is_computed());
@@ -1027,31 +1008,7 @@ impl GraphBuilder {
         }
         self.blocks[block_id.0 as usize].instructions.remove(&instr_ix);
 
-        if let Some(stack_state) = stack_state {
-            // move the stack state onto the next instruction if it has none to still allow deopting "here"
-            if let Some((_, next_instr)) = self.blocks[block_id.0 as usize].instructions.range_mut(instr_ix+1..).next() {
-                if next_instr.stack_state.is_none() {
-                    next_instr.stack_state = Some(stack_state);
-                    next_instr.program_position = program_position; // we must also revert to the previous program position to keep stack and IP in sync
-                }
-            } else {
-                // append annotated Nop to allow deopting
-                self.blocks[block_id.0 as usize].add_instruction(OptInstr {
-                    id: InstrId(0.into(), 0),
-                    op: OptOp::Nop,
-                    inputs: SmallVec::new(),
-                    out: ValueId(0),
-                    stack_state: Some(stack_state),
-                    program_position,
-                    effect: OpEffect::None,
-                    ksp_instr_count: u32::MAX,
-                });
-            }
-        }
-
         // remove inputs if this was their last use
-
-
         let mut clean_values = vec![];
         for arg in args {
             if let Some(info) = self.values.get_mut(&arg) {

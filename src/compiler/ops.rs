@@ -211,6 +211,8 @@ pub enum OptOp<TVal: Clone + PartialEq + Eq + Display> {
 
     Const(i64),
 
+    Checkpoint, // checkpoint for deoptimization - stores stack state in inputs (stack_depth, ... stack values)
+
     Jump(Condition<TVal>, BlockId), // if true: jump to BB. `inputs` are parameters for the target BB
 
     Assert(Condition<TVal>, OperationError), // error, optional argument
@@ -252,7 +254,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
     pub fn worst_case_effect(&self) -> OpEffect {
         match self {
             OptOp::Push | OptOp::Pop => OpEffect::StackWrite,
-            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn => OpEffect::None,
+            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn | OptOp::Checkpoint => OpEffect::None,
 
             // overflow checks, div by zero
             OptOp::Add | OptOp::Sub | OptOp::AbsSub | OptOp::Mul | OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuclid | OptOp::Tetration | OptOp::ShiftL | OptOp::AbsFactorial =>
@@ -277,6 +279,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Sgn | OptOp::AbsFactorial | OptOp::BinNot | OptOp::BoolNot | OptOp::DigitSum => 1..=1,
             OptOp::Select(_) => 2..=2,
             OptOp::Const(_) => 0..=0,
+            OptOp::Checkpoint => 1..=usize::MAX, // first arg is stack depth, rest are stack values
             OptOp::Jump(_, _) => 0..=usize::MAX,
             OptOp::Assert(_, _) => 0..=1,
             OptOp::DeoptAssert(_) => 0..=0,
@@ -288,7 +291,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
     }
 
     pub fn has_output(&self) -> bool {
-        !matches!(self, OptOp::Push | OptOp::Nop | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_))
+        !matches!(self, OptOp::Push | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_))
     }
 
     pub fn discriminant(&self) -> usize {
@@ -324,6 +327,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Gcd => 30,
             OptOp::StackSwap => 31,
             OptOp::Const(_) => 32,
+            OptOp::Checkpoint => 38,
             OptOp::Jump(condition, block_id) => 33 << 48 | (condition.discriminant() as usize) << 32 | (block_id.0 as usize),
             OptOp::Assert(condition, _) => 34 << 32 | (condition.discriminant() as usize) << 16,
             OptOp::DeoptAssert(condition) => 35 << 16 | condition.discriminant(),
@@ -336,7 +340,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         let cond_count = self.condition().map(|c| c.regs().len()).unwrap_or(0);
         debug_assert!(self.arity().contains(&(inputs.len() - cond_count)), "Invalid number of inputs for {:?}: {}", self, inputs.len());
         match self {
-            OptOp::Push | OptOp::Pop | OptOp::Nop => Err(None),
+            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint => Err(None),
             OptOp::Add => inputs.iter().try_fold(0i64, |a, b| a.checked_add(*b)).ok_or(Some(OperationError::IntegerOverflow)),
             OptOp::Sub => {
                         assert_eq!(inputs.len(), 2);
@@ -429,7 +433,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         debug_assert!(self.arity().contains(&inputs.len()), "Invalid number of inputs for {:?}: {}", self, inputs.len());
 
         match self {
-            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_) | OptOp::StackSwap | OptOp::Universal => None,
+            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_) | OptOp::StackSwap | OptOp::Universal => None,
             OptOp::Const(c) => Some(*c..=*c),
             OptOp::Add => inputs.iter().cloned().reduce(|a, b| add_range(&a, &b)),
             OptOp::Mul => inputs.iter().cloned().reduce(|a, b| mul_range(&a, &b).0),
@@ -640,7 +644,6 @@ pub struct OptInstr {
     pub op: OptOp<ValueId>,
     pub inputs: SmallVec<[ValueId; 4]>,
     pub out: ValueId,
-    pub stack_state: Option<u32>, // stack state before this instruction (for deoptimization)
     pub program_position: usize, // u64::MAX if unknown
     pub ksp_instr_count: u32,
     pub effect: OpEffect,
@@ -654,7 +657,6 @@ impl OptInstr {
             op,
             inputs: inputs.to_smallvec(),
             out,
-            stack_state: None,
             program_position: usize::MAX,
             ksp_instr_count: 0,
             effect,
@@ -702,9 +704,6 @@ impl fmt::Display for OptInstr {
         write!(f, "   [ ")?;
         if self.effect != self.op.worst_case_effect() {
             write!(f, "{:?} ", self.effect)?;
-        }
-        if let Some(stack_state) = self.stack_state {
-            write!(f, "stack={} ", stack_state)?;
         }
         write!(f, "IP={} ]", self.program_position)
     }

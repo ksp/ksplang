@@ -31,7 +31,7 @@ fn test_constant(prog: &str, c: i64) {
     assert_eq!(g.stack.stack_depth, 1);
     assert_eq!(g.stack.stack_position(), 1);
     assert_eq!(g.get_constant(g.stack.peek().unwrap()), Some(c));
-    assert_eq!(g.current_block_ref().instructions.len(), 2);
+    assert_eq!(g.current_block_ref().instructions.len(), 3); // Pop + Checkpoint + DeoptAssert(false)
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn test_dup(ksplang: &str, input_range: RangeInclusive<i64>) {
     } else {
         assert_eq!(g.stack.stack, vec![val, val]);
     }
-    assert_eq!(1, g.current_block_ref().instructions.len());
+    assert_eq!(2, g.current_block_ref().instructions.len()); // Checkpoint + DeoptAssert
 }
 
 fn test_neg(prog: &str) {
@@ -126,7 +126,7 @@ fn test_neg(prog: &str) {
     let defined_at = g.get_instruction_(result_info.assigned_at.unwrap());
     assert_eq!(OptOp::Sub, defined_at.op);
     assert_eq!([ValueId::C_ZERO, vals[0]], defined_at.inputs[..]);
-    assert_eq!(2, g.current_block_ref().instructions.len());
+    assert_eq!(3, g.current_block_ref().instructions.len()); // Pop + Checkpoint + DeoptAssert
 }
 
 #[test]
