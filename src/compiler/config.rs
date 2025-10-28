@@ -14,7 +14,7 @@ pub struct JitConfig {
     pub callcache_branch_limit: u32,
     pub callcache_instr_limit: u32,
 
-    pub pruning: bool,
+    pub allow_pruning: bool,
     pub verify: u8, // 0 = off, 1 = first run, 2 = full
     pub trace_limit: u32,
     pub trace_trigger_count: u32,
@@ -69,13 +69,13 @@ fn create_config() -> JitConfig {
         start_branch_limit: parse_env("KSPLANGJIT_START_BRANCH_LIMIT", 1024),
         start_instr_limit: parse_env("KSPLANGJIT_START_INSTR_LIMIT", 3000),
         adhoc_interpret_limit: parse_env("KSPLANGJIT_ADHOC_INTERPRET_LIMIT", 5_000),
-        adhoc_branch_limit: parse_env("KSPLANGJIT_ADHOC_BRANCH_LIMIT", 256),
+        adhoc_branch_limit: parse_env("KSPLANGJIT_ADHOC_BRANCH_LIMIT", 64),
         adhoc_instr_limit: parse_env("KSPLANGJIT_ADHOC_INSTR_LIMIT", 600),
         callcache_interpret_limit: parse_env("KSPLANGJIT_CALLCACHE_INTERPRET_LIMIT", 20_000),
         callcache_branch_limit: parse_env("KSPLANGJIT_CALLCACHE_BRANCH_LIMIT", 70),
         callcache_instr_limit: parse_env("KSPLANGJIT_CALLCACHE_INSTR_LIMIT", 200),
 
-        pruning: parse_env("KSPLANGJIT_PRUNING", true),
+        allow_pruning: parse_env("KSPLANGJIT_PRUNING", true),
         verify: parse_env("KSPLANGJIT_VERIFY", 1),
         trace_limit: parse_env("KSPLANGJIT_TRACE_LIMIT", 1000),
         trace_trigger_count: parse_env("KSPLANGJIT_TRIGGER_COUNT", 3),

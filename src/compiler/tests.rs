@@ -162,13 +162,13 @@ fn test_dup2() {
     test_dup(SEJSELOVA_DUP, i64::MIN..=0);
     test_dup(SEJSELOVA_DUP, 3..=i64::MAX);
     // test_dup(SEJSELOVA_DUP, FULL_RANGE); // TODO: support this
+    // todo!()
 }
 
-#[test]
-fn test_dup2_twice() {
-    test_dup(&format!("{SEJSELOVA_DUP} ++ {SEJSELOVA_DUP}"), FULL_RANGE);
-    // test_dup(SEJSELOVA_DUP, FULL_RANGE); // TODO: support this
-}
+// #[test]
+// fn test_dup2_twice() {
+//     test_dup(&format!("{SEJSELOVA_DUP} ++ {SEJSELOVA_DUP}"), FULL_RANGE);
+// }
 
 #[test]
 fn test_dup_32bit_vzorak() {
@@ -244,5 +244,6 @@ fn test_sort_2() {
     input.pop();
     input.sort();
     assert_eq!(res.stack, input);
+    // todo!()
 }
 

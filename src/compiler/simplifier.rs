@@ -894,6 +894,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     }
                     new_args.sort();
                     i.inputs = new_args;
+                    changed = true;
                 }
             }
         }
@@ -1002,28 +1003,34 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 if nested.op == OptOp::AbsSub {
                     i.op = OptOp::Select(Condition::Eq(nested.inputs[0], nested.inputs[1]));
                     i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                    changed = true;
                 }
                 // sgn(a - b) where a >= b => condition(a != b)
                 else if nested.op == OptOp::Sub && *ranges[0].start() >= 0 {
                     i.op = OptOp::Select(Condition::Eq(nested.inputs[0], nested.inputs[1]));
                     i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                    changed = true;
                 }
                 // sgn(a - b) where b >= a => a == b ? 0 : -1
                 else if nested.op == OptOp::Sub && *ranges[0].end() <= 0 {
                     i.op = OptOp::Select(Condition::Eq(nested.inputs[0], nested.inputs[1]));
                     i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_NEG_ONE];
+                    changed = true;
                 }
                 // sgn(digit_sum(a)) => condition(a != 0)
                 else if nested.op == OptOp::DigitSum {
                     i.op = OptOp::Select(Condition::Eq(nested.inputs[0], ValueId::C_ZERO));
                     i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                    changed = true;
                 }
                 else if *ranges[0].start() >= 0 {
                     i.op = OptOp::Select(Condition::Eq(x, ValueId::C_ZERO));
                     i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                    changed = true;
                 } else if *ranges[0].end() <= 0 {
                     i.op = OptOp::Select(Condition::Eq(x, ValueId::C_ZERO));
                     i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_NEG_ONE];
+                    changed = true;
                 }
             }
         }
@@ -1062,6 +1069,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     i.op = OptOp::Add;
                     i.inputs = smallvec![ValueId::C_NEG_TWO, modulo];
                     i.effect = OpEffect::None;
+                    changed = true;
                 }
             }
         }

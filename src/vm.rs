@@ -6,7 +6,7 @@ use num_integer::{Integer, Roots};
 use smallvec::{SmallVec, ToSmallVec};
 use thiserror::Error;
 
-use crate::{compiler::{self, cfg::GraphBuilder, cfg_interpreter::interpret_cfg, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::digit_sum, funkcia, ops::Op};
+use crate::{compiler::{self, cfg::GraphBuilder, cfg_interpreter::interpret_cfg, config::get_config, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::digit_sum, funkcia, ops::Op};
 
 #[cfg(test)]
 mod tests;
@@ -52,6 +52,7 @@ struct State<'a, TTracer: Tracer> {
     pub reverse_undo_stack: Vec<(usize, usize)>,
     pub ops: Vec<Op>,
     pub tracer: TTracer,
+    pub conf: &'a compiler::config::JitConfig,
 }
 
 /// An error that can occur during the execution of ksplang instructions.
@@ -324,7 +325,8 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             reverse_undo_stack: vec![],
             stack,
             ops,
-            tracer: Default::default()
+            tracer: Default::default(),
+            conf: get_config()
         }
     }
 
@@ -338,6 +340,7 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             reversed: self.reversed,
             reverse_undo_stack: self.reverse_undo_stack,
             ops: self.ops,
+            conf: self.conf,
             tracer: new_tracer(self.tracer)
         }
     }
@@ -1148,6 +1151,9 @@ fn run_state<'a, T: Tracer>(
                             index: new_ip as i64,
                         }));
                     }
+                    if s.conf.should_log(25) {
+                        println!("Branching {}->{} {:?} (set) Stack {}, top3: {:?}", s.ip, new_ip, s.ops[new_ip], s.stack.len(), s.stack.iter().rev().copied().take(3).collect::<Vec<i64>>());
+                    }
                     s.ip = new_ip;
                 }
                 IPChange::Add(offset) => {
@@ -1165,6 +1171,9 @@ fn run_state<'a, T: Tracer>(
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: new_ip,
                         }));
+                    }
+                    if s.conf.should_log(25) {
+                        println!("Branching {}->{} {:?} (add {}) Stack {}, top3: {:?}", s.ip, new_ip, s.ops[new_ip as usize], offset, s.stack.len(), s.stack.iter().rev().copied().take(3).collect::<Vec<i64>>());
                     }
                     s.ip = new_ip as usize;
                 }
@@ -1215,7 +1224,7 @@ struct Optimizer {
     // last_ip: usize,
     visit_counter: HashMap<usize, VisitCounter>,
     optimized_blocks: HashMap<usize, OptimizedBlock>,
-    has_jumped: bool,
+    has_jumped: u8,
     // should_optimize: bool,
     has_interrupted: bool,
     trigger_count: u32
@@ -1246,16 +1255,38 @@ impl Tracer for Optimizer {
     fn pop(&mut self) {}
 
     #[inline]
-    fn instruction(&mut self, _ip: usize, _op: Op, result: &Result<Effect, OperationError>) -> Result<(), RunError> {
+    fn instruction(&mut self, ip: usize, _op: Op, result: &Result<Effect, OperationError>) -> Result<(), RunError> {
         if !matches!(result, Ok(Effect::None)) {
-            self.has_jumped = true;
+            match result.as_ref().unwrap() {
+                // short jumps (you can't really do anything useful with 20 instructions)
+                Effect::AddInstructionPointer(x) if x.abs() < 20 => {
+                    self.has_jumped = 1;
+                }
+                Effect::SetInstructionPointer(ip2) | Effect::SaveAndSetInstructionPointer(ip2) if ip2.abs_diff(ip) < 20 => {
+                    self.has_jumped = 1;
+                }
+                Effect::TemporaryReverse(_) => {
+                    self.has_jumped = 1;
+                }
+                // back jumps (probably loops)
+                Effect::AddInstructionPointer(x) if *x < 0 => {
+                    self.has_jumped = 3;
+                }
+                Effect::SetInstructionPointer(ip2) | Effect::SaveAndSetInstructionPointer(ip2) if *ip2 < ip => {
+                    self.has_jumped = 3;
+                }
+                Effect::AddInstructionPointer(_) | Effect::SetInstructionPointer(_) | Effect::SaveAndSetInstructionPointer(_) => {
+                    self.has_jumped = 2;
+                }
+                _ => { self.has_jumped = 0; }
+            }
         }
         Ok(())
     }
 
     #[inline]
     fn should_continue(&mut self, reversed: bool, ip: usize, op: Op) -> bool {
-        fn mark_visit(this: &mut Optimizer, reversed: bool, ip: usize) -> bool {
+        fn mark_visit(this: &mut Optimizer, reversed: bool, ip: usize, jump_quality: u8) -> bool {
             let k = if reversed { !ip } else { ip };
             if this.optimized_blocks.contains_key(&k) {
                 return false;
@@ -1263,15 +1294,22 @@ impl Tracer for Optimizer {
 
             let ctr = this.visit_counter.entry(k).or_default();
             ctr.counter = ctr.counter.wrapping_add(1);
-            if ctr.supressed || ctr.counter < this.trigger_count {
-                this.has_jumped = false;
+            let trigger_count = if jump_quality >= 3 {
+                this.trigger_count
+            } else if jump_quality == 2 {
+                this.trigger_count.saturating_mul(2)
+            } else {
+                this.trigger_count.saturating_mul(4)
+            };
+            if ctr.supressed || ctr.counter < trigger_count {
+                this.has_jumped = 0;
                 return true;
             }
             this.has_interrupted = true;
             false
         }
-        if self.has_jumped && op == Op::DigitSum {
-            mark_visit(self, reversed, ip)
+        if self.has_jumped != 0 && op == Op::DigitSum {
+            mark_visit(self, reversed, ip, self.has_jumped)
         } else {
             true
         }
@@ -1480,7 +1518,7 @@ impl OptimizingVM {
                     options2.stop_after = s.instructions_run + r.executed_ksplang;
 
                     self::run_state(&mut state_backup, &options2).expect("Real program failed while optimized program ran fine :|");
-                    assert_eq!((&s.stack, r.next_ip), (&state_backup.stack, state_backup.ip), "Optimized block led to different stack than real execution [{}]:\n{:?}\nStarting stack: {:?}", s.ip, r, backup2);
+                    assert_eq!((&s.stack, r.next_ip), (&state_backup.stack, state_backup.ip), "Optimized block {} led to different stack than real execution:\n{:?}\nStarting stack: {:?}", s.ip, r, backup2);
                     Ok(r)
                 } else {
                     interpret_cfg(&opt_block.cfg, &mut s.stack, true)
@@ -1520,7 +1558,7 @@ impl OptimizingVM {
 
     fn optimize<'a>(&mut self, s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
         // let limit = if s.ip == 167 { 2806 } else { 10_000 };
-        let limit = self.conf.adhoc_instr_limit as usize;
+        let limit = self.conf.adhoc_interpret_limit as usize;
         let (optimizer, mut st) = s.swap_tracer(ActualTracer::default());
         st.tracer.start_block_location = st.ip;
         st.tracer.max_count = 2_000;

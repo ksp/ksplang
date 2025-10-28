@@ -1,20 +1,9 @@
-use std::{cmp, collections::{HashMap, VecDeque}, ops::RangeInclusive, vec};
+use std::{cmp, collections::{BTreeSet, HashMap, HashSet, VecDeque}, ops::RangeInclusive, vec};
 
 use num_integer::Integer;
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::{GraphBuilder, StackState}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, vm_code::Condition}, digit_sum::digit_sum, funkcia::funkcia, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
-
-pub struct Options {
-    pub allow_pruning: bool
-}
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            allow_pruning: true
-        }
-    }
-}
+use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, vm_code::Condition}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
 
 pub trait TraceProvider {
     // type TracePointer
@@ -62,13 +51,15 @@ pub struct Precompiler<'a, TP: TraceProvider> {
     pub g: GraphBuilder,
     // deopt_info: HashMap<u32, DeoptInfo<u32>>,
     pub position: usize,
-    pub interpretation_limit: usize,
+    pub instr_interpreted_count: usize,
+    pub interpretation_soft_limit: usize,
+    pub interpretation_hard_limit: usize,
     pub bb_limit: usize,
     pub instr_limit: usize,
     pub termination_ip: Option<usize>,
     pub visited_ips: HashMap<usize, VisitedIpStats>,
     pub pending_branches: VecDeque<PendingBranchInfo>,
-    pub opt: Options,
+    pub conf: JitConfig,
     pub tracer: TP
 }
 
@@ -106,14 +97,16 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             reversed_direction,
             initial_position,
             position: initial_position,
-            interpretation_limit,
+            interpretation_soft_limit: interpretation_limit,
+            interpretation_hard_limit: interpretation_limit * 2,
+            instr_interpreted_count: 0,
             bb_limit: usize::MAX,
             instr_limit: usize::MAX,
             g: initial_graph,
             termination_ip,
             visited_ips: HashMap::new(),
             pending_branches: VecDeque::new(),
-            opt: Options::default(),
+            conf: get_config().clone(),
             tracer
         }
     }
@@ -148,7 +141,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             } else {
                 Some(target_const as usize)
             };
-            println!("Branching to constant target {target_const} {}->{target_ip:?} (relative={is_relative}, call={is_call}, condition={condition:?})", self.position);
+            if self.conf.should_log(5) {
+                println!("Branching to constant target {target_const} {}->{target_ip:?} (relative={is_relative}, call={is_call}, condition={condition:?})", self.position);
+            }
 
             if target_ip.is_none_or(|target_ip | target_ip >= self.ops.len()) {
                 // branching out of the program
@@ -244,8 +239,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.stack.push(out);
 
                 let next_pos = self.next_position();
-                let checkpoint = self.g.push_instr_may_deopt(OptOp::Nop, &[]); // checkpoint after side effect
-                checkpoint.program_position = next_pos;
+                self.g.push_checkpoint().program_position = next_pos;
                 Continue
             }
             crate::ops::Op::Swap => {
@@ -258,8 +252,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.stack.push(out);
 
                 let next_pos = self.next_position();
-                let checkpoint = self.g.push_instr_may_deopt(OptOp::Nop, &[]); // checkpoint after side effect
-                checkpoint.program_position = next_pos;
+                self.g.push_checkpoint().program_position = next_pos;
                 Continue
             }
             crate::ops::Op::Roll => {
@@ -288,9 +281,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         return Continue
                     }
                     let mut vals = self.g.pop_stack_n(n as usize);
-                    println!("Roll({n}, {rotate_by}) {vals:?}");
+                    if self.conf.should_log(20) {
+                        println!("Roll({n}, {rotate_by}) {vals:?}");
+                    }
                     vals[..].rotate_left(rotate_by as usize);
-                    println!("        -> {vals:?}");
+                    if self.conf.should_log(20) {
+                        println!("        -> {vals:?}");
+                    }
                     for v in vals.iter().rev() {
                         self.g.stack.push(*v)
                     }
@@ -661,9 +658,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let (c_start, c_end) = self.g.val_range(c).into_inner();
 
                 if self.g.get_constant(a) == Some(0) {
-                    self.g.pop_stack_n(3);
-
+                    
                     if self.g.get_constant(b) == Some(0) {
+                        self.g.pop_stack_n(3);
                         // equation is `c == 0`
                         if c_start <= 0 && c_end >= 0 {
                             let cond = if (c_start, c_end) == (0, 0) {
@@ -679,6 +676,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     }
 
                     if b_start == 1 && b_end == 1 {
+                        self.g.pop_stack_n(3);
                         // -c
                         let r = self.g.value_numbering(OptOp::Sub, &[ValueId::C_ZERO, c], None, None);
                         self.g.stack.push(r);
@@ -698,6 +696,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     });
 
                     if bruteforced_div_range.as_ref().is_some_and(|r| r.is_empty()) {
+                        self.g.pop_stack_n(3);
                         self.g.push_assert(Condition::False, OperationError::IntegerOverflow, None);
                         return Continue
                     }
@@ -723,18 +722,19 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                         if divisibility == Condition::False {
                             // no solutions
+                            self.g.pop_stack_n(3);
                             return Continue
                         }
 
                         if !are_states_distinguishable || divisibility == Condition::True {
-                            self.g.push_deopt_assert(divisibility, false);
+                            self.g.push_deopt_assert(divisibility, true);
                         } else {
                             // ok branching...
                             // we put the branch after all instruction, as that's easier to implement
                             alt_branch.push(PrecompileStepResultBranch {
                                 target: self.next_position(),
                                 condition: divisibility.neg(),
-                                stack: (0, vec![]),
+                                stack: (3, vec![]),
                                 call_ret: None,
                                 additional_instr: vec![],
                             });
@@ -770,13 +770,14 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     };
 
                     if alt_branch.len() == 0 {
+                        self.g.pop_stack_n(3);
                         self.g.stack.push(result);
                         return Continue
                     } else {
                         alt_branch.push(PrecompileStepResultBranch {
                             target: self.next_position(),
                             condition: Condition::True,
-                            stack: (0, vec![result]),
+                            stack: (3, vec![result]),
                             call_ret: None,
                             additional_instr: vec![],
                         });
@@ -876,7 +877,6 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             },
             crate::ops::Op::BranchIfZero => {
                 let (val, target) = self.g.peek_stack_2();
-                println!("BranchIfZero to {} if {} == 0", target, val);
                 return self.branching(target, false, false, Condition::EqConst(val, 0));
             }
             crate::ops::Op::Call => {
@@ -894,6 +894,14 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             // BS instrukce
             crate::ops::Op::Rev | crate::ops::Op::Sleep | crate::ops::Op::Deez | crate::ops::Op::Sum => NevimJak,
         }
+    }
+
+    fn branching_limit_exhausted(&self) -> bool {
+        let instr_count = self.g.reachable_blocks().map(|b| b.instructions.len()).sum::<usize>();
+        self.g.reachable_blocks().count() >= self.bb_limit ||
+        instr_count >= self.instr_limit ||
+        // self.instr_interpreted_count * 2 > self.interpretation_soft_limit && !self.pending_branches.is_empty() ||
+        self.instr_interpreted_count > self.interpretation_soft_limit 
     }
 
     // fn condition_cnf(&mut self, cnf: &[Vec<Condition<ValueId>>]) -> Condition<ValueId> { if cnf.len() == 0 { return Condition::True; }
@@ -919,12 +927,28 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             if self.g.stack.stack_depth as usize + 1 >= self.initial_stack_size {
                 break;
             }
-            if self.interpretation_limit == 0 {
+            if self.instr_interpreted_count >= self.interpretation_hard_limit {
+                if self.conf.should_log(1) {
+                    println!("Interpretation hard limit reached");
+                }
                 break;
             }
-            self.interpretation_limit -= 1;
+            if self.instr_interpreted_count >= self.interpretation_soft_limit {
+                let top = self.g.val_range_at(self.g.stack.peek().unwrap_or(ValueId(0)), self.g.next_instr_id());
+                let op = &self.ops[self.position];
+                // terminate if we don't seem to be building a constants
+                // ...and the instruction doesn't seem to be free stack size reduction
+                if top.start().abs_diff(*top.end()) > 1_000 &&
+                    !matches!(op, Op::And | Op::Funkcia | Op::LSwap | Op::Swap | Op::TetrationItersNum | Op::TetrationNumIters | Op::Remainder | Op::Modulo | Op::Max | Op::Pop | Op::Pop2 | Op::Increment | Op::Bitshift) {
+                    if self.conf.should_log(1) {
+                        println!("Interpretation soft limit reached, terminating due to top stack value range {top:?} at {} {op:?}", self.position);
+                    }
+                    break;
+                }
+            }
+            self.instr_interpreted_count += 1;
 
-            #[cfg(debug_assertions)] {
+            if self.conf.should_log(20) {
                 let trace_results_fmt: String =
                     self.tracer.get_results(self.position)
                         .map(|r| format!("{}:{:?}; ", r.0, r.1))
@@ -946,6 +970,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 PrecompileStepResult::Continue => {}
                 PrecompileStepResult::NevimJak | PrecompileStepResult::NevimJakChteloByToKonstantu(_) => {
                     self.g.current_block_mut().ksplang_instr_count -= 1;
+                    if self.conf.should_log(2) {
+                        println!("  Deoptimizing at IP {} {:?}: {:?}", self.position, self.ops[self.position], result);
+                    }
                     if stack_counts != (self.g.stack.push_count, self.g.stack.pop_count) {
                         panic!("Error when interpreting OP {} {:?}: modifed stack, but then returned {result:?}. Stack: {}", self.position, self.ops[self.position], self.g.fmt_stack())
                     }
@@ -961,19 +988,21 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     continue;
                 },
                 PrecompileStepResult::Branching(branches) => {
-                    let should_deopt = self.g.reachable_blocks().count() >= self.bb_limit ||
-                        baseline_instr_count + self.g.current_block_ref().incoming_jumps.len() >= self.instr_limit;
+                    let should_deopt = self.branching_limit_exhausted();
                     if self.g.conf.should_log(3) {
                         println!("  Branching: {:?}", branches);
                         println!("  Finalizing block at {} {}", self.g.fmt_stack(), self.g.current_block_ref());
                         if should_deopt {
-                            println!("    (but will deopt due to limits)");
+                            println!("    (but will deopt due to limits [bbs {} <= {}, instr {} <= {}, interpreted {} <= {}])",
+                                self.g.reachable_blocks().count(), self.bb_limit,
+                                baseline_instr_count + self.g.current_block_ref().incoming_jumps.len(), self.instr_limit,
+                                self.instr_interpreted_count, self.interpretation_soft_limit,
+                            );
                         }
                     }
                     if should_deopt {
-                        self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
-                        self.g.current_block_mut().is_finalized = true;
-                        return;
+                        self.g.current_block_mut().ksplang_instr_count -= 1;
+                        break;
                     }
                     let mut prev_assumptions = vec![];
                     for branch in branches {
@@ -1009,17 +1038,27 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             stack_snapshot: vec![stack_snapshot],
                         });
                     }
+                    for i in 0..self.g.stack.stack.len() {
+                        self.g.stack.pop().unwrap();
+                    }
+                    println!(" DEBUG maybe removing values: {:?}", self.g.stack.poped_values);
+                    if self.conf.allow_pruning {
+                        self.g.clean_poped_values();
+                    }
                     self.g.current_block_mut().is_finalized = true;
                     return;
                 },
                 // x => todo!("Unhandled branching result: {:?}", x),
             }
 
-            if self.opt.allow_pruning {
+            if self.conf.allow_pruning {
                 self.g.clean_poped_values();
             }
 
             self.position = self.next_position();
+        }
+        if self.conf.allow_pruning {
+            self.g.clean_poped_values();
         }
         self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
         self.g.current_block_mut().is_finalized = true;
@@ -1092,10 +1131,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         }
 
         self.g.set_program_position(None);
-        println!("F Stack: {}", self.g.fmt_stack());
-        println!("FINAL Program:");
-        for b in &self.g.blocks {
-            println!("{b}");
+        if self.conf.should_log(2) {
+            println!("F Stack: {}", self.g.fmt_stack());
+            println!("FINAL Program:");
+            for b in &self.g.blocks {
+                println!("{b}");
+            }
         }
     }
 }
