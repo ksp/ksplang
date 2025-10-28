@@ -37,7 +37,7 @@ pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: 
             }
         }
     }
-    if cond_mut != condition {
+    if cfg!(debug_assertions) && cond_mut != condition {
         println!("simplify_cond({condition}, {at}) -> {cond_mut}")
     }
     cond_mut
@@ -765,6 +765,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         return (i.clone().with_op(OptOp::Const(1), &[], OpEffect::None), Some(1..=1));
                     }
                 }
+                changed = false;
             }
 
             OptOp::Median if i.inputs.len() == 2 && i.inputs[0].is_constant() => {
@@ -931,7 +932,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         if OptOp::Mul == i.op {
             // (a + b) * c => a * c + b * c
             // only valid if at all a, b have the same sign, otherwise we are introducing overfows
-            println!("DEBUG Mul OPT1: {}", i);
             for (arg_ix, &val) in i.inputs.clone().iter().enumerate() {
                 let Some(def) = cfg.get_defined_at(val) else { continue };
                 if def.op == OptOp::Add {
@@ -943,7 +943,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                             OptOp::<ValueId>::Mul.effect_based_on_ranges(&range_clone) == OpEffect::None
                         })
                     };
-                    println!("DEBUG Mul OPT: {} {} {}", i, is_valid, def);
+                    // println!("DEBUG Mul OPT: {} {} {}", i, is_valid, def);
                     if is_valid {
                         let new_args = def.inputs.clone().iter().map(|v| {
                             let mut in_clone = i.inputs.clone();

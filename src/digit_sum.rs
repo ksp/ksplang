@@ -51,7 +51,7 @@ pub fn digit_sum_u64(num: u64) -> i64 {
 }
 
 pub fn digit_sum_range(r: RangeInclusive<i64>) -> RangeInclusive<i64> {
-    let (lo, hi) = r.into_inner();
+    let (lo, hi) = r.clone().into_inner();
     assert!(lo <= hi);
     if lo == hi {
         let ds = digit_sum(lo);
@@ -94,7 +94,7 @@ pub fn digit_sum_range(r: RangeInclusive<i64>) -> RangeInclusive<i64> {
         olo = olo * 10 + 0;
     }
 
-    println!("{olo} {ohi}");
+    // println!("digit_sum_range({r:?}) -> cs({olo})..=cs({ohi})");
 
     assert!(olo <= hi && olo >= lo && ohi >= lo && ohi <= hi, "out of range input: {}..={}, olo={}, ohi={}", lo, hi, olo, ohi);
 

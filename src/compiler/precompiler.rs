@@ -1022,8 +1022,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             // branch was optimized out right away
                             continue
                         };
-
-                        println!("    Created branch to IP={} {} with condition {:?}, stack: {} {:?}", branch.target, new_block_id, branch.condition, stack_snapshot.depth, stack_snapshot.stack);
+                        
+                        if self.conf.should_log(2) {
+                            println!("    Created branch to IP={} {} with condition {:?}, stack: {} {:?}", branch.target, new_block_id, branch.condition, stack_snapshot.depth, stack_snapshot.stack);
+                        }
 
                         let mut assumes = prev_assumptions.clone();
                         assumes.push(branch.condition.clone());
@@ -1041,7 +1043,6 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     for i in 0..self.g.stack.stack.len() {
                         self.g.stack.pop().unwrap();
                     }
-                    println!(" DEBUG maybe removing values: {:?}", self.g.stack.poped_values);
                     if self.conf.allow_pruning {
                         self.g.clean_poped_values();
                     }
@@ -1075,7 +1076,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 break;
             };
             let bid = pb.to_bb;
-            println!("Continuing on pending branch {pb:?}");
+            if self.conf.should_log(2) {
+                println!("Continuing on pending branch {pb:?}");
+            }
             assert_eq!(self.g.block_(bid).parameters, []);
             let stack_depth = pb.stack_snapshot[0].depth;
             for s in &pb.stack_snapshot {

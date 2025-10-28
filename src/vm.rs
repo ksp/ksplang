@@ -1565,7 +1565,9 @@ impl OptimizingVM {
         let start_ip = st.ip;
         let start_stack_size = st.stack.len();
         let reversed = st.reversed;
-        println!("Starting tracing at {start_ip}");
+        if st.conf.should_log(1) {
+            println!("Starting tracing at {start_ip}");
+        }
         let result = run_state(&mut st, options);
 
         let (trace, s) = st.swap_tracer(optimizer);
@@ -1584,10 +1586,12 @@ impl OptimizingVM {
         p.instr_limit = self.conf.adhoc_instr_limit as usize;
         p.interpret();
 
-        println!("Optimized at {start_ip}({reversed}):");
-        println!("{}", p.g);
-        println!("");
-        println!("===================================================================");
+        if s.conf.should_log(1) {
+            println!("Optimized at {start_ip}({reversed}):");
+            println!("{}", p.g);
+            println!("");
+            println!("===================================================================");
+        }
 
         let b = OptimizedBlock { cfg: p.g, reversed, start_ip, stats: BlockStats::default() };
         self.opt.insert_block(b);
@@ -1605,10 +1609,12 @@ impl OptimizingVM {
         p.instr_limit = self.conf.start_instr_limit as usize;
         p.interpret();
 
-        println!("Optimized at start:");
-        println!("{}", p.g);
-        println!("");
-        println!("===================================================================");
+        if s.conf.should_log(1) {
+            println!("Optimized at start:");
+            println!("{}", p.g);
+            println!("");
+            println!("===================================================================");
+        }
 
         let b = OptimizedBlock { cfg: p.g, reversed: s.reversed, start_ip: s.ip, stats: BlockStats::default() };
         self.opt.insert_block(b);
