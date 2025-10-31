@@ -1,13 +1,13 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, collections::{BTreeMap, BTreeSet, HashMap}, i32, mem, ops::{Range, RangeInclusive}, u32
+    borrow::Cow, collections::{BTreeMap, BTreeSet, HashMap}, i32, ops::{Range, RangeInclusive}, u32
 };
 
 use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier::{self, simplify_cond}, utils::{abs_range, intersect_range, FULL_RANGE}, vm_code::{self, Condition}}, vm::OperationError};
+use crate::{compiler::{config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier::{self, simplify_cond}, utils::{abs_range, intersect_range, union_range, FULL_RANGE}, vm_code::{self, Condition}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -326,7 +326,7 @@ impl GraphBuilder {
                     resolved[i] = Some(*vals.iter().next().unwrap());
                 } else {
                     let range = vals.iter().map(|v| self.val_range(*v))
-                        .reduce(|a, b| intersect_range(&a, &b))
+                        .reduce(|a, b| union_range(a, b))
                         .unwrap();
                     tighten_ranges.insert(i, range);
                 }
@@ -982,12 +982,24 @@ impl GraphBuilder {
         format!("{} [{}]", self.stack.stack.len(), parts.join(", "))
     }
 
+    fn remove_used_at(&mut self, val: ValueId, instr: InstrId) {
+        if !val.is_computed() {
+            return;
+        }
+        if let Some(info) = self.values.get_mut(&val) {
+            info.used_at.remove(&instr);
+            if info.used_at.is_empty() {
+                self.stack.poped_values.push(val);
+            }
+        }
+    }
+
     pub fn remove_instruction(&mut self, id: InstrId, force_value_removal: bool) {
         let InstrId(block_id, instr_ix) = id.clone();
         let Some(instr) = self.get_instruction(id) else {
             return;
         };
-        let args: Vec<ValueId> = instr.iter_inputs().filter(|r| r.is_computed()).collect();
+        let args: SmallVec<[ValueId; 5]> = instr.iter_inputs().filter(|r| r.is_computed()).collect();
         let val_id = instr.out;
         if let Some(out_val) = self.values.get(&val_id) {
             assert!(val_id.is_computed());
@@ -1008,52 +1020,55 @@ impl GraphBuilder {
         }
         self.blocks[block_id.0 as usize].instructions.remove(&instr_ix);
 
-        // remove inputs if this was their last use
-        let mut clean_values = vec![];
         for arg in args {
-            if let Some(info) = self.values.get_mut(&arg) {
-                info.used_at.remove(&id);
-                if info.used_at.is_empty() {
-                    clean_values.push(arg);
-                }
-            }
+            self.remove_used_at(arg, id);
         }
-        for val in clean_values {
-            self.clean_value(val);
+
+    }
+
+    fn remove_block_parameter(&mut self, block_id: BlockId, p: ValueId) {
+        let block = self.block_mut(block_id).unwrap();
+        let index = block.parameters.iter().position(|&v| v == p).unwrap();
+        block.parameters.remove(index);
+        for &jump_id in &block.incoming_jumps.clone() {
+            let jump = self.instr_mut(jump_id).unwrap();
+            let removed_value = jump.inputs.remove(index);
+            if !jump.inputs.contains(&removed_value) {
+                self.remove_used_at(removed_value, jump_id);
+            }
         }
     }
 
     pub fn clean_value(&mut self, val: ValueId) {
         let fuck_errors = false;
-        if let Some(val) = self.values.get(&val) {
-            let val_id  = val.id;
-            if val.used_at.is_empty() && !self.stack.lookup.contains_key(&val_id) {
-                let Some(instruction_id) = val.assigned_at else {
-                    return // it's a parameter or something like that
-                };
-                if instruction_id.is_block_head() {
-                    todo!("phis (BB parameters)")
-
-                } else if let Some(defined_at) = self.get_instruction(instruction_id) {
-                    let effect = defined_at.effect;
-                    if !(effect == OpEffect::None || (fuck_errors && effect == OpEffect::MayFail)) {
-                        // can't remove instruction, no reason to remove the value
-                        // maybe codegen can then optimize it to assert-only
-                        return;
-                    }
-                    let instruction_id = defined_at.id;
-                    self.remove_instruction(instruction_id, false);
-
-                    assert!(!self.values.contains_key(&val_id), "Value {:?} should have been removed with instruction {:?}", val_id, instruction_id);
-                } else {
-                    todo!("probably should not happen?");
+        let Some(val) = self.values.get(&val) else { return };
+        let val_id = val.id;
+        if val.used_at.is_empty() && !self.stack.lookup.contains_key(&val_id) {
+            let Some(instruction_id) = val.assigned_at else {
+                return // it's a parameter or something like that
+            };
+            if instruction_id.is_block_head() {
+                self.remove_block_parameter(instruction_id.block_id(), val_id);
+            } else if let Some(defined_at) = self.get_instruction(instruction_id) {
+                let effect = defined_at.effect;
+                if !(effect == OpEffect::None || (fuck_errors && effect == OpEffect::MayFail)) {
+                    // can't remove instruction, no reason to remove the value
+                    // maybe codegen can then optimize it to assert-only
+                    return;
                 }
+                let instruction_id = defined_at.id;
+                self.remove_instruction(instruction_id, false);
+
+                assert!(!self.values.contains_key(&val_id), "Value {:?} should have been removed with instruction {:?}", val_id, instruction_id);
+            } else {
+                todo!("probably should not happen?");
             }
         }
     }
 
     pub fn clean_poped_values(&mut self) {
-        for val in mem::take(&mut self.stack.poped_values) {
+        self.stack.poped_values.dedup();
+        while let Some(val) = self.stack.poped_values.pop() {
             self.clean_value(val);
         }
     }

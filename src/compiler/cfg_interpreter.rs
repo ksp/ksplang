@@ -58,9 +58,15 @@ pub fn interpret_cfg(
                         assert_eq!(instr.inputs.len(), target_block.parameters.len(), "{target}");
 
                         for (param, arg) in target_block.parameters.iter().zip(&instr.inputs) {
-                            assert!(param.is_constant());
                             let value = resolve_value(g, &values, *arg);
                             values.insert(*param, value);
+                        }
+
+                        if g.conf.should_log(25) {
+                            println!("CFGI Branching to {target} from instr {} ({})", instr.id,
+                                target_block.parameters.iter()
+                                    .map(|p| format!("{}={}", p, values[p]))
+                                    .collect::<Vec<_>>().join(", "));
                         }
 
                         block_iteration_guard += 1;

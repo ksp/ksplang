@@ -1012,35 +1012,66 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         stack_snapshot.stack.truncate(stack_snapshot.stack.len() - branch.stack.0 as usize);
                         stack_snapshot.stack.extend(&branch.stack.1);
 
+                        let existing_idx = self.pending_branches.iter().position(|pb|
+                            pb.target == branch.target &&
+                            pb.reversed_direction == self.reversed_direction &&
+                            pb.stack_snapshot[0].depth == stack_snapshot.depth &&
+                            pb.stack_snapshot[0].stack.len() == stack_snapshot.stack.len()
+                        );
 
-                        let new_block = self.g.new_block(branch.target, false, vec![]);
-                        let new_block_id = new_block.id;
+                        let target_block_id = if let Some(idx) = existing_idx {
+                            BlockId(self.pending_branches[idx].to_bb.0)
+                        } else {
+                            let new_block = self.g.new_block(branch.target, false, vec![]);
+                            new_block.id
+                        };
 
                         // TODO: merging, ordering heuristics
 
-                        let Some(branch_id) = self.g.push_instr(OptOp::Jump(branch.condition.clone(), new_block_id), &stack_snapshot.stack, false, None, None).1.map(|i| i.id) else {
+                        let Some(branch_id) = self.g.push_instr(OptOp::Jump(branch.condition.clone(), target_block_id), &stack_snapshot.stack, false, None, None).1.map(|i| i.id) else {
                             // branch was optimized out right away
                             continue
                         };
-                        
+
                         if self.conf.should_log(2) {
-                            println!("    Created branch to IP={} {} with condition {:?}, stack: {} {:?}", branch.target, new_block_id, branch.condition, stack_snapshot.depth, stack_snapshot.stack);
+                            if existing_idx.is_some() {
+                                println!(
+                                    "    Merged branch to IP={} {} with condition {:?}, stack: {} {:?}",
+                                    branch.target, target_block_id, branch.condition, stack_snapshot.depth, stack_snapshot.stack
+                                );
+                            } else {
+                                println!(
+                                    "    Created branch to IP={} {} with condition {:?}, stack: {} {:?}",
+                                    branch.target, target_block_id, branch.condition, stack_snapshot.depth, stack_snapshot.stack
+                                );
+                            }
                         }
 
                         let mut assumes = prev_assumptions.clone();
                         assumes.push(branch.condition.clone());
                         prev_assumptions.push(branch.condition.clone().neg());
-                        self.pending_branches.push_back(PendingBranchInfo {
-                            target: branch.target,
-                            reversed_direction: self.reversed_direction,
-                            assumes,
-                            b: vec![branch],
-                            from: vec![branch_id],
-                            to_bb: new_block_id,
-                            stack_snapshot: vec![stack_snapshot],
-                        });
+
+                        if let Some(idx) = existing_idx {
+                            if let Some(pb) = self.pending_branches.get_mut(idx) {
+                                pb.from.push(branch_id);
+                                pb.b.push(branch.clone());
+                                pb.stack_snapshot.push(stack_snapshot);
+                                // TODO: proper intersection of assumptions (i.e. a > 2 | a > 5  => a > 2)
+                                pb.assumes.retain(|cond| assumes.contains(cond));
+                            }
+                        } else {
+                            self.pending_branches.push_back(PendingBranchInfo {
+                                target: branch.target,
+                                reversed_direction: self.reversed_direction,
+                                assumes,
+                                b: vec![branch],
+                                from: vec![branch_id],
+                                to_bb: target_block_id,
+                                stack_snapshot: vec![stack_snapshot],
+                            });
+                        }
                     }
-                    for i in 0..self.g.stack.stack.len() {
+                    for _ in 0..self.g.stack.stack.len() {
                         self.g.stack.pop().unwrap();
                     }
                     if self.conf.allow_pruning {
@@ -1080,25 +1111,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 println!("Continuing on pending branch {pb:?}");
             }
             assert_eq!(self.g.block_(bid).parameters, []);
+            assert!(!pb.stack_snapshot.is_empty());
             let stack_depth = pb.stack_snapshot[0].depth;
             for s in &pb.stack_snapshot {
                 assert_eq!(s.depth, stack_depth);
             }
-            // let common_vals = get_common_vals(&pb.stack_snapshot);
-            // // remove parameters which are the same on all incoming edges
-            // for &incoming in &pb.from {
-            //     let instr = self.g.instr_mut(incoming).unwrap();
-            //     let mut index = 0;
-            //     instr.inputs.retain(|_| {
-            //         index += 1;
-            //         !common_vals[index - 1]
-            //     });
-            // }
-            // for (i, &is_common) in common_vals.iter().enumerate() {
-            //     if is_common {
-
-            //     }
-            // }
+            assert!(pb.stack_snapshot.iter().all(|snap| snap.stack.len() == pb.stack_snapshot[0].stack.len()));
             let mut preds = pb.from.iter()
                 .map(|inc| self.g.block_(inc.0))
                 .min_by_key(|p| p.predecessors.len())
@@ -1142,13 +1160,4 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
         }
     }
-}
-
-fn get_common_vals(stack_snapshots: &[StackState]) -> Vec<bool> {
-    let mut stack_all_eq = vec![false; stack_snapshots[0].stack.len()];
-    for i in 0..stack_snapshots[0].stack.len() {
-        let val = stack_snapshots[0].stack[i];
-        stack_all_eq[i] = stack_snapshots.iter().all(|s| s.stack[i] == val);
-    }
-    stack_all_eq
 }
