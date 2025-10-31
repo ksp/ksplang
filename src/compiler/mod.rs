@@ -1,6 +1,7 @@
 pub mod config;
 pub mod cfg;
 pub mod vm_code;
+pub mod bytecode_interpreter;
 pub mod ops;
 pub mod simplifier;
 pub mod pattern;

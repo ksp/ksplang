@@ -18,13 +18,19 @@ fn digit_sum_10k(num: u16) -> u8 {
 }
 
 
-
-        // LOOKUP2[(num / 2) as usize] + (num & 1) as u8
+#[inline]
+pub fn digit_sum_twice(num: i64) -> (i64, i64) {
+    if num >= 0 && num < 10 {
+        return (num, num);
+    }
+    let a = digit_sum_u64(num.abs_diff(0));
+    (a, if a < 10 { a } else { LOOKUP[a as usize] as i64 })
+}
 
 #[inline]
 pub fn digit_sum(num: i64) -> i64 {
     if num >= 0 && num < 10 {
-        return num as i64; // super frequent case
+        return num; // super frequent case
     }
     digit_sum_u64(num.abs_diff(0))
 }
