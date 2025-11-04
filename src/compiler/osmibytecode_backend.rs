@@ -482,13 +482,13 @@ impl<'a> Compiler<'a> {
             match self.register_allocation.location(*param) {
                 Some(ValueLocation::Register(dest_reg)) => {
                     if arg.is_constant() {
-                        consts.push((self.g.get_constant_(*arg), RegId(dest_reg)));
+                        consts.push((self.g.get_constant_(*arg), dest_reg));
                         continue;
                     }
                     match self.register_allocation.location(*arg) {
                         Some(ValueLocation::Register(src)) if src == dest_reg => {}
-                        Some(ValueLocation::Register(src)) => register_moves.push((RegId(src), RegId(dest_reg))),
-                        Some(ValueLocation::Spill(src_spill)) => unspills.push((src_spill, RegId(dest_reg))),
+                        Some(ValueLocation::Register(src)) => register_moves.push((src, dest_reg)),
+                        Some(ValueLocation::Spill(src_spill)) => unspills.push((src_spill, dest_reg)),
                         None => panic!()
                     }
                 }
@@ -695,7 +695,7 @@ impl<'a> Compiler<'a> {
             reg
         } else if let Some(location) = self.register_allocation.location(value) {
             match location {
-                ValueLocation::Register(reg) => RegId(reg),
+                ValueLocation::Register(reg) => reg,
                 ValueLocation::Spill(slot) => {
                     let reg = self.temp_regs.alloc().ok_or(())?;
                     self.program.push(OsmibyteOp::Unspill(reg, slot));
@@ -750,7 +750,7 @@ impl<'a> Compiler<'a> {
         }
 
         match self.register_allocation.location(value) {
-            Some(ValueLocation::Register(reg)) => OutputSpec::Register(RegId(reg)),
+            Some(ValueLocation::Register(reg)) => OutputSpec::Register(reg),
             Some(ValueLocation::Spill(slot)) => {
                 let reg = self.temp_regs.alloc().expect("ran out of scratch registers for spill dest");
                 OutputSpec::Spill { reg, slot }
@@ -825,7 +825,7 @@ impl RegisterAllocation {
 
 impl fmt::Display for RegisterAllocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut regs: BTreeMap<u8, BTreeSet<ValueId>> = BTreeMap::new();
+        let mut regs: BTreeMap<RegId, BTreeSet<ValueId>> = BTreeMap::new();
         let mut spills: Vec<(u32, ValueId)> = Vec::new();
 
         for (&value, &location) in &self.locations {
@@ -844,7 +844,7 @@ impl fmt::Display for RegisterAllocation {
         if !regs.is_empty() {
             writeln!(f, "  registers:")?;
             for (reg, values) in regs {
-                writeln!(f, "    r{reg:02}: {values:?}")?;
+                writeln!(f, "    r{:02}: {values:?}", reg.0)?;
             }
         }
 
@@ -862,7 +862,7 @@ impl fmt::Display for RegisterAllocation {
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ValueLocation {
-    Register(u8),
+    Register(RegId),
     Spill(u32),
 }
 
@@ -1034,7 +1034,7 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocatio
             for (block, segment) in segments.iter() {
                 register_segments[chosen_reg].entry(*block).or_default().push(*segment);
             }
-            allocation.locations.insert(val, ValueLocation::Register(chosen_reg as u8));
+            allocation.locations.insert(val, ValueLocation::Register(RegId(chosen_reg as u8)));
             register_values[chosen_reg].insert(val);
         }
     }
@@ -1613,7 +1613,7 @@ mod register_alloc_tests {
         let phi_location = allocation.location(phi);
         let friend_location = allocation.location(friend);
 
-        assert_eq!(phi_location, Some(ValueLocation::Register(0)));
+    assert_eq!(phi_location, Some(ValueLocation::Register(RegId(0))));
         assert_eq!(phi_location, friend_location);
     }
 
