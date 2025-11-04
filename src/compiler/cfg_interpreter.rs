@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use crate::compiler::{
     cfg::GraphBuilder,
     ops::{BlockId, InstrId, OptInstr, OptOp, ValueId},
-    vm_code::Condition,
+    osmibytecode::Condition,
 };
 use crate::vm::OperationError;
 

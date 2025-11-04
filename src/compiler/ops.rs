@@ -3,7 +3,7 @@ use std::{cmp, collections::BTreeSet, fmt::{self, Debug, Display}, num::NonZeroI
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec};
 
-use crate::{compiler::{range_ops::{range_div, range_mod, range_mod_euclid, range_num_digits}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}, vm_code::Condition}, digit_sum, funkcia, vm::{self, median, OperationError}};
+use crate::{compiler::{range_ops::{range_div, range_mod, range_mod_euclid, range_num_digits}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}, osmibytecode::Condition}, digit_sum, funkcia, vm::{self, median, OperationError}};
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

@@ -2,7 +2,7 @@ use std::{cmp, ops::RangeInclusive};
 
 use smallvec::{smallvec, SmallVec, ToSmallVec};
 
-use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, vm_code::Condition}, vm::OperationError};
+use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, osmibytecode::Condition}, vm::OperationError};
 
 fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeInclusive<i64>> {
     let start = *a.start().max(b.start());

@@ -1,7 +1,8 @@
 pub mod config;
 pub mod cfg;
-pub mod vm_code;
-pub mod bytecode_interpreter;
+pub mod osmibytecode;
+pub mod osmibytecode_backend;
+pub mod osmibytecode_vm;
 pub mod ops;
 pub mod simplifier;
 pub mod pattern;

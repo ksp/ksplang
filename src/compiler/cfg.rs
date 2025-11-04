@@ -7,7 +7,7 @@ use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, simplifier::{self, simplify_cond}, utils::{abs_range, intersect_range, union_range, FULL_RANGE}, vm_code::{self, Condition}}, vm::OperationError};
+use crate::{compiler::{analyzer, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::{self, Condition}, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -1107,8 +1107,7 @@ impl GraphBuilder {
 
 impl fmt::Display for GraphBuilder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut block_order = vm_code::postorder(self);
-        block_order.reverse();
+        let block_order = analyzer::reverse_postorder(self);
         writeln!(f, "CFG(blocks={}/{}):", self.blocks.len(), block_order.len())?;
         writeln!(f, "    current_block={}, Stack: {}", self.current_block, self.fmt_stack())?;
         for (id, v) in self.list_used_constants() {

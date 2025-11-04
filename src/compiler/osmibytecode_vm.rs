@@ -2,7 +2,7 @@ use std::{cmp, hint::select_unpredictable, ops::{Index, IndexMut}};
 
 use num_integer::Integer;
 
-use crate::{compiler::{utils::sort_tuple, vm_code::{Condition, OsmibytecodeBlock, OsmibyteOp, RegId}}, digit_sum, funkcia, vm::{self, OperationError}};
+use crate::{compiler::{utils::sort_tuple, osmibytecode::{Condition, OsmibytecodeBlock, OsmibyteOp, RegId}}, digit_sum, funkcia, vm::{self, OperationError}};
 
 
 

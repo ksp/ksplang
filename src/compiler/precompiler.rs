@@ -3,7 +3,7 @@ use std::{cmp, collections::{BTreeSet, HashMap, HashSet, VecDeque}, ops::RangeIn
 use num_integer::Integer;
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, vm_code::Condition}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
+use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, osmibytecode::Condition}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
 
 pub trait TraceProvider {
     // type TracePointer
