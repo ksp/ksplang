@@ -1,7 +1,7 @@
 use core::fmt;
-use std::{cmp, collections::{BTreeMap, BTreeSet, HashMap, HashSet}, fmt::Display, u32};
+use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet}, fmt::Display, u32};
 use arrayvec::ArrayVec;
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 
 use crate::compiler::{cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}};
 use crate::vm::OperationError;
@@ -36,6 +36,9 @@ pub enum PrecompiledOp<TReg: Display> {
     Pop3(TReg, TReg, TReg),
     Pop4(TReg, TReg, TReg, TReg),
     PopSecond(TReg), // like pop2 instruction
+
+    Mov2(TReg, TReg, TReg, TReg), // (dst0 <- src0, dst1 <- src1) simultaneous move
+    Mov3(TReg, TReg, TReg, TReg, TReg, TReg), // (dst0 <- src0, dst1 <- src1, dst2 <- src2)
 
     Add(TReg, TReg, TReg), // a <- b + c
     AddConst(TReg, TReg, i32), // a <- b + const
@@ -79,6 +82,7 @@ pub enum PrecompiledOp<TReg: Display> {
     BoolNot(TReg, TReg), // a <- !b
     SelectConst(TReg, Condition<TReg>, i8, i8), // a <- condition ? b : c
     SelectConst0(TReg, Condition<TReg>, i16), // a <- condition ? b : 0
+    SelectConstReg(TReg, Condition<TReg>, i8, TReg), // a <- condition ? const : reg
 
     Select(TReg, Condition<TReg>, TReg, TReg), // a <- b ? c : d
 
@@ -136,6 +140,11 @@ impl<TReg: Display> PrecompiledOp<TReg> {
             PrecompiledOp::Pop4(a, b, c, d) => PrecompiledOp::Pop4(f(a, true), f(b, true), f(c, true), f(d, true)),
             PrecompiledOp::PopSecond(a) => PrecompiledOp::PopSecond(f(a, true)),
 
+            PrecompiledOp::Mov2(dst0, src0, dst1, src1) =>
+                PrecompiledOp::Mov2(f(dst0, true), f(src0, false), f(dst1, true), f(src1, false)),
+            PrecompiledOp::Mov3(dst0, src0, dst1, src1, dst2, src2) =>
+                PrecompiledOp::Mov3(f(dst0, true), f(src0, false), f(dst1, true), f(src1, false), f(dst2, true), f(src2, false)),
+
             PrecompiledOp::Add(a, b, c) => PrecompiledOp::Add(f(a, true), f(b, false), f(c, false)),
             PrecompiledOp::AddConst(a, b, c) => PrecompiledOp::AddConst(f(a, true), f(b, false), *c),
             PrecompiledOp::Sub(a, b, c) => PrecompiledOp::Sub(f(a, true), f(b, false), f(c, false)),
@@ -181,6 +190,8 @@ impl<TReg: Display> PrecompiledOp<TReg> {
                 PrecompiledOp::SelectConst(f(a, true), condition.replace_regs(|r| f(r, false)), *b, *c),
             PrecompiledOp::SelectConst0(a, condition, b) =>
                 PrecompiledOp::SelectConst0(f(a, true), condition.replace_regs(|r| f(r, false)), *b),
+            PrecompiledOp::SelectConstReg(a, condition, b, c) =>
+                PrecompiledOp::SelectConstReg(f(a, true), condition.replace_regs(|r| f(r, false)), *b, f(c, false)),
             PrecompiledOp::Select(a, condition, c, d) =>
                 PrecompiledOp::Select(f(a, true), condition.replace_regs(|r| f(r, false)), f(c, false), f(d, false)),
 
@@ -590,7 +601,7 @@ impl<'a> Compiler<'a> {
             Push => self.lower_push(instr),
             Pop => self.lower_pop(instr),
             StackSwap => self.lower_stack_swap(instr),
-            Jump(condition, target) => self.lower_jump(condition.clone(), *target),
+            Jump(condition, target) => self.lower_jump(instr, condition.clone(), *target),
             Assert(condition, error) => self.lower_assert(instr, condition.clone(), error.clone()),
             DeoptAssert(_) => todo!(),
             Checkpoint => { },
@@ -654,7 +665,7 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
-        
+
         if let Some(const_val) = self.g.get_constant(instr.inputs[1]) {
             if let Some(const_op) = op_const_rhs(spec.target_reg(), RegId(0), const_val) {
                 let lhs = self.materialize_value_(instr.inputs[0]);
@@ -664,7 +675,7 @@ impl<'a> Compiler<'a> {
                 return;
             }
         }
-        
+
         let lhs = self.materialize_value_(instr.inputs[0]);
         let rhs = self.materialize_value_(instr.inputs[1]);
         self.program.push(op(spec.target_reg(), lhs, rhs));
@@ -679,7 +690,9 @@ impl<'a> Compiler<'a> {
         if let Some(lo_const) = self.g.get_constant(max.inputs[0]) {
             if let Some(&min) = instrs.get(1) {
                 // min(hi_const, max(lo_const, x)) -> clamp(x, lo_const, hi_const)
-                if min.op == OptOp::Min && min.inputs.len() == 2 && min.inputs[1] == max.out {
+                if min.op == OptOp::Min && min.inputs.len() == 2 && min.inputs[1] == max.out &&
+                    self.used_exactly_at(max.out, &[min.id])
+                {
                     if let Some(hi_const) = self.g.get_constant(min.inputs[0]) {
                         assert!(lo_const < hi_const);
                         if let (Ok(lo_i16), Ok(hi_i16)) = (lo_const.try_into(), hi_const.try_into()) {
@@ -709,7 +722,10 @@ impl<'a> Compiler<'a> {
         if let Some(divisor) = self.g.get_constant(div.inputs[1]) {
             if let Some(&next) = instrs.get(1) {
                 // (a / 2) + 1 -> median a 2
-                if divisor == 2 && next.op == OptOp::Add && &next.inputs[..] == &[ValueId::C_ONE, div.out] {
+                if divisor == 2 &&
+                    next.op == OptOp::Add && &next.inputs[..] == &[ValueId::C_ONE, div.out] &&
+                    self.used_exactly_at(div.out, &[next.id])
+                {
                     let spec = self.prepare_output(next.out);
                     let value_reg = self.materialize_value_(div.inputs[0]);
                     self.program.push(PrecompiledOp::MedianCursed2(spec.target_reg(), value_reg));
@@ -750,8 +766,11 @@ impl<'a> Compiler<'a> {
             if ds2.op == OptOp::DigitSum && &ds2.inputs[..] == &[ds1.out] {
                 if let Some(&lensum) = instrs.get(2) {
                     // lensum(digit_sum(digit_sum(x)), digit_sum(x))
-                    if lensum.op == OptOp::LenSum 
-                        && (&lensum.inputs[..] == &[ds2.out, ds1.out] || &lensum.inputs[..] == &[ds1.out, ds2.out]) {
+                    if lensum.op == OptOp::LenSum
+                        && (&lensum.inputs[..] == &[ds2.out, ds1.out] || &lensum.inputs[..] == &[ds1.out, ds2.out])
+                        && self.used_exactly_at(ds2.out, &[lensum.id])
+                        && self.used_exactly_at(ds1.out, &[lensum.id, ds2.id])
+                    {
                         let spec = self.prepare_output(lensum.out);
                         self.program.push(PrecompiledOp::DigitSumDigitSumLensum(spec.target_reg(), input_reg));
                         self.finalize_output(spec);
@@ -759,10 +778,12 @@ impl<'a> Compiler<'a> {
                     }
                 }
 
-                let spec = self.prepare_output(ds2.out);
-                self.program.push(PrecompiledOp::DigitSumTwice(spec.target_reg(), input_reg));
-                self.finalize_output(spec);
-                return 2; // Consumed DigitSum, DigitSum
+                if self.used_exactly_at(ds1.out, &[ds2.id]) {
+                    let spec = self.prepare_output(ds2.out);
+                    self.program.push(PrecompiledOp::DigitSumTwice(spec.target_reg(), input_reg));
+                    self.finalize_output(spec);
+                    return 2; // Consumed DigitSum, DigitSum
+                }
             }
         }
 
@@ -810,7 +831,7 @@ impl<'a> Compiler<'a> {
                 self.finalize_output(spec);
                 return;
             }
-            
+
             // select(x == 0, 0, 1) -> Sgn(x) if x >= 0
             // or select(x != 0, 1, 0) -> Sgn(x) if x >= 0
             if (matches!(lowered_condition, Condition::EqConst(_, 0)) && true_const == 0 && false_const == 1)
@@ -845,6 +866,17 @@ impl<'a> Compiler<'a> {
                 self.finalize_output(spec);
                 return;
             }
+        } else if let Some(true_const) = self.g.get_constant(instr.inputs[0]).and_then(|v| v.try_into().ok()) {
+            // True branch is constant, false branch is register or out of range
+            let false_reg = self.materialize_value_(instr.inputs[1]);
+            self.program.push(PrecompiledOp::SelectConstReg(spec.target_reg(), lowered_condition, true_const, false_reg));
+            self.finalize_output(spec);
+            return;
+        } else if let Some(false_const) = self.g.get_constant(instr.inputs[1]).and_then(|v| v.try_into().ok()) {
+            let true_reg = self.materialize_value_(instr.inputs[0]);
+            self.program.push(PrecompiledOp::SelectConstReg(spec.target_reg(), lowered_condition.neg(), false_const, true_reg));
+            self.finalize_output(spec);
+            return;
         }
 
         let true_reg = self.materialize_value_(instr.inputs[0]);
@@ -856,10 +888,10 @@ impl<'a> Compiler<'a> {
 
     fn lower_push(&mut self, instr: &OptInstr) {
         let mut remaining = instr.inputs.as_slice();
-        
+
         while !remaining.is_empty() {
             let mut regs: SmallVec<[RegId; 7]> = SmallVec::new();
-            
+
             // Try to materialize up to 7 values, stop if we run out of temp registers
             for &value in remaining.iter().take(7) {
                 match self.materialize_value(value) {
@@ -867,7 +899,7 @@ impl<'a> Compiler<'a> {
                     Err(()) => break, // Out of temp registers, emit what we have
                 }
             }
-            
+
             if regs.is_empty() {
                 // No registers available at all - this shouldn't happen with proper register allocation
                 panic!("ran out of temp registers completely in lower_push");
@@ -906,10 +938,113 @@ impl<'a> Compiler<'a> {
         self.finalize_output(spec);
     }
 
-    fn lower_jump(&mut self, condition: Condition<ValueId>, target: BlockId) {
-        let lowered = self.lower_condition(condition);
-        self.program.push(PrecompiledOp::Jump(lowered, 0));
+    fn lower_jump(&mut self, instr: &OptInstr, condition: Condition<ValueId>, target: BlockId) {
+        if condition == Condition::False { return }
+
+        let condition = self.lower_condition(condition);
+
+        let target_block = self.g.block_(target);
+        assert_eq!(target_block.parameters.len(), instr.inputs.len(), "jump {instr} has mismatched argument count");
+
+        let mut register_moves: Vec<(RegId, RegId)> = Vec::new();
+        let mut unspills: Vec<(u32, RegId)> = Vec::new();
+        let mut spills: Vec<(ValueId, u32)> = Vec::new();
+        let mut consts: Vec<(i64, RegId)> = Vec::new();
+
+        for (param, arg) in target_block.parameters.iter().zip(instr.inputs.iter()) {
+            match self.register_allocation.location(*param) {
+                Some(ValueLocation::Register(dest_reg)) => {
+                    if arg.is_constant() {
+                        consts.push((self.g.get_constant_(*arg), RegId(dest_reg)));
+                        continue;
+                    }
+                    match self.register_allocation.location(*arg) {
+                        Some(ValueLocation::Register(src)) if src == dest_reg => {}
+                        Some(ValueLocation::Register(src)) => register_moves.push((RegId(src), RegId(dest_reg))),
+                        Some(ValueLocation::Spill(src_spill)) => unspills.push((src_spill, RegId(dest_reg))),
+                        None => panic!()
+                    }
+                }
+                Some(ValueLocation::Spill(slot)) => {
+                    if self.register_allocation.location(*arg) != Some(ValueLocation::Spill(slot)) {
+                        spills.push((*arg, slot))
+                    }
+                },
+                None => {}
+            }
+        }
+
+        let jump_fixup = if condition != Condition::True && register_moves.len() + unspills.len() + spills.len() + consts.len() > 0 {
+            // first check condition, then move values
+            self.program.push(PrecompiledOp::Jump(condition.clone().neg(), 0));
+            self.temp_regs.clear();
+            Some(self.program.len() - 1)
+        } else {
+            None
+        };
+
+        for (value, slot) in spills {
+            let reg = self.materialize_value_(value);
+            self.program.push(PrecompiledOp::Spill(slot, reg));
+            self.temp_regs.release(reg);
+        }
+
+        self.emit_register_moves(register_moves);
+
+        for (slot, reg) in unspills {
+            self.program.push(PrecompiledOp::Unspill(reg, slot));
+        }
+
+        for (value, reg) in consts {
+            self.load_constant(reg, value);
+        }
+
+        if let Some(jump_fixup) = jump_fixup {
+            let current_loc = self.program.len().try_into().unwrap();
+            let PrecompiledOp::Jump(_, target) = &mut self.program[jump_fixup] else { panic!() };
+            *target = current_loc;
+            // condition is already in the first jump
+            self.program.push(PrecompiledOp::Jump(Condition::True, 0))
+        } else {
+            self.program.push(PrecompiledOp::Jump(condition, 0));
+        }
         self.jump_fixups.push((self.program.len() - 1, target));
+    }
+
+    fn emit_register_moves(&mut self, mut moves: Vec<(RegId, RegId)>) {
+        moves.retain(|(from, to)| from != to);
+        let mut inputs: BTreeMap<RegId, usize> = BTreeMap::new();
+        for (from, _to) in &moves {
+            *inputs.entry(*from).or_default() += 1;
+        }
+
+        let mut sequential_moves = vec![];
+        while let Some(mv_ix) = moves.iter().position(|(_from, to)| *inputs.get(to).unwrap_or(&0) == 0) {
+            let mv = moves.swap_remove(mv_ix);
+            *inputs.get_mut(&mv.0).unwrap() -= 1;
+            sequential_moves.push(mv);
+        }
+        let mut atomic_moves = moves; // rest has some cycles, we need to be careful
+        assert_ne!(1, atomic_moves.len());
+        // sequence of swaps
+        let mut reg_remap = BTreeMap::new();
+        while let Some((from, to)) = atomic_moves.pop() {
+            let from = *reg_remap.get(&from).unwrap_or(&from);
+            if from == to {
+                continue
+            }
+            self.program.push(PrecompiledOp::Mov2(to, from, from, to));
+            // `from` is now temporarily swapped in `to`
+            reg_remap.insert(from, to);
+        }
+        for chunk in sequential_moves.chunks(3) {
+            match chunk {
+                [a, b, c] => self.program.push(PrecompiledOp::Mov3(a.1, a.0, b.1, b.0, c.1, c.0)),
+                [a, b] => self.program.push(PrecompiledOp::Mov2(a.1, a.0, b.1, b.0)),
+                [a] => self.program.push(PrecompiledOp::OrConst(a.1, a.0, 0)),
+                wtf => unreachable!("{wtf:?}")
+            }
+        }
     }
 
     fn lower_assert(&mut self, instr: &OptInstr, condition: Condition<ValueId>, error: OperationError) {
@@ -1010,10 +1145,16 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn materialize_value(
-        &mut self,
-        value: ValueId,
-    ) -> Result<RegId, ()> {
+    fn load_constant(&mut self, reg: RegId, value: i64) {
+        if value >= i32::MIN as i64 && value <= i32::MAX as i64 {
+            self.program.push(PrecompiledOp::LoadConst(reg, value as i32));
+        } else { // TODO: pow2 offset
+            let idx = self.get_large_constant_index(value);
+            self.program.push(PrecompiledOp::LoadConst64(reg, idx));
+        }
+    }
+
+    fn materialize_value(&mut self, value: ValueId) -> Result<RegId, ()> {
         // Check if we already have this value in a temp register
         if let Some(cached_reg) = self.temp_regs.get_cached(value) {
             return Ok(cached_reg);
@@ -1022,12 +1163,7 @@ impl<'a> Compiler<'a> {
         let reg = if value.is_constant() {
             let constant = self.g.get_constant_(value);
             let reg = self.temp_regs.alloc().ok_or(())?;
-            if constant >= i32::MIN as i64 && constant <= i32::MAX as i64 {
-                self.program.push(PrecompiledOp::LoadConst(reg, constant as i32));
-            } else {
-                let idx = self.get_large_constant_index(constant);
-                self.program.push(PrecompiledOp::LoadConst64(reg, idx));
-            }
+            self.load_constant(reg, constant);
             self.temp_regs.insert_cache(value, reg);
             reg
         } else if let Some(location) = self.register_allocation.location(value) {
@@ -1045,6 +1181,21 @@ impl<'a> Compiler<'a> {
         };
 
         Ok(reg)
+    }
+
+    fn get_usages(&'_ self, value: ValueId) -> Option<&'_ BTreeSet<InstrId>> {
+        if let Some(inf) = self.g.values.get(&value) {
+            Some(&inf.used_at)
+        } else {
+            None
+        }
+    }
+
+    fn used_exactly_at(&self, value: ValueId, at: &[InstrId]) -> bool {
+        let Some(used_at) = self.get_usages(value) else {
+            return false;
+        };
+        return used_at.len() == at.len() && at.iter().all(|i| used_at.contains(i));
     }
 
     fn materialize_value_(&mut self, value: ValueId) -> RegId {
@@ -1136,7 +1287,7 @@ impl<'a> Compiler<'a> {
 #[allow(dead_code)]
 #[derive(Clone, Debug, Default)]
 struct RegisterAllocation {
-    locations: HashMap<ValueId, ValueLocation>,
+    locations: BTreeMap<ValueId, ValueLocation>,
 }
 
 impl RegisterAllocation {
@@ -1245,10 +1396,12 @@ impl ValueSegment {
         }
         let self_start = self.from.instr_ix();
         let self_end = self.to.instr_ix();
+        debug_assert!(self_start <= self_end);
         let other_start = other.from.instr_ix();
         let other_end = other.to.instr_ix();
+        debug_assert!(other_start <= other_end);
 
-        !(self_end < other_start || other_end < self_start)
+        self_start < other_end && other_start < self_end
     }
 
     fn weight(&self) -> u64 {
@@ -1265,9 +1418,9 @@ struct ValueCandidate {
     segments: BTreeMap<BlockId, ValueSegment>,
     weight: u64,
     use_count: usize,
+    has_phi_friends: bool,
 }
 
-#[allow(dead_code)]
 fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocation {
     if reg_count == 0 {
         return RegisterAllocation::default();
@@ -1275,8 +1428,12 @@ fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocation {
 
     assert!(reg_count <= u8::MAX as u32 + 1, "reg_count exceeds register file size");
 
-    let lifetimes = analyze_value_lifetimes(g);
+    let phi_friends = equivalence_preferences(g);
 
+    let lifetimes = analyze_value_lifetimes(g);
+    println!("Lifetimes: {lifetimes:?}");
+
+    let mut value_segments: BTreeMap<ValueId, BTreeMap<BlockId, ValueSegment>> = BTreeMap::new();
     let mut candidates: Vec<ValueCandidate> = lifetimes
         .ranges
         .iter()
@@ -1288,9 +1445,13 @@ fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocation {
             if segments.is_empty() {
                 return None;
             }
+            value_segments.insert(*val, segments.clone());
             let weight = segments.values().map(|seg| seg.weight()).sum::<u64>();
             let use_count = g.val_info(*val).map_or(0, |info| info.used_at.len());
-            Some(ValueCandidate { value: *val, segments, weight, use_count })
+            let has_phi_friends = phi_friends
+                .range((*val, ValueId(i32::MIN))..=(*val, ValueId(i32::MAX)))
+                .next().is_some();
+            Some(ValueCandidate { value: *val, segments, weight, use_count, has_phi_friends })
         })
         .collect();
 
@@ -1298,39 +1459,68 @@ fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocation {
         (a.weight / cmp::max(a.use_count as u64, 1), usize::MAX - a.use_count, a.value));
 
     let mut register_segments: Vec<BTreeMap<BlockId, Vec<ValueSegment>>> = (0..reg_count).map(|_| BTreeMap::new()).collect();
+    let mut register_values: Vec<BTreeSet<ValueId>> = (0..reg_count).map(|_| BTreeSet::new()).collect();
     let mut allocation = RegisterAllocation::default();
     let mut next_spill_slot: u32 = 0;
 
     for candidate in candidates {
-        let ValueCandidate { value, segments, weight: _, use_count: _ } = candidate;
-
-        let mut placed = false;
-        for (reg_index, reg_segments) in register_segments.iter_mut().enumerate() {
-            if !has_conflict(reg_segments, &segments) {
-                for (block, segment) in segments.iter() {
-                    reg_segments.entry(*block).or_default().push(*segment);
-                }
-                allocation.locations.insert(value, ValueLocation::Register(reg_index as u8));
-                placed = true;
-                break;
-            }
+        let ValueCandidate { value, segments, weight: _, use_count: _, has_phi_friends } = candidate;
+        if allocation.locations.contains_key(&value) {
+            continue;
         }
 
-        if !placed {
-            allocation.locations.insert(value, ValueLocation::Spill(next_spill_slot));
+        let mut options = register_segments.iter().enumerate()
+            .filter(|(_reg_ix, reg_segments)| !has_conflict(reg_segments, &segments))
+            .map(|(reg_ix, _)| reg_ix);
+
+        let (chosen_reg, merged_friends) = if !has_phi_friends {
+            (options.next(), smallvec![])
+        } else {
+            let mut candidate_regs: BTreeSet<usize> = options.collect();
+            println!("Choosing regs for {value} out of {candidate_regs:?} with friends {phi_friends:?}");
+            let merged_friends = reduce_registers_with_phi_friends(
+                value,
+                &mut candidate_regs,
+                &phi_friends,
+                &allocation,
+                &value_segments,
+                &register_segments,
+            );
+            println!("Chosen {candidate_regs:?} with friends {merged_friends:?}");
+            (candidate_regs.into_iter().next(), merged_friends)
+        };
+        assert!(!merged_friends.contains(&value));
+
+        let Some(chosen_reg) = chosen_reg else {
+            allocation.locations.insert(value, ValueLocation::Spill(next_spill_slot)); // TODO same spill for friends?
             next_spill_slot += 1;
+            continue;
+        };
+
+        for val in [value].into_iter().chain(merged_friends.clone()) {
+            assert!(!allocation.locations.contains_key(&val));
+
+            let segments = &value_segments[&val];
+            assert!(!has_conflict(&register_segments[chosen_reg], segments),
+                    "Unexpected conflicts between reg {chosen_reg} and {val}:\nAllocating {value} with {merged_friends:?}\nSegments: {value_segments:?}\nCFG: {g}");
+
+            for (block, segment) in segments.iter() {
+                register_segments[chosen_reg].entry(*block).or_default().push(*segment);
+            }
+            allocation.locations.insert(val, ValueLocation::Register(chosen_reg as u8));
+            register_values[chosen_reg].insert(val);
         }
     }
 
     allocation
 }
 
-#[allow(dead_code)]
 fn has_conflict(existing: &BTreeMap<BlockId, Vec<ValueSegment>>, candidate: &BTreeMap<BlockId, ValueSegment>) -> bool {
     for (block, candidate_segment) in candidate {
         if let Some(existing_segments) = existing.get(block) {
             for present in existing_segments {
                 if candidate_segment.overlap(present) {
+                    println!("{existing:?} has conflict with {candidate:?}");
                     return true;
                 }
             }
@@ -1339,22 +1529,94 @@ fn has_conflict(existing: &BTreeMap<BlockId, Vec<ValueSegment>>, candidate: &BTr
     false
 }
 
+fn reduce_registers_with_phi_friends(
+    value: ValueId,
+    candidate_regs: &mut BTreeSet<usize>,
+    phi_friends: &BTreeMap<(ValueId, ValueId), u32>,
+    allocation: &RegisterAllocation,
+    value_segments: &BTreeMap<ValueId, BTreeMap<BlockId, ValueSegment>>,
+    register_segments: &[BTreeMap<BlockId, Vec<ValueSegment>>],
+) -> SmallVec<[ValueId; 8]> {
+    if candidate_regs.is_empty() { return smallvec![] }
+    let mut visited: HashSet<ValueId> = HashSet::new();
+    let mut queue: BinaryHeap<(u32, ValueId)> = BinaryHeap::new();
+    let mut selected_friends: SmallVec<[ValueId; 8]> = SmallVec::new();
+
+    for ((_, friend), weight) in phi_friends.range((value, ValueId(i32::MIN))..=(value, ValueId(i32::MAX))) {
+        if *friend != value {
+            queue.push((*weight, *friend));
+        }
+    }
+
+    'main: while let Some((_weight, friend)) = queue.pop() {
+        if !visited.insert(friend) {
+            continue;
+        }
+
+        assert!(!candidate_regs.is_empty());
+
+        if allocation.locations.contains_key(&friend) {
+            // already tried to allocate here, but there was a conflict
+            continue;
+        }
+
+        let friend_segments = &value_segments[&friend];
+        // Check no self-conflict with already-selected friends
+        for &already_selected in &selected_friends {
+            let selected_segments = &value_segments[&already_selected];
+            for (block, friend_seg) in friend_segments {
+                if let Some(ready_seg) = selected_segments.get(block) {
+                    if friend_seg.overlap(ready_seg) {
+                        // conflicts with already selected friendly value, skip it
+                        continue 'main;
+                    }
+                }
+            }
+        }
+
+        let mut to_remove: SmallVec<[usize; 8]> = SmallVec::new();
+        for &reg_index in candidate_regs.iter() {
+            if has_conflict(&register_segments[reg_index], friend_segments) {
+                to_remove.push(reg_index);
+            }
+        }
+
+        if to_remove.len() == candidate_regs.len() {
+            continue;
+        }
+
+        for reg in to_remove {
+            candidate_regs.remove(&reg);
+        }
+        selected_friends.push(friend);
+
+        for ((_, next), weight) in phi_friends.range((friend, ValueId(i32::MIN))..=(friend, ValueId(i32::MAX))) {
+            if *next != value && !visited.contains(next) {
+                queue.push((*weight, *next));
+            }
+        }
+    }
+
+    selected_friends
+}
+
 const LONG_LIFETIME_WEIGHT: u64 = 1_000_000;
 
-#[allow(dead_code)]
 fn equivalence_preferences(g: &GraphBuilder) -> BTreeMap<(ValueId, ValueId), u32> {
     let mut result = BTreeMap::new();
 
     for block in &g.blocks {
         for i in block.instructions.values() {
             if i.inputs.len() == 0 { continue; }
-            let OptOp::Jump(_, into_block) = i.op else { continue; };
+            let OptOp::Jump(condition, into_block) = &i.op else { continue; };
 
-            let into_block = g.block_(into_block);
+            // conditional branches are bit costlier, as we need to add one more jump if there are moves
+            let weight = if condition == &Condition::True { 1 } else { 2 };
+            let into_block = g.block_(*into_block);
             for (param, val) in into_block.parameters.iter().zip(i.inputs.iter()) {
                 if val.is_computed() {
-                    *result.entry((*param, *val)).or_insert(0u32) += 1;
-                    *result.entry((*val, *param)).or_insert(0u32) += 1;
+                    *result.entry((*param, *val)).or_insert(0u32) += weight;
+                    *result.entry((*val, *param)).or_insert(0u32) += weight;
                 }
             }
         }
@@ -1431,6 +1693,7 @@ fn remat_cost(g: &GraphBuilder, lr: &LiveRanges, max_cost: u32) -> HashMap<Value
     result
 }
 
+#[derive(Clone, Debug)]
 struct LiveRanges {
     pub ranges: HashMap<ValueId, HashMap<BlockId, (InstrId, InstrId)>>,
     #[allow(dead_code)]
@@ -1466,6 +1729,8 @@ fn analyze_value_lifetimes(g: &GraphBuilder) -> LiveRanges {
         })
         .collect();
 
+    println!("LFB {blocks:?}");
+
     let perblock_req = dataflow(g, /*reverse:*/ true,
         |b| blocks[b.id.0 as usize].1.clone(),
         |b, state, _inputs, outputs| {
@@ -1480,6 +1745,7 @@ fn analyze_value_lifetimes(g: &GraphBuilder) -> LiveRanges {
             }
             return required
         });
+    println!("Post dataflow {perblock_req:?}");
 
     let mut ranges = HashMap::new();
     let mut live_vars = HashMap::new();
@@ -1494,42 +1760,39 @@ fn analyze_value_lifetimes(g: &GraphBuilder) -> LiveRanges {
             }
             if i.out.is_computed() { defined_at.insert(i.out, id); }
         }
+        // println!("{} last use: {last_use:?}", block.id);
 
         let mut result = vec![];
 
-        // let mut transfers = HashSet::new();
-        // transferred_variables
         for (_, jump_to) in &block.outgoing_jumps {
             for &next_requires in perblock_req.get(&jump_to).iter().flat_map(|x| *x) {
-                if let Some(&from) = defined_at.get(&next_requires) {
-                    result.push((InstrId(block.id, from), InstrId(block.id, u32::MAX), next_requires));
-                } else {
-                    result.push((InstrId(block.id, 0), InstrId(block.id, u32::MAX), next_requires));
-                }
-                last_use.remove(&next_requires);
+                let &from = defined_at.get(&next_requires).unwrap_or(&0);
+                result.push((InstrId(block.id, from), InstrId(block.id, u32::MAX), next_requires));
+                // last_use.remove(&next_requires);
+                // defined_at.remove(&next_requires);
             }
         }
+        // println!("{} last use: {last_use:?}", block.id);
 
         for (&var, &last_use) in last_use.iter() {
-            if let Some(&from) = defined_at.get(&var) {
-                result.push((InstrId(block.id, from), InstrId(block.id, last_use), var));
-            } else {
-                result.push((InstrId(block.id, 0), InstrId(block.id, u32::MAX), var));
-            }
+            let &from = defined_at.get(&var).unwrap_or(&0);
+            result.push((InstrId(block.id, from), InstrId(block.id, last_use), var));
         }
 
-        // Also include values that are defined but never used (output-only values)
+        // (output-only values need to get written somewhere)
         for (&var, &def_at) in defined_at.iter() {
             if !last_use.contains_key(&var) {
-                // Value is defined but not used locally - include it with single-instruction range
                 result.push((InstrId(block.id, def_at), InstrId(block.id, def_at), var));
             }
         }
 
         for (from, to, var) in &result {
             let var_ranges: &mut HashMap<BlockId, (InstrId, InstrId)> = ranges.entry(*var).or_default();
-            var_ranges.insert(block.id, (from.clone(), to.clone()));
+            // assert!(!var_ranges.contains_key(&block.id), "{result:?} has duplicated value {var}");
+            // var_ranges.insert(block.id, (from.clone(), to.clone()));
+            var_ranges.entry(block.id).or_insert((from.clone(), to.clone()));
         }
+        // println!("{} result {result:?}\n    {ranges:?}", block.id);
 
         live_vars.insert(block.id, result);
     }
@@ -1648,21 +1911,21 @@ mod lowering_tests {
     }
 
     #[test]
-    fn mod_power_of_two_with_non_negative_input_lowers_to_and_const() {
+    fn mod_bitshift_opt() {
         let program = compile_binary(OptOp::Mod, 0..=100, 8);
         assert!(program.iter().any(|op| matches!(op, PrecompiledOp::AndConst(_, _, 7))));
         assert!(!program.iter().any(|op| matches!(op, PrecompiledOp::ModConst(_, _, _))));
     }
 
     #[test]
-    fn mod_with_possible_negative_input_keeps_mod_const() {
+    fn mod_bitshift_opt_no() {
         let program = compile_binary(OptOp::Mod, -5..=5, 8);
         assert!(program.iter().any(|op| matches!(op, PrecompiledOp::ModConst(_, _, 8))));
         assert!(!program.iter().any(|op| matches!(op, PrecompiledOp::AndConst(_, _, _))));
     }
 
     #[test]
-    fn mod_euclid_power_of_two_always_uses_and_const() {
+    fn mod_euclid_bitshift_opt() {
         let program = compile_binary(OptOp::ModEuclid, -10..=10, 8);
         assert!(matches!(&program[..], [
             PrecompiledOp::AndConst(_, _, 7),
@@ -1671,7 +1934,7 @@ mod lowering_tests {
     }
 
     #[test]
-    fn digit_sum_of_digit_sum_fuses_into_digit_sum_twice() {
+    fn fusing_cscs() {
         let (mut g, param) = graph_with_param(0..=99_999);
 
         let (first, _) = g.push_instr(OptOp::DigitSum, &[param], false, None, None);
@@ -1683,7 +1946,7 @@ mod lowering_tests {
     }
 
     #[test]
-    fn digit_sum_lensum_combo_fuses_into_digit_sum_digit_sum_lensum() {
+    fn fusing_cscslensum() {
         let (mut g, param) = graph_with_param(0..=1_000_000);
 
         let (first, _) = g.push_instr(OptOp::DigitSum, &[param], false, None, None);
@@ -1696,7 +1959,7 @@ mod lowering_tests {
     }
 
     #[test]
-    fn div_by_two_plus_one_fuses_into_median_cursed2() {
+    fn fusing_median2() {
         let (mut g, param) = graph_with_param(-1_000..=1_000);
 
         let (div_out, _) = g.push_instr(OptOp::Div, &[param, ValueId::C_TWO], false, None, None);
@@ -1707,7 +1970,7 @@ mod lowering_tests {
     }
 
     #[test]
-    fn div_by_two_plus_one_fuses_into_median_cursed2_no1() {
+    fn fusing_median2_no1() {
         let (mut g, param) = graph_with_param(-1_000..=1_000);
 
         let (div_out, _) = g.push_instr(OptOp::Div, &[param, ValueId::C_TWO], false, None, None);
@@ -1718,25 +1981,26 @@ mod lowering_tests {
         assert!(matches!(&block.program[..], [PrecompiledOp::ShiftConst(_, _, -1), PrecompiledOp::AddConst(_, _, 1), PrecompiledOp::DigitSum(_, _) ]), "{block}\n{:?}", block.program);
     }
     #[test]
-    fn div_by_two_plus_one_fuses_into_median_cursed2_no() {
+    fn fusing_median2_no2() {
         let (mut g, param) = graph_with_param(-1_000..=1_000);
 
         let (div_out, _) = g.push_instr(OptOp::Div, &[param, ValueId::C_TWO], false, None, None);
         let (median_candidate, _) = g.push_instr(OptOp::Add, &[ValueId::C_ONE, div_out], false, None, None);
-        g.push_instr(OptOp::Add, &[ValueId::C_TWO, median_candidate], false, None, None);
+        let (add2, _) = g.push_instr(OptOp::Add, &[ValueId::C_TWO, median_candidate], false, None, None);
+        g.stack.push(add2);
+        g.stack.poped_values.push(median_candidate);
+        g.clean_poped_values();
 
         let block = PrecompiledBlock::from_cfg(&g);
         assert!(matches!(&block.program[..], [PrecompiledOp::ShiftConst(_, _, -1), PrecompiledOp::AddConst(_, _, 3) ]), "{block}\n{:?}", block.program);
     }
 
     #[test]
-    fn select_with_zero_false_branch_uses_select_const0() {
+    fn select_0_branch() {
         let (mut g, cond) = graph_with_param(-5..=5);
 
         let true_val = g.store_constant(6);
-        let false_val = g.store_constant(0);
-        let condition = Condition::EqConst(cond, 0);
-        let (out, _) = g.push_instr(OptOp::Select(condition), &[true_val, false_val], false, None, None);
+        let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(cond, 0)), &[true_val, ValueId::C_ZERO], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_TWO, out], false, None, None);
 
         let block = PrecompiledBlock::from_cfg(&g);
@@ -1744,16 +2008,311 @@ mod lowering_tests {
     }
 
     #[test]
-    fn select_with_small_constants_uses_select_const() {
+    fn select_consts() {
         let (mut g, cond) = graph_with_param(-3..=3);
 
         let true_val = g.store_constant(3);
         let false_val = g.store_constant(-2);
-        let condition = Condition::NeqConst(cond, 0);
-        let (out, _) = g.push_instr(OptOp::Select(condition), &[true_val, false_val], false, None, None);
+        let (out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(cond, 0)), &[true_val, false_val], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_TWO, out], false, None, None);
 
         let block = PrecompiledBlock::from_cfg(&g);
         assert!(block.program.iter().any(|op| matches!(op, PrecompiledOp::SelectConst(_, _, 3, -2))));
+    }
+
+    #[test]
+    fn select_const_reg() {
+        let (mut g, param) = graph_with_param(0..=100);
+
+        // Test: select(param == 0, 42, param * 2)
+        let double = g.push_instr(OptOp::Mul, &[ValueId::C_TWO, param], false, None, None).0;
+        let const_val = g.store_constant(42);
+        let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[const_val, double], false, None, None);
+        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+
+        let block = PrecompiledBlock::from_cfg(&g);
+        assert!(block.program.iter().any(|op| matches!(op, PrecompiledOp::SelectConstReg(_, _, 42, _))));
+    }
+
+    #[test]
+    fn select_to_boolnot_eq() {
+        let (mut g, param) = graph_with_param(-10..=10);
+
+        // select(param == 0, 1, 0) -> BoolNot(param)
+        let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], false, None, None);
+        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+        let block = PrecompiledBlock::from_cfg(&g);
+        assert!(
+            matches!(&block.program[..], [PrecompiledOp::BoolNot(_, _), PrecompiledOp::AddConst(_, _, 1)]),
+            "{block}\n{:?}", block.program);
+    }
+
+    #[test]
+    fn select_to_boolnot_neq() {
+        let (mut g, param) = graph_with_param(-10..=10);
+
+        // select(param != 0, 0, 1) -> BoolNot(param)
+        let (out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
+        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+        let block = PrecompiledBlock::from_cfg(&g);
+        assert!(
+            matches!(&block.program[..], [PrecompiledOp::BoolNot(_, _), PrecompiledOp::AddConst(_, _, 1)]),
+            "{block}\n{:?}", block.program);
+    }
+
+    #[test]
+    fn select_to_sgn_eq_nonneg() {
+        let (mut g, param) = graph_with_param(0..=100);
+
+        // select(param == 0, 0, 1) -> Sgn(param) when param >= 0
+        let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
+        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+
+        let block = PrecompiledBlock::from_cfg(&g);
+        assert!(
+            matches!(&block.program[..], [PrecompiledOp::Sgn(_, _), PrecompiledOp::AddConst(_, _, 1)]),
+            "{block}\n{:?}", block.program);
+    }
+
+    #[test]
+    fn select_to_sgn_neq_nonneg() {
+        let (mut g, param) = graph_with_param(0..=100);
+
+        // select(param != 0, 1, 0) -> Sgn(param) when param >= 0
+        let (out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(param, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], false, None, None);
+        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+
+        let block = PrecompiledBlock::from_cfg(&g);
+        assert!(
+            matches!(&block.program[..], [PrecompiledOp::Sgn(_, _), PrecompiledOp::AddConst(_, _, 1)]),
+            "{block}\n{:?}", block.program);
+    }
+
+    #[test]
+    fn select_no_sgn_with_negative_range() {
+        let (mut g, param) = graph_with_param(-10..=10);
+
+        // select(param == 0, 0, 1) should NOT become Sgn when param can be negative
+        let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
+        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+
+        let block = PrecompiledBlock::from_cfg(&g);
+        assert!(
+            matches!(&block.program[..], [PrecompiledOp::SelectConst0(_, _, 1) | PrecompiledOp::SelectConst(_, _, 0, 1), PrecompiledOp::AddConst(_, _, 1)]),
+            "{block}\n{:?}", block.program);
+    }
+}
+
+#[cfg(test)]
+mod register_alloc_tests {
+    use super::*;
+
+    fn build_phi_merge_graph() -> (GraphBuilder, ValueId, ValueId) {
+        let mut g = GraphBuilder::new(0);
+        let entry_id = g.current_block;
+
+        let seed = g.new_value().id;
+
+        let (friend, _) = g.push_instr(OptOp::Add, &[seed, ValueId::C_ONE], false, None, None);
+
+        let phi = g.new_value().id;
+        let block1_id = g.new_block(0, true, vec![phi]).id;
+
+        let jump_id = g.push_instr(OptOp::Jump(Condition::True, block1_id), &[friend], false, None, None).1.unwrap().id;
+
+        let block1 = g.block_mut(block1_id).unwrap();
+        block1.incoming_jumps.push(jump_id);
+        block1.predecessors.insert(entry_id);
+
+        g.switch_to_block(block1_id, 0, vec![]);
+        g.push_instr(OptOp::Assert(Condition::EqConst(phi, 0), OperationError::IntegerOverflow), &[], false, None, None);
+
+        (g, phi, friend)
+    }
+
+    fn build_conflicting_phi_graph() -> (GraphBuilder, ValueId, ValueId, ValueId) {
+        let mut g = GraphBuilder::new(0);
+        let entry_id = g.current_block;
+
+        let seed = g.new_value().id;
+
+        let (friend, _) = g.push_instr(OptOp::Add, &[seed, ValueId::C_ONE], false, None, None);
+
+        let phi = g.new_value().id;
+        let block1_id = g.new_block(0, true, vec![phi]).id;
+
+        let jump_id = g.push_instr(OptOp::Jump(Condition::True, block1_id), &[friend], false, None, None).1.unwrap().id;
+
+        let block1 = g.block_mut(block1_id).unwrap();
+        block1.incoming_jumps.push(jump_id);
+        block1.predecessors.insert(entry_id);
+
+        g.switch_to_block(block1_id, 0, vec![]);
+
+        let (block_local, _) = g.push_instr(OptOp::Add, &[phi, ValueId::C_ONE], false, None, None);
+        let (_mixed, _) = g.push_instr(OptOp::Add, &[phi, block_local], false, None, None);
+        g.push_instr(OptOp::Add, &[block_local, ValueId::C_ONE], false, None, None);
+
+        (g, phi, friend, block_local)
+    }
+
+    #[test]
+    fn phi_friends_share_register_when_lifetimes_do_not_conflict() {
+        let (g, phi, friend) = build_phi_merge_graph();
+        let allocation = allocate_registers(&g, 10);
+
+        let phi_location = allocation.location(phi);
+        let friend_location = allocation.location(friend);
+
+        assert_eq!(phi_location, Some(ValueLocation::Register(0)));
+        assert_eq!(phi_location, friend_location);
+    }
+
+    #[test]
+    fn pressure_causes_spilling() {
+        let (g, phi, friend, block_local) = build_conflicting_phi_graph();
+        println!("{g}");
+        let allocation = allocate_registers(&g, 1);
+        println!("{allocation}");
+
+        // With phi-friend merging, phi and friend share a register
+        // So with only 1 register available, block_local must spill
+        assert_eq!(allocation.location(phi), allocation.location(friend));
+        assert!(matches!(allocation.location(block_local), Some(ValueLocation::Spill(_))));
+    }
+
+    #[test]
+    fn register_conflict_across_bb() {
+        let (g, phi, friend, block_local) = build_conflicting_phi_graph();
+        println!("{g}");
+        let allocation = allocate_registers(&g, 2);
+        println!("{allocation}");
+
+        assert!(matches!(allocation.location(phi), Some(ValueLocation::Register(_))));
+        assert!(matches!(allocation.location(friend), Some(ValueLocation::Register(_))));
+        assert!(matches!(allocation.location(block_local), Some(ValueLocation::Register(_))));
+
+        // With phi-friend merging, phi and friend SHOULD share a register
+        // since they're phi-friends with non-overlapping lifetimes
+        assert_eq!(allocation.location(phi), allocation.location(friend));
+
+        // block_local should get a different register since it's live at the same time as phi
+        assert_ne!(allocation.location(phi), allocation.location(block_local));
+    }
+
+    fn setup_diamond_cfg(g: &mut GraphBuilder, seed: ValueId, val1: ValueId, val2: ValueId) -> (BlockId, BlockId) {
+        let entry_id = g.current_block;
+        let branch1_id = g.new_block(0, true, vec![]).id;
+        let branch2_id = g.new_block(0, true, vec![]).id;
+
+        g.switch_to_block(entry_id, 0, vec![]);
+        let jump1_id = g.push_instr(OptOp::Jump(Condition::GtConst(seed, 0), branch1_id), &[val1], false, None, None).1.unwrap().id;
+        let jump2_id = g.push_instr(OptOp::Jump(Condition::LeqConst(seed, 0), branch2_id), &[val2], false, None, None).1.unwrap().id;
+
+        g.block_mut(branch1_id).unwrap().predecessors.insert(entry_id);
+        g.block_mut(branch1_id).unwrap().incoming_jumps.push(jump1_id);
+        g.block_mut(branch2_id).unwrap().predecessors.insert(entry_id);
+        g.block_mut(branch2_id).unwrap().incoming_jumps.push(jump2_id);
+
+        (branch1_id, branch2_id)
+    }
+
+    fn finalize_diamond_merge(g: &mut GraphBuilder, merge_id: BlockId, branch1_id: BlockId,
+                               branch2_id: BlockId, jump1_id: InstrId, jump2_id: InstrId) {
+        let merge_block = g.block_mut(merge_id).unwrap();
+        merge_block.incoming_jumps.push(jump1_id);
+        merge_block.incoming_jumps.push(jump2_id);
+        merge_block.predecessors.insert(branch1_id);
+        merge_block.predecessors.insert(branch2_id);
+    }
+
+    fn build_diamond_phi_graph() -> (GraphBuilder, ValueId, ValueId, ValueId) {
+        let mut g = GraphBuilder::new(0);
+        let seed = g.new_value().id;
+        g.current_block_mut().parameters.push(seed);
+
+        let phi = g.new_value().id;
+        let merge_id = g.new_block(0, true, vec![phi]).id;
+
+        let (branch1_id, branch2_id) = setup_diamond_cfg(&mut g, seed, seed, seed);
+
+        g.switch_to_block(branch1_id, 0, vec![]);
+        let (val1, _) = g.push_instr(OptOp::Add, &[seed, ValueId::C_ONE], false, None, None);
+        let jump1_id = g.push_instr(OptOp::Jump(Condition::True, merge_id), &[val1], false, None, None).1.unwrap().id;
+
+        g.switch_to_block(branch2_id, 0, vec![]);
+        let (val2, _) = g.push_instr(OptOp::Add, &[seed, ValueId::C_TWO], false, None, None);
+        let jump2_id = g.push_instr(OptOp::Jump(Condition::True, merge_id), &[val2], false, None, None).1.unwrap().id;
+
+        finalize_diamond_merge(&mut g, merge_id, branch1_id, branch2_id, jump1_id, jump2_id);
+
+        g.switch_to_block(merge_id, 0, vec![]);
+        g.push_instr(OptOp::Assert(Condition::EqConst(phi, 0), OperationError::IntegerOverflow), &[], false, None, None);
+
+        (g, phi, val1, val2)
+    }
+
+    #[test]
+    fn phi_with_two_incoming_edges_unified() {
+        let (g, phi, val1, val2) = build_diamond_phi_graph();
+        let allocation = allocate_registers(&g, 10);
+        println!("{phi} {val1} {val2}\n{g}\n{allocation}");
+
+        let phi_location = allocation.location(phi);
+        let val1_location = allocation.location(val1);
+        let val2_location = allocation.location(val2);
+
+        // All three should be allocated to the same register since lifetimes don't overlap
+        assert_eq!(phi_location, val1_location);
+        assert_eq!(phi_location, val2_location);
+    }
+
+    fn build_diamond_conflicting_graph() -> (GraphBuilder, ValueId, ValueId, ValueId) {
+        let mut g = GraphBuilder::new(0);
+
+        let seed = g.new_value().id;
+        g.current_block_mut().parameters.push(seed);
+
+        // Create val1 and val2 that have overlapping lifetimes in entry block
+        let (val1, _) = g.push_instr(OptOp::Add, &[seed, ValueId::C_ONE], false, None, None);
+        let (val2, _) = g.push_instr(OptOp::Add, &[seed, ValueId::C_TWO], false, None, None);
+
+        let phi = g.new_value().id;
+        let merge_id = g.new_block(0, true, vec![phi]).id;
+
+        let (branch1_id, branch2_id) = setup_diamond_cfg(&mut g, seed, val1, val2);
+
+        g.switch_to_block(branch1_id, 0, vec![]);
+        let jump1_id = g.push_instr(OptOp::Jump(Condition::True, merge_id), &[val1], false, None, None).1.unwrap().id;
+
+        g.switch_to_block(branch2_id, 0, vec![]);
+        let jump2_id = g.push_instr(OptOp::Jump(Condition::True, merge_id), &[val2], false, None, None).1.unwrap().id;
+
+        finalize_diamond_merge(&mut g, merge_id, branch1_id, branch2_id, jump1_id, jump2_id);
+
+        g.switch_to_block(merge_id, 0, vec![]);
+        g.push_instr(OptOp::Assert(Condition::EqConst(phi, 0), OperationError::IntegerOverflow), &[], false, None, None);
+
+        (g, phi, val1, val2)
+    }
+
+    #[test]
+    fn phi_with_two_incoming_edges_conflicting() {
+        let (g, phi, val1, val2) = build_diamond_conflicting_graph();
+        let allocation = allocate_registers(&g, 10);
+        println!("{phi} {val1} {val2}\n{g}\n{allocation}");
+        println!("{:?}", g.val_info(val1).unwrap());
+        println!("{:?}", g.val_info(val2).unwrap());
+
+        let phi_location = allocation.location(phi);
+        let val1_location = allocation.location(val1);
+        let val2_location = allocation.location(val2);
+
+        assert!(matches!(phi_location, Some(ValueLocation::Register(_))));
+        assert!(matches!(val1_location, Some(ValueLocation::Register(_))));
+        assert!(matches!(val2_location, Some(ValueLocation::Register(_))));
+
+        assert_ne!(val2_location, val1_location);
+        assert!(val2_location == phi_location || val1_location == phi_location);
     }
 }

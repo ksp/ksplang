@@ -182,6 +182,20 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                     if stack.len() <= 1 { deopt_or_error!(OperationError::PopFailed) }
                     regs[a] = stack.swap_remove(stack.len() - 2)
                 },
+                PrecompiledOp::Mov2(dst0, src0, dst1, src1) => {
+                    let v0 = regs[src0];
+                    let v1 = regs[src1];
+                    regs[dst0] = v0;
+                    regs[dst1] = v1;
+                },
+                PrecompiledOp::Mov3(dst0, src0, dst1, src1, dst2, src2) => {
+                    let v0 = regs[src0];
+                    let v1 = regs[src1];
+                    let v2 = regs[src2];
+                    regs[dst0] = v0;
+                    regs[dst1] = v1;
+                    regs[dst2] = v2;
+                },
                 PrecompiledOp::Add(out, a, b) => {
                     let Some(val) = regs[a].checked_add(regs[b]) else {
                         deopt_or_error!(OperationError::IntegerOverflow)
@@ -396,6 +410,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                 PrecompiledOp::BoolNot(out, a) => regs[out] = (regs[a] == 0) as i64,
                 PrecompiledOp::SelectConst(out, condition, c1, c2) => regs[out] = select_unpredictable(eval_cond(&regs, condition.clone()), *c1, *c2) as i64,
                 PrecompiledOp::SelectConst0(out, condition, c1) => regs[out] = select_unpredictable(eval_cond(&regs, condition.clone()), *c1, 0) as i64,
+                PrecompiledOp::SelectConstReg(out, condition, c, a) => regs[out] = if eval_cond(&regs, condition.clone()) { *c as i64 } else { regs[a] },
                 PrecompiledOp::Select(out, condition, a, b) => regs[out] = if eval_cond(&regs, condition.clone()) { regs[a] } else { regs[b] },
                 PrecompiledOp::DigitSum(out, a) => regs[out] = digit_sum::digit_sum(regs[a]),
                 PrecompiledOp::DigitSumSmall(out, a) => {

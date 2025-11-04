@@ -156,7 +156,11 @@ impl InstrId {
 }
 impl fmt::Display for InstrId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "i{}_{}", self.0 .0, self.1)
+        if self.1 == u32::MAX {
+            write!(f, "i{}_END", self.0.0)
+        } else {
+            write!(f, "i{}_{}", self.0.0, self.1)
+        }
     }
 }
 impl fmt::Debug for InstrId {
@@ -270,7 +274,8 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
 
     pub fn arity(&self) -> RangeInclusive<usize> {
         match self {
-            OptOp::Push | OptOp::Pop | OptOp::Nop => 0..=0,
+            OptOp::Pop | OptOp::Nop => 0..=0,
+            OptOp::Push => 1..=usize::MAX,
             OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Gcd | OptOp::Max | OptOp::Min => 1..=usize::MAX,
             OptOp::LenSum => 1..=2,
             OptOp::AbsSub | OptOp::Sub | OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuclid => 2..=2,
@@ -665,7 +670,7 @@ impl OptInstr {
     pub fn validate(&self) {
         assert!(!self.out.is_constant(), "Cannot assign to constant: {}", self);
         assert!(!self.inputs.contains(&ValueId(0)), "Cannot use null ValueId: {}", self);
-        assert!(self.op.arity().contains(&self.inputs.len()), "Invalid op artity: {}", self);
+        assert!(self.op.arity().contains(&self.inputs.len()), "Invalid op artity: {} {:?} {}", self, self.op.arity(), self.inputs.len());
         assert_ne!(0, self.id.1, "0 is reserved for block head");
     }
     pub fn assert(condition: Condition<ValueId>, error: OperationError, value: Option<ValueId>) -> Self {

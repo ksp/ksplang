@@ -249,6 +249,11 @@ impl GraphBuilder {
 
     pub fn new_block(&mut self, start_ip: usize, is_sealed: bool, parameters: Vec<ValueId>) -> &mut BasicBlock {
         let id = BlockId(self.blocks.len() as u32);
+        for p in &parameters {
+            let info = self.values.get_mut(p).unwrap();
+            assert!(info.assigned_at == None || info.assigned_at == Some(InstrId(id, 0)));
+            info.assigned_at = Some(InstrId(id, 0));
+        }
         self.blocks.push(BasicBlock::new(id, start_ip, is_sealed, parameters));
         self.block_mut(id).unwrap()
     }
