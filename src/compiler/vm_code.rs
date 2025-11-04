@@ -23,7 +23,7 @@ impl fmt::Debug for RegId {
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PrecompiledOp<TReg: Display> {
+pub enum OsmibyteOp<TReg: Display> {
     Push(TReg),
     Push2(TReg, TReg),
     Push3(TReg, TReg, TReg),
@@ -121,115 +121,115 @@ pub enum PrecompiledOp<TReg: Display> {
     Unspill(TReg, u32), // a <- somewhere[ix]
 }
 
-impl<TReg: Display> PrecompiledOp<TReg> {
-    pub fn replace_regs<TReg2: Display, F>(&self, f: F) -> PrecompiledOp<TReg2>
+impl<TReg: Display> OsmibyteOp<TReg> {
+    pub fn replace_regs<TReg2: Display, F>(&self, f: F) -> OsmibyteOp<TReg2>
         where F: Fn(&TReg, bool) -> TReg2
     {
         match self {
-            PrecompiledOp::Push(a) => PrecompiledOp::Push(f(a, false)),
-            PrecompiledOp::Push2(a, b) => PrecompiledOp::Push2(f(a, false), f(b, false)),
-            PrecompiledOp::Push3(a, b, c) => PrecompiledOp::Push3(f(a, false), f(b, false), f(c, false)),
-            PrecompiledOp::Push4(a, b, c, d) => PrecompiledOp::Push4(f(a, false), f(b, false), f(c, false), f(d, false)),
-            PrecompiledOp::Push5(a, b, c, d, e) => PrecompiledOp::Push5(f(a, false), f(b, false), f(c, false), f(d, false), f(e, false)),
-            PrecompiledOp::Push6(a, b, c, d, e, f_) => PrecompiledOp::Push6(f(a, false), f(b, false), f(c, false), f(d, false), f(e, false), f(f_, false)),
-            PrecompiledOp::Push7(a, b, c, d, e, f_, g) => PrecompiledOp::Push7(f(a, false), f(b, false), f(c, false), f(d, false), f(e, false), f(f_, false), f(g, false)),
+            OsmibyteOp::Push(a) => OsmibyteOp::Push(f(a, false)),
+            OsmibyteOp::Push2(a, b) => OsmibyteOp::Push2(f(a, false), f(b, false)),
+            OsmibyteOp::Push3(a, b, c) => OsmibyteOp::Push3(f(a, false), f(b, false), f(c, false)),
+            OsmibyteOp::Push4(a, b, c, d) => OsmibyteOp::Push4(f(a, false), f(b, false), f(c, false), f(d, false)),
+            OsmibyteOp::Push5(a, b, c, d, e) => OsmibyteOp::Push5(f(a, false), f(b, false), f(c, false), f(d, false), f(e, false)),
+            OsmibyteOp::Push6(a, b, c, d, e, f_) => OsmibyteOp::Push6(f(a, false), f(b, false), f(c, false), f(d, false), f(e, false), f(f_, false)),
+            OsmibyteOp::Push7(a, b, c, d, e, f_, g) => OsmibyteOp::Push7(f(a, false), f(b, false), f(c, false), f(d, false), f(e, false), f(f_, false), f(g, false)),
 
-            PrecompiledOp::Pop(a) => PrecompiledOp::Pop(f(a, true)),
-            PrecompiledOp::Pop2(a, b) => PrecompiledOp::Pop2(f(a, true), f(b, true)),
-            PrecompiledOp::Pop3(a, b, c) => PrecompiledOp::Pop3(f(a, true), f(b, true), f(c, true)),
-            PrecompiledOp::Pop4(a, b, c, d) => PrecompiledOp::Pop4(f(a, true), f(b, true), f(c, true), f(d, true)),
-            PrecompiledOp::PopSecond(a) => PrecompiledOp::PopSecond(f(a, true)),
+            OsmibyteOp::Pop(a) => OsmibyteOp::Pop(f(a, true)),
+            OsmibyteOp::Pop2(a, b) => OsmibyteOp::Pop2(f(a, true), f(b, true)),
+            OsmibyteOp::Pop3(a, b, c) => OsmibyteOp::Pop3(f(a, true), f(b, true), f(c, true)),
+            OsmibyteOp::Pop4(a, b, c, d) => OsmibyteOp::Pop4(f(a, true), f(b, true), f(c, true), f(d, true)),
+            OsmibyteOp::PopSecond(a) => OsmibyteOp::PopSecond(f(a, true)),
 
-            PrecompiledOp::Mov2(dst0, src0, dst1, src1) =>
-                PrecompiledOp::Mov2(f(dst0, true), f(src0, false), f(dst1, true), f(src1, false)),
-            PrecompiledOp::Mov3(dst0, src0, dst1, src1, dst2, src2) =>
-                PrecompiledOp::Mov3(f(dst0, true), f(src0, false), f(dst1, true), f(src1, false), f(dst2, true), f(src2, false)),
+            OsmibyteOp::Mov2(dst0, src0, dst1, src1) =>
+                OsmibyteOp::Mov2(f(dst0, true), f(src0, false), f(dst1, true), f(src1, false)),
+            OsmibyteOp::Mov3(dst0, src0, dst1, src1, dst2, src2) =>
+                OsmibyteOp::Mov3(f(dst0, true), f(src0, false), f(dst1, true), f(src1, false), f(dst2, true), f(src2, false)),
 
-            PrecompiledOp::Add(a, b, c) => PrecompiledOp::Add(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::AddConst(a, b, c) => PrecompiledOp::AddConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::Sub(a, b, c) => PrecompiledOp::Sub(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::SubConst(a, b, c) => PrecompiledOp::SubConst(f(a, true), *b, f(c, false)),
-            PrecompiledOp::AbsSub(a, b, c) => PrecompiledOp::AbsSub(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::AbsSubConst(a, b, c) => PrecompiledOp::AbsSubConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::Mul(a, b, c) => PrecompiledOp::Mul(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::MulConst(a, b, c) => PrecompiledOp::MulConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::Div(a, b, c) => PrecompiledOp::Div(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::DivConst(a, b, c) => PrecompiledOp::DivConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::CursedDiv(a, b, c) => PrecompiledOp::CursedDiv(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::Mod(a, b, c) => PrecompiledOp::Mod(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::ModConst(a, b, c) => PrecompiledOp::ModConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::ModEuclid(a, b, c) => PrecompiledOp::ModEuclid(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::ModEuclidConst(a, b, c) => PrecompiledOp::ModEuclidConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::Tetration(a, b, c) => PrecompiledOp::Tetration(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::Funkcia(a, b, c) => PrecompiledOp::Funkcia(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::Max(a, b, c) => PrecompiledOp::Max(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::MaxConst(a, b, c) => PrecompiledOp::MaxConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::Min(a, b, c) => PrecompiledOp::Min(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::MinConst(a, b, c) => PrecompiledOp::MinConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::Clamp(a, b, c, d) => PrecompiledOp::Clamp(f(a, true), f(b, false), f(c, false), f(d, false)),
-            PrecompiledOp::ClampConst(a, b, c, d) => PrecompiledOp::ClampConst(f(a, true), f(b, false), *c, *d),
-            PrecompiledOp::Sgn(a, b) => PrecompiledOp::Sgn(f(a, true), f(b, false)),
-            PrecompiledOp::AbsFactorial(a, b) => PrecompiledOp::AbsFactorial(f(a, true), f(b, false)),
-            PrecompiledOp::Lensum(a, b, c) => PrecompiledOp::Lensum(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::Universal2(a, b, c, d) => PrecompiledOp::Universal2(f(a, true), f(b, false), f(c, false), f(d, false)),
-            PrecompiledOp::Universal1(a, b, c) => PrecompiledOp::Universal1(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::And(a, b, c) => PrecompiledOp::And(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::AndConst(a, b, c) => PrecompiledOp::AndConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::Or(a, b, c) => PrecompiledOp::Or(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::OrConst(a, b, c) => PrecompiledOp::OrConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::Xor(a, b, c) => PrecompiledOp::Xor(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::XorConst(a, b, c) => PrecompiledOp::XorConst(f(a, true), f(b, false), *c),
-            PrecompiledOp::ShiftL(a, b, c) => PrecompiledOp::ShiftL(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::ShiftR(a, b, c) => PrecompiledOp::ShiftR(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::ShiftConst(a, b, c) => PrecompiledOp::ShiftConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Add(a, b, c) => OsmibyteOp::Add(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::AddConst(a, b, c) => OsmibyteOp::AddConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Sub(a, b, c) => OsmibyteOp::Sub(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::SubConst(a, b, c) => OsmibyteOp::SubConst(f(a, true), *b, f(c, false)),
+            OsmibyteOp::AbsSub(a, b, c) => OsmibyteOp::AbsSub(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::AbsSubConst(a, b, c) => OsmibyteOp::AbsSubConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Mul(a, b, c) => OsmibyteOp::Mul(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::MulConst(a, b, c) => OsmibyteOp::MulConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Div(a, b, c) => OsmibyteOp::Div(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::DivConst(a, b, c) => OsmibyteOp::DivConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::CursedDiv(a, b, c) => OsmibyteOp::CursedDiv(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::Mod(a, b, c) => OsmibyteOp::Mod(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::ModConst(a, b, c) => OsmibyteOp::ModConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::ModEuclid(a, b, c) => OsmibyteOp::ModEuclid(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::ModEuclidConst(a, b, c) => OsmibyteOp::ModEuclidConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Tetration(a, b, c) => OsmibyteOp::Tetration(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::Funkcia(a, b, c) => OsmibyteOp::Funkcia(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::Max(a, b, c) => OsmibyteOp::Max(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::MaxConst(a, b, c) => OsmibyteOp::MaxConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Min(a, b, c) => OsmibyteOp::Min(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::MinConst(a, b, c) => OsmibyteOp::MinConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Clamp(a, b, c, d) => OsmibyteOp::Clamp(f(a, true), f(b, false), f(c, false), f(d, false)),
+            OsmibyteOp::ClampConst(a, b, c, d) => OsmibyteOp::ClampConst(f(a, true), f(b, false), *c, *d),
+            OsmibyteOp::Sgn(a, b) => OsmibyteOp::Sgn(f(a, true), f(b, false)),
+            OsmibyteOp::AbsFactorial(a, b) => OsmibyteOp::AbsFactorial(f(a, true), f(b, false)),
+            OsmibyteOp::Lensum(a, b, c) => OsmibyteOp::Lensum(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::Universal2(a, b, c, d) => OsmibyteOp::Universal2(f(a, true), f(b, false), f(c, false), f(d, false)),
+            OsmibyteOp::Universal1(a, b, c) => OsmibyteOp::Universal1(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::And(a, b, c) => OsmibyteOp::And(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::AndConst(a, b, c) => OsmibyteOp::AndConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Or(a, b, c) => OsmibyteOp::Or(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::OrConst(a, b, c) => OsmibyteOp::OrConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::Xor(a, b, c) => OsmibyteOp::Xor(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::XorConst(a, b, c) => OsmibyteOp::XorConst(f(a, true), f(b, false), *c),
+            OsmibyteOp::ShiftL(a, b, c) => OsmibyteOp::ShiftL(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::ShiftR(a, b, c) => OsmibyteOp::ShiftR(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::ShiftConst(a, b, c) => OsmibyteOp::ShiftConst(f(a, true), f(b, false), *c),
 
-            PrecompiledOp::BinNot(a, b) => PrecompiledOp::BinNot(f(a, true), f(b, false)),
-            PrecompiledOp::BoolNot(a, b) => PrecompiledOp::BoolNot(f(a, true), f(b, false)),
+            OsmibyteOp::BinNot(a, b) => OsmibyteOp::BinNot(f(a, true), f(b, false)),
+            OsmibyteOp::BoolNot(a, b) => OsmibyteOp::BoolNot(f(a, true), f(b, false)),
 
-            PrecompiledOp::SelectConst(a, condition, b, c) =>
-                PrecompiledOp::SelectConst(f(a, true), condition.replace_regs(|r| f(r, false)), *b, *c),
-            PrecompiledOp::SelectConst0(a, condition, b) =>
-                PrecompiledOp::SelectConst0(f(a, true), condition.replace_regs(|r| f(r, false)), *b),
-            PrecompiledOp::SelectConstReg(a, condition, b, c) =>
-                PrecompiledOp::SelectConstReg(f(a, true), condition.replace_regs(|r| f(r, false)), *b, f(c, false)),
-            PrecompiledOp::Select(a, condition, c, d) =>
-                PrecompiledOp::Select(f(a, true), condition.replace_regs(|r| f(r, false)), f(c, false), f(d, false)),
+            OsmibyteOp::SelectConst(a, condition, b, c) =>
+                OsmibyteOp::SelectConst(f(a, true), condition.replace_regs(|r| f(r, false)), *b, *c),
+            OsmibyteOp::SelectConst0(a, condition, b) =>
+                OsmibyteOp::SelectConst0(f(a, true), condition.replace_regs(|r| f(r, false)), *b),
+            OsmibyteOp::SelectConstReg(a, condition, b, c) =>
+                OsmibyteOp::SelectConstReg(f(a, true), condition.replace_regs(|r| f(r, false)), *b, f(c, false)),
+            OsmibyteOp::Select(a, condition, c, d) =>
+                OsmibyteOp::Select(f(a, true), condition.replace_regs(|r| f(r, false)), f(c, false), f(d, false)),
 
-            PrecompiledOp::DigitSum(a, b) => PrecompiledOp::DigitSum(f(a, true), f(b, false)),
-            PrecompiledOp::DigitSumSmall(a, b) => PrecompiledOp::DigitSumSmall(f(a, true), f(b, false)),
-            PrecompiledOp::DigitSumTwice(a, b) => PrecompiledOp::DigitSumTwice(f(a, true), f(b, false)),
-            PrecompiledOp::DigitSumDigitSumLensum(a, b) => PrecompiledOp::DigitSumDigitSumLensum(f(a, true), f(b, false)),
-            PrecompiledOp::Gcd(a, b, c) => PrecompiledOp::Gcd(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::DigitSum(a, b) => OsmibyteOp::DigitSum(f(a, true), f(b, false)),
+            OsmibyteOp::DigitSumSmall(a, b) => OsmibyteOp::DigitSumSmall(f(a, true), f(b, false)),
+            OsmibyteOp::DigitSumTwice(a, b) => OsmibyteOp::DigitSumTwice(f(a, true), f(b, false)),
+            OsmibyteOp::DigitSumDigitSumLensum(a, b) => OsmibyteOp::DigitSumDigitSumLensum(f(a, true), f(b, false)),
+            OsmibyteOp::Gcd(a, b, c) => OsmibyteOp::Gcd(f(a, true), f(b, false), f(c, false)),
 
-            PrecompiledOp::StackSwap(a, b, c, depth) => PrecompiledOp::StackSwap(f(a, true), f(b, false), f(c, false), *depth),
-            PrecompiledOp::StackRead(a, b, depth) => PrecompiledOp::StackRead(f(a, true), f(b, false), *depth),
-            PrecompiledOp::StackWrite(a, b, depth) => PrecompiledOp::StackRead(f(a, false), f(b, false), *depth),
+            OsmibyteOp::StackSwap(a, b, c, depth) => OsmibyteOp::StackSwap(f(a, true), f(b, false), f(c, false), *depth),
+            OsmibyteOp::StackRead(a, b, depth) => OsmibyteOp::StackRead(f(a, true), f(b, false), *depth),
+            OsmibyteOp::StackWrite(a, b, depth) => OsmibyteOp::StackRead(f(a, false), f(b, false), *depth),
 
-            PrecompiledOp::LoadConst(a, v) => PrecompiledOp::LoadConst(f(a, true), *v),
-            PrecompiledOp::LoadConst64(a, ix) => PrecompiledOp::LoadConst64(f(a, true), *ix),
-            PrecompiledOp::LoadConstPow2Offset(a, pow2, offset) => PrecompiledOp::LoadConstPow2Offset(f(a, true), *pow2, *offset),
+            OsmibyteOp::LoadConst(a, v) => OsmibyteOp::LoadConst(f(a, true), *v),
+            OsmibyteOp::LoadConst64(a, ix) => OsmibyteOp::LoadConst64(f(a, true), *ix),
+            OsmibyteOp::LoadConstPow2Offset(a, pow2, offset) => OsmibyteOp::LoadConstPow2Offset(f(a, true), *pow2, *offset),
 
-            PrecompiledOp::Jump(condition, ip) => PrecompiledOp::Jump(condition.replace_regs(|r| f(r, false)), *ip),
+            OsmibyteOp::Jump(condition, ip) => OsmibyteOp::Jump(condition.replace_regs(|r| f(r, false)), *ip),
 
-            PrecompiledOp::Assert(condition, code, arg) => PrecompiledOp::Assert(condition.replace_regs(|r| f(r, false)), *code, f(arg, false)),
-            PrecompiledOp::DeoptAssert(condition, id) => PrecompiledOp::DeoptAssert(condition.replace_regs(|r| f(r, false)), *id),
-            PrecompiledOp::Done(ip) => PrecompiledOp::Done(*ip),
+            OsmibyteOp::Assert(condition, code, arg) => OsmibyteOp::Assert(condition.replace_regs(|r| f(r, false)), *code, f(arg, false)),
+            OsmibyteOp::DeoptAssert(condition, id) => OsmibyteOp::DeoptAssert(condition.replace_regs(|r| f(r, false)), *id),
+            OsmibyteOp::Done(ip) => OsmibyteOp::Done(*ip),
 
-            PrecompiledOp::Median2(a, b, c) => PrecompiledOp::Median2(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::MedianCursed2(a, b) => PrecompiledOp::MedianCursed2(f(a, true), f(b, false)),
-            PrecompiledOp::Median3(a, b, c, d) => PrecompiledOp::Median3(f(a, true), f(b, false), f(c, false), f(d, false)),
-            PrecompiledOp::MedianCursed3(a, b, c) => PrecompiledOp::MedianCursed3(f(a, true), f(b, false), f(c, false)),
-            PrecompiledOp::MedianCursed5(a, b, c, d, e) => PrecompiledOp::MedianCursed5(f(a, true), f(b, false), f(c, false), f(d, false), f(e, false)),
+            OsmibyteOp::Median2(a, b, c) => OsmibyteOp::Median2(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::MedianCursed2(a, b) => OsmibyteOp::MedianCursed2(f(a, true), f(b, false)),
+            OsmibyteOp::Median3(a, b, c, d) => OsmibyteOp::Median3(f(a, true), f(b, false), f(c, false), f(d, false)),
+            OsmibyteOp::MedianCursed3(a, b, c) => OsmibyteOp::MedianCursed3(f(a, true), f(b, false), f(c, false)),
+            OsmibyteOp::MedianCursed5(a, b, c, d, e) => OsmibyteOp::MedianCursed5(f(a, true), f(b, false), f(c, false), f(d, false), f(e, false)),
 
-            PrecompiledOp::KsplangOp(op) => PrecompiledOp::KsplangOp(*op),
-            PrecompiledOp::KsplangOpWithArg(op, a) => PrecompiledOp::KsplangOpWithArg(*op, f(a, false)),
+            OsmibyteOp::KsplangOp(op) => OsmibyteOp::KsplangOp(*op),
+            OsmibyteOp::KsplangOpWithArg(op, a) => OsmibyteOp::KsplangOpWithArg(*op, f(a, false)),
 
-            PrecompiledOp::KsplangOpsIncrement(inc) => PrecompiledOp::KsplangOpsIncrement(*inc),
-            PrecompiledOp::KsplangOpsIncrementVar(inc) => PrecompiledOp::KsplangOpsIncrementVar(f(inc, false)),
-            PrecompiledOp::KsplangOpsIncrementCond(cond, inc) => PrecompiledOp::KsplangOpsIncrementCond(cond.replace_regs(|r| f(r, false)), *inc),
+            OsmibyteOp::KsplangOpsIncrement(inc) => OsmibyteOp::KsplangOpsIncrement(*inc),
+            OsmibyteOp::KsplangOpsIncrementVar(inc) => OsmibyteOp::KsplangOpsIncrementVar(f(inc, false)),
+            OsmibyteOp::KsplangOpsIncrementCond(cond, inc) => OsmibyteOp::KsplangOpsIncrementCond(cond.replace_regs(|r| f(r, false)), *inc),
 
-            PrecompiledOp::Spill(value, a) => PrecompiledOp::Spill(*value, f(a, false)),
-            PrecompiledOp::Unspill(a, value) => PrecompiledOp::Unspill(f(a, true), *value),
+            OsmibyteOp::Spill(value, a) => OsmibyteOp::Spill(*value, f(a, false)),
+            OsmibyteOp::Unspill(a, value) => OsmibyteOp::Unspill(f(a, true), *value),
         }
     }
 }
@@ -409,14 +409,14 @@ impl<T: fmt::Display> fmt::Debug for Condition<T> {
 
 #[derive(Debug, Clone)]
 pub struct DeoptInfo {
-    pub additional_opcodes: Box<[PrecompiledOp<RegId>]>,
+    pub additional_opcodes: Box<[OsmibyteOp<RegId>]>,
     pub stack_reconstruction: SmallVec<[RegId; 16]>,
     pub ip: usize,
     pub ksplang_ops_increment: u32
 }
 
-pub struct PrecompiledBlock {
-    pub program: Box<[PrecompiledOp<RegId>]>,
+pub struct OsmibytecodeBlock {
+    pub program: Box<[OsmibyteOp<RegId>]>,
     pub stack_space_required: u32,
     pub stack_values_required: u32,
     pub start_ip: usize,
@@ -425,7 +425,7 @@ pub struct PrecompiledBlock {
     pub deopts: Box<[DeoptInfo]>
 }
 
-impl fmt::Display for PrecompiledBlock {
+impl fmt::Display for OsmibytecodeBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "PrecompiledBlock {{")?;
         writeln!(f, "  start_ip: {}, stack_space_required: {}, stack_values_required: {}", self.start_ip, self.stack_space_required, self.stack_values_required)?;
@@ -463,12 +463,12 @@ impl fmt::Display for PrecompiledBlock {
     }
 }
 
-impl fmt::Debug for PrecompiledBlock {
+impl fmt::Debug for OsmibytecodeBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(self, f) }
 }
 
-impl PrecompiledBlock {
-    pub fn from_cfg(g: &GraphBuilder) -> PrecompiledBlock {
+impl OsmibytecodeBlock {
+    pub fn from_cfg(g: &GraphBuilder) -> OsmibytecodeBlock {
         let register_allocation = allocate_registers(g, ALLOCATABLE_REG_COUNT);
         println!("Register allocation: {}", register_allocation);
         let mut compiler = Compiler::new(g, register_allocation);
@@ -481,7 +481,7 @@ impl PrecompiledBlock {
 #[derive(Clone, Debug)]
 struct Compiler<'a> {
     g: &'a GraphBuilder,
-    program: Vec<PrecompiledOp<RegId>>,
+    program: Vec<OsmibyteOp<RegId>>,
     large_constants: Vec<i64>,
     large_constant_lookup: HashMap<i64, u16>,
     deopts: Vec<DeoptInfo>,
@@ -551,53 +551,53 @@ impl<'a> Compiler<'a> {
 
         match &instr.op {
             Const(_) => panic!("Special op, should not be in CfG"),
-            Add => self.lower_variadic(instr, |out, a, b| PrecompiledOp::Add(out, a, b), |out, a, c| Some(PrecompiledOp::AddConst(out, a, c.try_into().ok()?))),
+            Add => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Add(out, a, b), |out, a, c| Some(OsmibyteOp::AddConst(out, a, c.try_into().ok()?))),
             Mul => self.lower_mul(instr),
-            Sub => self.lower_binary(instr, |out, a, b| PrecompiledOp::Sub(out, a, b), |_, _, _| None, |out, c, b| Some(PrecompiledOp::SubConst(out, c.try_into().ok()?, b))),
-            AbsSub => self.lower_variadic(instr, |out, a, b| PrecompiledOp::AbsSub(out, a, b), |out, a, c| Some(PrecompiledOp::AbsSubConst(out, a, c.try_into().ok()?))),
+            Sub => self.lower_binary(instr, |out, a, b| OsmibyteOp::Sub(out, a, b), |_, _, _| None, |out, c, b| Some(OsmibyteOp::SubConst(out, c.try_into().ok()?, b))),
+            AbsSub => self.lower_variadic(instr, |out, a, b| OsmibyteOp::AbsSub(out, a, b), |out, a, c| Some(OsmibyteOp::AbsSubConst(out, a, c.try_into().ok()?))),
             Div => return self.lower_div(instrs),
-            CursedDiv => self.lower_binary(instr, |out, a, b| PrecompiledOp::CursedDiv(out, a, b), |_, _, _| None, |_, _, _| None),
+            CursedDiv => self.lower_binary(instr, |out, a, b| OsmibyteOp::CursedDiv(out, a, b), |_, _, _| None, |_, _, _| None),
             Mod => {
                 let lhs_range = self.g.val_range_at(instr.inputs[0], instr.id);
                 let lhs_non_negative = *lhs_range.start() >= 0;
-                self.lower_binary(instr, |out, a, b| PrecompiledOp::Mod(out, a, b), {
+                self.lower_binary(instr, |out, a, b| OsmibyteOp::Mod(out, a, b), {
                     move |out, a, c| {
                         let c: i32 = c.try_into().ok()?;
                         if c > 0 && (c as u64).is_power_of_two() && lhs_non_negative {
-                            Some(PrecompiledOp::AndConst(out, a, c.wrapping_sub(1)))
+                            Some(OsmibyteOp::AndConst(out, a, c.wrapping_sub(1)))
                         } else {
-                            Some(PrecompiledOp::ModConst(out, a, c))
+                            Some(OsmibyteOp::ModConst(out, a, c))
                         }
                     }
                 }, |_, _, _| None);
             }
             ModEuclid => {
-                self.lower_binary(instr, |out, a, b| PrecompiledOp::ModEuclid(out, a, b), move |out, a, c| {
+                self.lower_binary(instr, |out, a, b| OsmibyteOp::ModEuclid(out, a, b), move |out, a, c| {
                     let c: i32 = c.try_into().ok()?;
                     if c > 0 && (c as u64).is_power_of_two() {
-                        Some(PrecompiledOp::AndConst(out, a, c.wrapping_sub(1)))
+                        Some(OsmibyteOp::AndConst(out, a, c.wrapping_sub(1)))
                     } else {
-                        Some(PrecompiledOp::ModEuclidConst(out, a, c))
+                        Some(OsmibyteOp::ModEuclidConst(out, a, c))
                     }
                 }, |_, _, _| None);
             }
-            Tetration => self.lower_binary(instr, |out, a, b| PrecompiledOp::Tetration(out, a, b), |_, _, _| None, |_, _, _| None),
-            Funkcia => self.lower_binary(instr, |out, a, b| PrecompiledOp::Funkcia(out, a, b), |_, _, _| None, |_, _, _| None),
+            Tetration => self.lower_binary(instr, |out, a, b| OsmibyteOp::Tetration(out, a, b), |_, _, _| None, |_, _, _| None),
+            Funkcia => self.lower_binary(instr, |out, a, b| OsmibyteOp::Funkcia(out, a, b), |_, _, _| None, |_, _, _| None),
             Max => consumed = self.lower_max(instrs),
             Min => self.lower_min(instr),
-            Sgn => self.lower_unary(instr, |out, a| PrecompiledOp::Sgn(out, a)),
-            AbsFactorial => self.lower_unary(instr, |out, a| PrecompiledOp::AbsFactorial(out, a)),
-            LenSum => self.lower_binary(instr, |out, a, b| PrecompiledOp::Lensum(out, a, b), |_, _, _| None, |_, _, _| None),
-            And => self.lower_variadic(instr, |out, a, b| PrecompiledOp::And(out, a, b), |out, a, c| c.try_into().ok().map(|mask| PrecompiledOp::AndConst(out, a, mask))),
-            Or => self.lower_variadic(instr, |out, a, b| PrecompiledOp::Or(out, a, b), |out, a, c| c.try_into().ok().map(|mask| PrecompiledOp::OrConst(out, a, mask))),
-            Xor => self.lower_variadic(instr, |out, a, b| PrecompiledOp::Xor(out, a, b), |out, a, c| c.try_into().ok().map(|mask| PrecompiledOp::XorConst(out, a, mask))),
-            ShiftL => self.lower_binary(instr, |out, a, b| PrecompiledOp::ShiftL(out, a, b), |out, a, c| Some(PrecompiledOp::ShiftConst(out, a, c.try_into().ok()?)), |_, _, _| None),
-            ShiftR => self.lower_binary(instr, |out, a, b| PrecompiledOp::ShiftR(out, a, b), |out, a, c: i64| Some(PrecompiledOp::ShiftConst(out, a, c.checked_neg()?.try_into().ok()?)), |_, _, _| None),
-            BinNot => self.lower_unary(instr, |out, a| PrecompiledOp::BinNot(out, a)),
-            BoolNot => self.lower_unary(instr, |out, a| PrecompiledOp::BoolNot(out, a)),
+            Sgn => self.lower_unary(instr, |out, a| OsmibyteOp::Sgn(out, a)),
+            AbsFactorial => self.lower_unary(instr, |out, a| OsmibyteOp::AbsFactorial(out, a)),
+            LenSum => self.lower_binary(instr, |out, a, b| OsmibyteOp::Lensum(out, a, b), |_, _, _| None, |_, _, _| None),
+            And => self.lower_variadic(instr, |out, a, b| OsmibyteOp::And(out, a, b), |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::AndConst(out, a, mask))),
+            Or => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Or(out, a, b), |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::OrConst(out, a, mask))),
+            Xor => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Xor(out, a, b), |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::XorConst(out, a, mask))),
+            ShiftL => self.lower_binary(instr, |out, a, b| OsmibyteOp::ShiftL(out, a, b), |out, a, c| Some(OsmibyteOp::ShiftConst(out, a, c.try_into().ok()?)), |_, _, _| None),
+            ShiftR => self.lower_binary(instr, |out, a, b| OsmibyteOp::ShiftR(out, a, b), |out, a, c: i64| Some(OsmibyteOp::ShiftConst(out, a, c.checked_neg()?.try_into().ok()?)), |_, _, _| None),
+            BinNot => self.lower_unary(instr, |out, a| OsmibyteOp::BinNot(out, a)),
+            BoolNot => self.lower_unary(instr, |out, a| OsmibyteOp::BoolNot(out, a)),
             Select(condition) => self.lower_select(instr, condition.clone()),
             DigitSum => consumed = self.lower_digit_sum(instrs),
-            Gcd => self.lower_variadic(instr, |out, a, b| PrecompiledOp::Gcd(out, a, b), |_, _, _| None),
+            Gcd => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Gcd(out, a, b), |_, _, _| None),
             Push => self.lower_push(instr),
             Pop => self.lower_pop(instr),
             StackSwap => self.lower_stack_swap(instr),
@@ -614,8 +614,8 @@ impl<'a> Compiler<'a> {
 
     fn lower_variadic<F, FC>(&mut self, instr: &OptInstr, op: F, op_const: FC)
     where
-        F: Fn(RegId, RegId, RegId) -> PrecompiledOp<RegId>,
-        FC: Fn(RegId, RegId, i64) -> Option<PrecompiledOp<RegId>>,
+        F: Fn(RegId, RegId, RegId) -> OsmibyteOp<RegId>,
+        FC: Fn(RegId, RegId, i64) -> Option<OsmibyteOp<RegId>>,
     {
         assert!(!instr.inputs.is_empty());
 
@@ -641,7 +641,7 @@ impl<'a> Compiler<'a> {
             }
         } else {
             let first_reg = self.materialize_value_(first_val);
-            self.program.push(PrecompiledOp::AddConst(dest, first_reg, 0));
+            self.program.push(OsmibyteOp::AddConst(dest, first_reg, 0));
         }
 
         self.finalize_output(spec);
@@ -649,9 +649,9 @@ impl<'a> Compiler<'a> {
 
     fn lower_binary<F, FC1, FC2>(&mut self, instr: &OptInstr, op: F, op_const_rhs: FC1, op_const_lhs: FC2)
     where
-        F: Fn(RegId, RegId, RegId) -> PrecompiledOp<RegId>,
-        FC1: Fn(RegId, RegId, i64) -> Option<PrecompiledOp<RegId>>,
-        FC2: Fn(RegId, i64, RegId) -> Option<PrecompiledOp<RegId>>,
+        F: Fn(RegId, RegId, RegId) -> OsmibyteOp<RegId>,
+        FC1: Fn(RegId, RegId, i64) -> Option<OsmibyteOp<RegId>>,
+        FC2: Fn(RegId, i64, RegId) -> Option<OsmibyteOp<RegId>>,
     {
         debug_assert_eq!(instr.inputs.len(), 2, "{instr}");
         let spec = self.prepare_output(instr.out);
@@ -698,7 +698,7 @@ impl<'a> Compiler<'a> {
                         if let (Ok(lo_i16), Ok(hi_i16)) = (lo_const.try_into(), hi_const.try_into()) {
                             let spec = self.prepare_output(min.out);
                             let value_reg = self.materialize_value_(max.inputs[1]);
-                            self.program.push(PrecompiledOp::ClampConst(spec.target_reg(), value_reg, lo_i16, hi_i16));
+                            self.program.push(OsmibyteOp::ClampConst(spec.target_reg(), value_reg, lo_i16, hi_i16));
                             self.finalize_output(spec);
                             return 2; // Consumed Max, Min
                         }
@@ -707,12 +707,12 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        self.lower_variadic(max, |out, a, b| PrecompiledOp::Max(out, a, b), |out, a, c| Some(PrecompiledOp::MaxConst(out, a, c.try_into().ok()?)));
+        self.lower_variadic(max, |out, a, b| OsmibyteOp::Max(out, a, b), |out, a, c| Some(OsmibyteOp::MaxConst(out, a, c.try_into().ok()?)));
         1
     }
 
     fn lower_min(&mut self, instr: &OptInstr) {
-        self.lower_variadic(instr, |out, a, b| PrecompiledOp::Min(out, a, b), |out, a, c| Some(PrecompiledOp::MinConst(out, a, c.try_into().ok()?)));
+        self.lower_variadic(instr, |out, a, b| OsmibyteOp::Min(out, a, b), |out, a, c| Some(OsmibyteOp::MinConst(out, a, c.try_into().ok()?)));
     }
 
     fn lower_div(&mut self, instrs: &[&OptInstr]) -> usize {
@@ -728,30 +728,30 @@ impl<'a> Compiler<'a> {
                 {
                     let spec = self.prepare_output(next.out);
                     let value_reg = self.materialize_value_(div.inputs[0]);
-                    self.program.push(PrecompiledOp::MedianCursed2(spec.target_reg(), value_reg));
+                    self.program.push(OsmibyteOp::MedianCursed2(spec.target_reg(), value_reg));
                     self.finalize_output(spec);
                     return 2; // Consumed Div, Add
                 }
             }
         }
 
-        self.lower_binary(div, |out, a, b| PrecompiledOp::Div(out, a, b), |out, a, c| {
+        self.lower_binary(div, |out, a, b| OsmibyteOp::Div(out, a, b), |out, a, c| {
             if c > 0 && (c as u64).is_power_of_two() {
                 let shift_amount = -(c.trailing_zeros() as i32) as i8;
-                return Some(PrecompiledOp::ShiftConst(out, a, shift_amount));
+                return Some(OsmibyteOp::ShiftConst(out, a, shift_amount));
             }
-            Some(PrecompiledOp::DivConst(out, a, c.try_into().ok()?))
+            Some(OsmibyteOp::DivConst(out, a, c.try_into().ok()?))
         }, |_, _, _| None);
         1
     }
 
     fn lower_mul(&mut self, instr: &OptInstr) {
-        self.lower_variadic(instr, |out, a, b| PrecompiledOp::Mul(out, a, b), |out, a, c| {
+        self.lower_variadic(instr, |out, a, b| OsmibyteOp::Mul(out, a, b), |out, a, c| {
             if c > 0 && (c as u64).is_power_of_two() {
                 let shift_amount = c.trailing_zeros() as i8;
-                return Some(PrecompiledOp::ShiftConst(out, a, shift_amount));
+                return Some(OsmibyteOp::ShiftConst(out, a, shift_amount));
             }
-            Some(PrecompiledOp::MulConst(out, a, c.try_into().ok()?))
+            Some(OsmibyteOp::MulConst(out, a, c.try_into().ok()?))
         });
     }
 
@@ -772,7 +772,7 @@ impl<'a> Compiler<'a> {
                         && self.used_exactly_at(ds1.out, &[lensum.id, ds2.id])
                     {
                         let spec = self.prepare_output(lensum.out);
-                        self.program.push(PrecompiledOp::DigitSumDigitSumLensum(spec.target_reg(), input_reg));
+                        self.program.push(OsmibyteOp::DigitSumDigitSumLensum(spec.target_reg(), input_reg));
                         self.finalize_output(spec);
                         return 3; // Consumed DigitSum, DigitSum, LenSum
                     }
@@ -780,7 +780,7 @@ impl<'a> Compiler<'a> {
 
                 if self.used_exactly_at(ds1.out, &[ds2.id]) {
                     let spec = self.prepare_output(ds2.out);
-                    self.program.push(PrecompiledOp::DigitSumTwice(spec.target_reg(), input_reg));
+                    self.program.push(OsmibyteOp::DigitSumTwice(spec.target_reg(), input_reg));
                     self.finalize_output(spec);
                     return 2; // Consumed DigitSum, DigitSum
                 }
@@ -790,9 +790,9 @@ impl<'a> Compiler<'a> {
         let input_range = self.g.val_range(ds1.inputs[0]);
         let spec = self.prepare_output(ds1.out);
         if *input_range.start() >= 0 && *input_range.end() < 10_000 {
-            self.program.push(PrecompiledOp::DigitSumSmall(spec.target_reg(), input_reg));
+            self.program.push(OsmibyteOp::DigitSumSmall(spec.target_reg(), input_reg));
         } else {
-            self.program.push(PrecompiledOp::DigitSum(spec.target_reg(), input_reg));
+            self.program.push(OsmibyteOp::DigitSum(spec.target_reg(), input_reg));
         }
         self.finalize_output(spec);
         1
@@ -800,7 +800,7 @@ impl<'a> Compiler<'a> {
 
     fn lower_unary<F>(&mut self, instr: &OptInstr, op: F)
     where
-        F: Fn(RegId, RegId) -> PrecompiledOp<RegId>,
+        F: Fn(RegId, RegId) -> OsmibyteOp<RegId>,
     {
         if instr.inputs.is_empty() {
             return;
@@ -821,13 +821,13 @@ impl<'a> Compiler<'a> {
             // select(x == 0, 1, 0) -> BoolNot(x)
             if matches!(lowered_condition, Condition::EqConst(_, 0)) && true_const == 1 && false_const == 0 {
                 let Condition::EqConst(val_reg, 0) = &lowered_condition else { unreachable!() };
-                self.program.push(PrecompiledOp::BoolNot(spec.target_reg(), *val_reg));
+                self.program.push(OsmibyteOp::BoolNot(spec.target_reg(), *val_reg));
                 self.finalize_output(spec);
                 return;
             }
             if matches!(lowered_condition, Condition::NeqConst(_, 0)) && true_const == 0 && false_const == 1 {
                 let Condition::NeqConst(val_reg, 0) = &lowered_condition else { unreachable!() };
-                self.program.push(PrecompiledOp::BoolNot(spec.target_reg(), *val_reg));
+                self.program.push(OsmibyteOp::BoolNot(spec.target_reg(), *val_reg));
                 self.finalize_output(spec);
                 return;
             }
@@ -841,7 +841,7 @@ impl<'a> Compiler<'a> {
                 let val_range = self.g.val_range(cond_val);
                 if *val_range.start() >= 0 {
                     let val_reg = lowered_condition.regs().into_iter().next().unwrap();
-                    self.program.push(PrecompiledOp::Sgn(spec.target_reg(), val_reg));
+                    self.program.push(OsmibyteOp::Sgn(spec.target_reg(), val_reg));
                     self.finalize_output(spec);
                     return;
                 }
@@ -849,32 +849,32 @@ impl<'a> Compiler<'a> {
 
             if false_const == 0 {
                 if let Ok(true_i16) = true_const.try_into() {
-                    self.program.push(PrecompiledOp::SelectConst0(spec.target_reg(), lowered_condition, true_i16));
+                    self.program.push(OsmibyteOp::SelectConst0(spec.target_reg(), lowered_condition, true_i16));
                     self.finalize_output(spec);
                     return;
                 }
             }
             if true_const == 0 {
                 if let Ok(false_i16) = false_const.try_into() {
-                    self.program.push(PrecompiledOp::SelectConst0(spec.target_reg(), lowered_condition.neg(), false_i16));
+                    self.program.push(OsmibyteOp::SelectConst0(spec.target_reg(), lowered_condition.neg(), false_i16));
                     self.finalize_output(spec);
                     return;
                 }
             }
             if let (Ok(true_i8), Ok(false_i8)) = (true_const.try_into(), false_const.try_into()) {
-                self.program.push(PrecompiledOp::SelectConst(spec.target_reg(), lowered_condition, true_i8, false_i8));
+                self.program.push(OsmibyteOp::SelectConst(spec.target_reg(), lowered_condition, true_i8, false_i8));
                 self.finalize_output(spec);
                 return;
             }
         } else if let Some(true_const) = self.g.get_constant(instr.inputs[0]).and_then(|v| v.try_into().ok()) {
             // True branch is constant, false branch is register or out of range
             let false_reg = self.materialize_value_(instr.inputs[1]);
-            self.program.push(PrecompiledOp::SelectConstReg(spec.target_reg(), lowered_condition, true_const, false_reg));
+            self.program.push(OsmibyteOp::SelectConstReg(spec.target_reg(), lowered_condition, true_const, false_reg));
             self.finalize_output(spec);
             return;
         } else if let Some(false_const) = self.g.get_constant(instr.inputs[1]).and_then(|v| v.try_into().ok()) {
             let true_reg = self.materialize_value_(instr.inputs[0]);
-            self.program.push(PrecompiledOp::SelectConstReg(spec.target_reg(), lowered_condition.neg(), false_const, true_reg));
+            self.program.push(OsmibyteOp::SelectConstReg(spec.target_reg(), lowered_condition.neg(), false_const, true_reg));
             self.finalize_output(spec);
             return;
         }
@@ -882,7 +882,7 @@ impl<'a> Compiler<'a> {
         let true_reg = self.materialize_value_(instr.inputs[0]);
         let false_reg = self.materialize_value_(instr.inputs[1]);
 
-        self.program.push(PrecompiledOp::Select(spec.target_reg(), lowered_condition, true_reg, false_reg));
+        self.program.push(OsmibyteOp::Select(spec.target_reg(), lowered_condition, true_reg, false_reg));
         self.finalize_output(spec);
     }
 
@@ -906,13 +906,13 @@ impl<'a> Compiler<'a> {
             }
 
             match regs.len() {
-                1 => self.program.push(PrecompiledOp::Push(regs[0])),
-                2 => self.program.push(PrecompiledOp::Push2(regs[0], regs[1])),
-                3 => self.program.push(PrecompiledOp::Push3(regs[0], regs[1], regs[2])),
-                4 => self.program.push(PrecompiledOp::Push4(regs[0], regs[1], regs[2], regs[3])),
-                5 => self.program.push(PrecompiledOp::Push5(regs[0], regs[1], regs[2], regs[3], regs[4])),
-                6 => self.program.push(PrecompiledOp::Push6(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5])),
-                7 => self.program.push(PrecompiledOp::Push7(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6])),
+                1 => self.program.push(OsmibyteOp::Push(regs[0])),
+                2 => self.program.push(OsmibyteOp::Push2(regs[0], regs[1])),
+                3 => self.program.push(OsmibyteOp::Push3(regs[0], regs[1], regs[2])),
+                4 => self.program.push(OsmibyteOp::Push4(regs[0], regs[1], regs[2], regs[3])),
+                5 => self.program.push(OsmibyteOp::Push5(regs[0], regs[1], regs[2], regs[3], regs[4])),
+                6 => self.program.push(OsmibyteOp::Push6(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5])),
+                7 => self.program.push(OsmibyteOp::Push7(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6])),
                 _ => unreachable!(),
             }
 
@@ -923,7 +923,7 @@ impl<'a> Compiler<'a> {
 
     fn lower_pop(&mut self, instr: &OptInstr) {
         let spec = self.prepare_output(instr.out);
-        self.program.push(PrecompiledOp::Pop(spec.target_reg()));
+        self.program.push(OsmibyteOp::Pop(spec.target_reg()));
         self.finalize_output(spec);
     }
 
@@ -934,7 +934,7 @@ impl<'a> Compiler<'a> {
         let index_reg = self.materialize_value_(instr.inputs[0]);
         let value_reg = self.materialize_value_(instr.inputs[1]);
 
-        self.program.push(PrecompiledOp::StackSwap(spec.target_reg(), index_reg, value_reg, 0));
+        self.program.push(OsmibyteOp::StackSwap(spec.target_reg(), index_reg, value_reg, 0));
         self.finalize_output(spec);
     }
 
@@ -976,7 +976,7 @@ impl<'a> Compiler<'a> {
 
         let jump_fixup = if condition != Condition::True && register_moves.len() + unspills.len() + spills.len() + consts.len() > 0 {
             // first check condition, then move values
-            self.program.push(PrecompiledOp::Jump(condition.clone().neg(), 0));
+            self.program.push(OsmibyteOp::Jump(condition.clone().neg(), 0));
             self.temp_regs.clear();
             Some(self.program.len() - 1)
         } else {
@@ -985,14 +985,14 @@ impl<'a> Compiler<'a> {
 
         for (value, slot) in spills {
             let reg = self.materialize_value_(value);
-            self.program.push(PrecompiledOp::Spill(slot, reg));
+            self.program.push(OsmibyteOp::Spill(slot, reg));
             self.temp_regs.release(reg);
         }
 
         self.emit_register_moves(register_moves);
 
         for (slot, reg) in unspills {
-            self.program.push(PrecompiledOp::Unspill(reg, slot));
+            self.program.push(OsmibyteOp::Unspill(reg, slot));
         }
 
         for (value, reg) in consts {
@@ -1001,12 +1001,12 @@ impl<'a> Compiler<'a> {
 
         if let Some(jump_fixup) = jump_fixup {
             let current_loc = self.program.len().try_into().unwrap();
-            let PrecompiledOp::Jump(_, target) = &mut self.program[jump_fixup] else { panic!() };
+            let OsmibyteOp::Jump(_, target) = &mut self.program[jump_fixup] else { panic!() };
             *target = current_loc;
             // condition is already in the first jump
-            self.program.push(PrecompiledOp::Jump(Condition::True, 0))
+            self.program.push(OsmibyteOp::Jump(Condition::True, 0))
         } else {
-            self.program.push(PrecompiledOp::Jump(condition, 0));
+            self.program.push(OsmibyteOp::Jump(condition, 0));
         }
         self.jump_fixups.push((self.program.len() - 1, target));
     }
@@ -1033,15 +1033,15 @@ impl<'a> Compiler<'a> {
             if from == to {
                 continue
             }
-            self.program.push(PrecompiledOp::Mov2(to, from, from, to));
+            self.program.push(OsmibyteOp::Mov2(to, from, from, to));
             // `from` is now temporarily swapped in `to`
             reg_remap.insert(from, to);
         }
         for chunk in sequential_moves.chunks(3) {
             match chunk {
-                [a, b, c] => self.program.push(PrecompiledOp::Mov3(a.1, a.0, b.1, b.0, c.1, c.0)),
-                [a, b] => self.program.push(PrecompiledOp::Mov2(a.1, a.0, b.1, b.0)),
-                [a] => self.program.push(PrecompiledOp::OrConst(a.1, a.0, 0)),
+                [a, b, c] => self.program.push(OsmibyteOp::Mov3(a.1, a.0, b.1, b.0, c.1, c.0)),
+                [a, b] => self.program.push(OsmibyteOp::Mov2(a.1, a.0, b.1, b.0)),
+                [a] => self.program.push(OsmibyteOp::OrConst(a.1, a.0, 0)),
                 wtf => unreachable!("{wtf:?}")
             }
         }
@@ -1059,7 +1059,7 @@ impl<'a> Compiler<'a> {
             RegId(0) // undefined value
         };
 
-        self.program.push(PrecompiledOp::Assert(lowered_condition, code, arg_reg));
+        self.program.push(OsmibyteOp::Assert(lowered_condition, code, arg_reg));
     }
 
     fn lower_condition(
@@ -1147,10 +1147,10 @@ impl<'a> Compiler<'a> {
 
     fn load_constant(&mut self, reg: RegId, value: i64) {
         if value >= i32::MIN as i64 && value <= i32::MAX as i64 {
-            self.program.push(PrecompiledOp::LoadConst(reg, value as i32));
+            self.program.push(OsmibyteOp::LoadConst(reg, value as i32));
         } else { // TODO: pow2 offset
             let idx = self.get_large_constant_index(value);
-            self.program.push(PrecompiledOp::LoadConst64(reg, idx));
+            self.program.push(OsmibyteOp::LoadConst64(reg, idx));
         }
     }
 
@@ -1171,7 +1171,7 @@ impl<'a> Compiler<'a> {
                 ValueLocation::Register(reg) => RegId(reg),
                 ValueLocation::Spill(slot) => {
                     let reg = self.temp_regs.alloc().ok_or(())?;
-                    self.program.push(PrecompiledOp::Unspill(reg, slot));
+                    self.program.push(OsmibyteOp::Unspill(reg, slot));
                     self.temp_regs.insert_cache(value, reg);
                     reg
                 }
@@ -1234,7 +1234,7 @@ impl<'a> Compiler<'a> {
 
     fn finalize_output(&mut self, spec: OutputSpec) {
         if let OutputSpec::Spill { reg, slot } = spec {
-            self.program.push(PrecompiledOp::Spill(slot, reg));
+            self.program.push(OsmibyteOp::Spill(slot, reg));
             self.temp_regs.release(reg);
         }
     }
@@ -1259,20 +1259,20 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn finish(mut self) -> PrecompiledBlock {
+    fn finish(mut self) -> OsmibytecodeBlock {
         for (pos, target) in self.jump_fixups {
             let target_ip = *self
                 .block_starts
                 .get(&target)
                 .unwrap_or_else(|| panic!("jump target block {:?} was not compiled", target));
-            if let Some(PrecompiledOp::Jump(_, ref mut dest)) = self.program.get_mut(pos) {
+            if let Some(OsmibyteOp::Jump(_, ref mut dest)) = self.program.get_mut(pos) {
                 *dest = target_ip;
             } else {
                 panic!("expected jump at position {}", pos);
             }
         }
 
-        PrecompiledBlock {
+        OsmibytecodeBlock {
             program: self.program.into_boxed_slice(),
             stack_space_required: 0,
             stack_values_required: 0,
@@ -1876,7 +1876,7 @@ fn dataflow<T: PartialEq>(
 #[test]
 fn test_struct_size() {
     assert_eq!(core::mem::size_of::<Condition<u8>>(), 4);
-    assert_eq!(core::mem::size_of::<PrecompiledOp<u8>>(), 8);
+    assert_eq!(core::mem::size_of::<OsmibyteOp<u8>>(), 8);
 }
 
 #[cfg(test)]
@@ -1898,14 +1898,14 @@ mod lowering_tests {
         (g, param)
     }
 
-    fn compile_binary(op: OptOp<ValueId>, lhs_range: RangeInclusive<i64>, rhs_const: i64) -> Vec<PrecompiledOp<RegId>> {
+    fn compile_binary(op: OptOp<ValueId>, lhs_range: RangeInclusive<i64>, rhs_const: i64) -> Vec<OsmibyteOp<RegId>> {
         let (mut g, lhs) = graph_with_param(lhs_range);
 
         let rhs = g.store_constant(rhs_const);
         let (out, _instr) = g.push_instr(op, &[lhs, rhs], false, None, None);
         let (_out2, _instr2) = g.push_instr(OptOp::Add, &[ValueId::C_TWO, out], false, None, None);
         println!("CFG: {g}");
-        let block = PrecompiledBlock::from_cfg(&g);
+        let block = OsmibytecodeBlock::from_cfg(&g);
         println!("{:?}", block);
         block.program.iter().cloned().collect()
     }
@@ -1913,23 +1913,23 @@ mod lowering_tests {
     #[test]
     fn mod_bitshift_opt() {
         let program = compile_binary(OptOp::Mod, 0..=100, 8);
-        assert!(program.iter().any(|op| matches!(op, PrecompiledOp::AndConst(_, _, 7))));
-        assert!(!program.iter().any(|op| matches!(op, PrecompiledOp::ModConst(_, _, _))));
+        assert!(program.iter().any(|op| matches!(op, OsmibyteOp::AndConst(_, _, 7))));
+        assert!(!program.iter().any(|op| matches!(op, OsmibyteOp::ModConst(_, _, _))));
     }
 
     #[test]
     fn mod_bitshift_opt_no() {
         let program = compile_binary(OptOp::Mod, -5..=5, 8);
-        assert!(program.iter().any(|op| matches!(op, PrecompiledOp::ModConst(_, _, 8))));
-        assert!(!program.iter().any(|op| matches!(op, PrecompiledOp::AndConst(_, _, _))));
+        assert!(program.iter().any(|op| matches!(op, OsmibyteOp::ModConst(_, _, 8))));
+        assert!(!program.iter().any(|op| matches!(op, OsmibyteOp::AndConst(_, _, _))));
     }
 
     #[test]
     fn mod_euclid_bitshift_opt() {
         let program = compile_binary(OptOp::ModEuclid, -10..=10, 8);
         assert!(matches!(&program[..], [
-            PrecompiledOp::AndConst(_, _, 7),
-            PrecompiledOp::AddConst(_, _, 2),
+            OsmibyteOp::AndConst(_, _, 7),
+            OsmibyteOp::AddConst(_, _, 2),
         ]));
     }
 
@@ -1941,8 +1941,8 @@ mod lowering_tests {
         let (second, _) = g.push_instr(OptOp::DigitSum, &[first], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_TWO, second], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
-        assert!(matches!(&block.program[..], [PrecompiledOp::DigitSumTwice(_, _), PrecompiledOp::AddConst(_, _, 2) ]), "{block}\n{:?}", block.program);
+        let block = OsmibytecodeBlock::from_cfg(&g);
+        assert!(matches!(&block.program[..], [OsmibyteOp::DigitSumTwice(_, _), OsmibyteOp::AddConst(_, _, 2) ]), "{block}\n{:?}", block.program);
     }
 
     #[test]
@@ -1954,8 +1954,8 @@ mod lowering_tests {
         let (lensum, _) = g.push_instr(OptOp::LenSum, &[second, first], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_TWO, lensum], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
-        assert!(matches!(&block.program[..], [PrecompiledOp::DigitSumDigitSumLensum(_, _), PrecompiledOp::AddConst(_, _, 2) ]), "{block}\n{:?}", block.program);
+        let block = OsmibytecodeBlock::from_cfg(&g);
+        assert!(matches!(&block.program[..], [OsmibyteOp::DigitSumDigitSumLensum(_, _), OsmibyteOp::AddConst(_, _, 2) ]), "{block}\n{:?}", block.program);
     }
 
     #[test]
@@ -1965,8 +1965,8 @@ mod lowering_tests {
         let (div_out, _) = g.push_instr(OptOp::Div, &[param, ValueId::C_TWO], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_ONE, div_out], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
-        assert!(matches!(&block.program[..], [PrecompiledOp::MedianCursed2(_, _) ]), "{block}\n{:?}", block.program);
+        let block = OsmibytecodeBlock::from_cfg(&g);
+        assert!(matches!(&block.program[..], [OsmibyteOp::MedianCursed2(_, _) ]), "{block}\n{:?}", block.program);
     }
 
     #[test]
@@ -1977,8 +1977,8 @@ mod lowering_tests {
         g.push_instr(OptOp::Add, &[ValueId::C_ONE, div_out], false, None, None);
         g.push_instr(OptOp::DigitSum, &[div_out], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
-        assert!(matches!(&block.program[..], [PrecompiledOp::ShiftConst(_, _, -1), PrecompiledOp::AddConst(_, _, 1), PrecompiledOp::DigitSum(_, _) ]), "{block}\n{:?}", block.program);
+        let block = OsmibytecodeBlock::from_cfg(&g);
+        assert!(matches!(&block.program[..], [OsmibyteOp::ShiftConst(_, _, -1), OsmibyteOp::AddConst(_, _, 1), OsmibyteOp::DigitSum(_, _) ]), "{block}\n{:?}", block.program);
     }
     #[test]
     fn fusing_median2_no2() {
@@ -1991,8 +1991,8 @@ mod lowering_tests {
         g.stack.poped_values.push(median_candidate);
         g.clean_poped_values();
 
-        let block = PrecompiledBlock::from_cfg(&g);
-        assert!(matches!(&block.program[..], [PrecompiledOp::ShiftConst(_, _, -1), PrecompiledOp::AddConst(_, _, 3) ]), "{block}\n{:?}", block.program);
+        let block = OsmibytecodeBlock::from_cfg(&g);
+        assert!(matches!(&block.program[..], [OsmibyteOp::ShiftConst(_, _, -1), OsmibyteOp::AddConst(_, _, 3) ]), "{block}\n{:?}", block.program);
     }
 
     #[test]
@@ -2003,8 +2003,8 @@ mod lowering_tests {
         let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(cond, 0)), &[true_val, ValueId::C_ZERO], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_TWO, out], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
-        assert!(block.program.iter().any(|op| matches!(op, PrecompiledOp::SelectConst0(_, _, 6))));
+        let block = OsmibytecodeBlock::from_cfg(&g);
+        assert!(block.program.iter().any(|op| matches!(op, OsmibyteOp::SelectConst0(_, _, 6))));
     }
 
     #[test]
@@ -2016,8 +2016,8 @@ mod lowering_tests {
         let (out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(cond, 0)), &[true_val, false_val], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_TWO, out], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
-        assert!(block.program.iter().any(|op| matches!(op, PrecompiledOp::SelectConst(_, _, 3, -2))));
+        let block = OsmibytecodeBlock::from_cfg(&g);
+        assert!(block.program.iter().any(|op| matches!(op, OsmibyteOp::SelectConst(_, _, 3, -2))));
     }
 
     #[test]
@@ -2030,8 +2030,8 @@ mod lowering_tests {
         let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[const_val, double], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
-        assert!(block.program.iter().any(|op| matches!(op, PrecompiledOp::SelectConstReg(_, _, 42, _))));
+        let block = OsmibytecodeBlock::from_cfg(&g);
+        assert!(block.program.iter().any(|op| matches!(op, OsmibyteOp::SelectConstReg(_, _, 42, _))));
     }
 
     #[test]
@@ -2041,9 +2041,9 @@ mod lowering_tests {
         // select(param == 0, 1, 0) -> BoolNot(param)
         let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
-        let block = PrecompiledBlock::from_cfg(&g);
+        let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [PrecompiledOp::BoolNot(_, _), PrecompiledOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::BoolNot(_, _), OsmibyteOp::AddConst(_, _, 1)]),
             "{block}\n{:?}", block.program);
     }
 
@@ -2054,9 +2054,9 @@ mod lowering_tests {
         // select(param != 0, 0, 1) -> BoolNot(param)
         let (out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
-        let block = PrecompiledBlock::from_cfg(&g);
+        let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [PrecompiledOp::BoolNot(_, _), PrecompiledOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::BoolNot(_, _), OsmibyteOp::AddConst(_, _, 1)]),
             "{block}\n{:?}", block.program);
     }
 
@@ -2068,9 +2068,9 @@ mod lowering_tests {
         let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
+        let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [PrecompiledOp::Sgn(_, _), PrecompiledOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::Sgn(_, _), OsmibyteOp::AddConst(_, _, 1)]),
             "{block}\n{:?}", block.program);
     }
 
@@ -2082,9 +2082,9 @@ mod lowering_tests {
         let (out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(param, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
+        let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [PrecompiledOp::Sgn(_, _), PrecompiledOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::Sgn(_, _), OsmibyteOp::AddConst(_, _, 1)]),
             "{block}\n{:?}", block.program);
     }
 
@@ -2096,9 +2096,9 @@ mod lowering_tests {
         let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
         g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
 
-        let block = PrecompiledBlock::from_cfg(&g);
+        let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [PrecompiledOp::SelectConst0(_, _, 1) | PrecompiledOp::SelectConst(_, _, 0, 1), PrecompiledOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::SelectConst0(_, _, 1) | OsmibyteOp::SelectConst(_, _, 0, 1), OsmibyteOp::AddConst(_, _, 1)]),
             "{block}\n{:?}", block.program);
     }
 }

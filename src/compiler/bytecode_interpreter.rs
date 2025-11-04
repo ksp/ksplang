@@ -2,7 +2,7 @@ use std::{cmp, hint::select_unpredictable, ops::{Index, IndexMut}};
 
 use num_integer::Integer;
 
-use crate::{compiler::{utils::sort_tuple, vm_code::{Condition, PrecompiledBlock, PrecompiledOp, RegId}}, digit_sum, funkcia, vm::{self, OperationError}};
+use crate::{compiler::{utils::sort_tuple, vm_code::{Condition, OsmibytecodeBlock, OsmibyteOp, RegId}}, digit_sum, funkcia, vm::{self, OperationError}};
 
 
 
@@ -115,7 +115,7 @@ fn eval_cond(regs: &RegFile, cond: Condition<RegId>) -> bool {
 #[cold]
 fn maybe_cold() { } // not sure if this even works
 
-pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stack: &mut Vec<i64>) -> Result<RunBlockResult, OperationError> {
+pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, stack: &mut Vec<i64>) -> Result<RunBlockResult, OperationError> {
     if stack.len() <= prog.stack_values_required as usize {
         return Ok(RunBlockResult { continue_ip: prog.start_ip, bytecode_interpreted: 0, ksplang_interpreted: 0 })
     }
@@ -142,53 +142,53 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
         };
     }
 
-    let mut program: &[PrecompiledOp<RegId>] = &prog.program;
+    let mut program: &[OsmibyteOp<RegId>] = &prog.program;
 
     'main: loop {
         'program: while (ip as usize) < program.len() {
             let op = &program[ip as usize];
             bytecode_ops_done += 1;
             match op {
-                PrecompiledOp::Push(a) => { stack.push(regs[a]); },
-                PrecompiledOp::Push2(a, b) => { stack.extend_from_slice(&[regs[a], regs[b]]); },
-                PrecompiledOp::Push3(a, b, c) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c]]); },
-                PrecompiledOp::Push4(a, b, c, d) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c], regs[d]]); },
-                PrecompiledOp::Push5(a, b, c, d, e) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c], regs[d], regs[e]]); },
-                PrecompiledOp::Push6(a, b, c, d, e, f) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c], regs[d], regs[e], regs[f]]); },
-                PrecompiledOp::Push7(a, b, c, d, e, f, g) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c], regs[d], regs[e], regs[f], regs[g]]); },
-                PrecompiledOp::Pop(a) => {
+                OsmibyteOp::Push(a) => { stack.push(regs[a]); },
+                OsmibyteOp::Push2(a, b) => { stack.extend_from_slice(&[regs[a], regs[b]]); },
+                OsmibyteOp::Push3(a, b, c) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c]]); },
+                OsmibyteOp::Push4(a, b, c, d) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c], regs[d]]); },
+                OsmibyteOp::Push5(a, b, c, d, e) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c], regs[d], regs[e]]); },
+                OsmibyteOp::Push6(a, b, c, d, e, f) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c], regs[d], regs[e], regs[f]]); },
+                OsmibyteOp::Push7(a, b, c, d, e, f, g) => { stack.extend_from_slice(&[regs[a], regs[b], regs[c], regs[d], regs[e], regs[f], regs[g]]); },
+                OsmibyteOp::Pop(a) => {
                     let Some(v) = stack.pop() else { deopt_or_error!(OperationError::PopFailed) };
                     regs[a] = v
                 },
-                PrecompiledOp::Pop2(a, b) => {
+                OsmibyteOp::Pop2(a, b) => {
                     if stack.len() <= 1 { deopt_or_error!(OperationError::PopFailed) }
                     regs[a] = stack.pop().unwrap_or(0);
                     regs[b] = stack.pop().unwrap_or(0);
                 },
-                PrecompiledOp::Pop3(a, b, c) => {
+                OsmibyteOp::Pop3(a, b, c) => {
                     if stack.len() <= 2 { deopt_or_error!(OperationError::PopFailed) }
                     regs[a] = stack.pop().unwrap_or(0);
                     regs[b] = stack.pop().unwrap_or(0);
                     regs[c] = stack.pop().unwrap_or(0);
                 },
-                PrecompiledOp::Pop4(a, b, c, d) => {
+                OsmibyteOp::Pop4(a, b, c, d) => {
                     if stack.len() <= 3 { deopt_or_error!(OperationError::PopFailed) }
                     regs[a] = stack.pop().unwrap_or(0);
                     regs[b] = stack.pop().unwrap_or(0);
                     regs[c] = stack.pop().unwrap_or(0);
                     regs[d] = stack.pop().unwrap_or(0);
                 },
-                PrecompiledOp::PopSecond(a) => {
+                OsmibyteOp::PopSecond(a) => {
                     if stack.len() <= 1 { deopt_or_error!(OperationError::PopFailed) }
                     regs[a] = stack.swap_remove(stack.len() - 2)
                 },
-                PrecompiledOp::Mov2(dst0, src0, dst1, src1) => {
+                OsmibyteOp::Mov2(dst0, src0, dst1, src1) => {
                     let v0 = regs[src0];
                     let v1 = regs[src1];
                     regs[dst0] = v0;
                     regs[dst1] = v1;
                 },
-                PrecompiledOp::Mov3(dst0, src0, dst1, src1, dst2, src2) => {
+                OsmibyteOp::Mov3(dst0, src0, dst1, src1, dst2, src2) => {
                     let v0 = regs[src0];
                     let v1 = regs[src1];
                     let v2 = regs[src2];
@@ -196,71 +196,71 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                     regs[dst1] = v1;
                     regs[dst2] = v2;
                 },
-                PrecompiledOp::Add(out, a, b) => {
+                OsmibyteOp::Add(out, a, b) => {
                     let Some(val) = regs[a].checked_add(regs[b]) else {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::AddConst(out, a, b) => {
+                OsmibyteOp::AddConst(out, a, b) => {
                     let Some(val) = regs[a].checked_add(*b as i64) else {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::Sub(out, a, b) => {
+                OsmibyteOp::Sub(out, a, b) => {
                     let Some(val) = regs[a].checked_sub(regs[b]) else {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::SubConst(out, constant, c) => {
+                OsmibyteOp::SubConst(out, constant, c) => {
                     let const_val = (*constant) as i64;
                     let Some(val) = const_val.checked_sub(regs[c]) else {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::AbsSub(out, a, b) => {
+                OsmibyteOp::AbsSub(out, a, b) => {
                     let diff = regs[a].abs_diff(regs[b]);
                     if diff > i64::MAX as u64 {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     }
                     regs[out] = diff as i64;
                 },
-                PrecompiledOp::AbsSubConst(out, a, constant) => {
+                OsmibyteOp::AbsSubConst(out, a, constant) => {
                     let diff = regs[a].abs_diff(*constant as i64);
                     if diff > i64::MAX as u64 {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     }
                     regs[out] = diff as i64;
                 },
-                PrecompiledOp::Mul(out, a, b) => {
+                OsmibyteOp::Mul(out, a, b) => {
                     let Some(val) = regs[a].checked_mul(regs[b]) else {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::MulConst(out, a, constant) => {
+                OsmibyteOp::MulConst(out, a, constant) => {
                     let Some(val) = regs[a].checked_mul(*constant as i64) else {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::Div(out, a, b) => {
+                OsmibyteOp::Div(out, a, b) => {
                     let Some(val) = regs[a].checked_div(regs[b]) else {
                         deopt_or_error!(if regs[b] == 0 { OperationError::DivisionByZero } else { OperationError::IntegerOverflow })
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::DivConst(out, a, c) => {
+                OsmibyteOp::DivConst(out, a, c) => {
                     debug_assert_ne!(0, *c);
                     let Some(val) = regs[a].checked_div(*c as i64) else {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::CursedDiv(out, a, b) => {
+                OsmibyteOp::CursedDiv(out, a, b) => {
                     let lhs = regs[a];
                     let rhs = regs[b];
                     let Some(rem) = lhs.checked_rem(rhs) else {
@@ -275,7 +275,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                         regs[out] = rem;
                     }
                 },
-                PrecompiledOp::Mod(out, a, b) => {
+                OsmibyteOp::Mod(out, a, b) => {
                     let lhs = regs[a];
                     let rhs = regs[b];
                     let Some(val) = lhs.checked_rem(rhs) else {
@@ -283,8 +283,8 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::ModConst(out, a, c) => { regs[out] = regs[a] % *c as i64 },
-                PrecompiledOp::ModEuclid(out, a, b) => {
+                OsmibyteOp::ModConst(out, a, c) => { regs[out] = regs[a] % *c as i64 },
+                OsmibyteOp::ModEuclid(out, a, b) => {
                     let lhs = regs[a];
                     let rhs = regs[b];
                     let Some(val) = lhs.checked_rem_euclid(rhs) else {
@@ -292,37 +292,37 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                     };
                     regs[out] = val;
                 },
-                PrecompiledOp::ModEuclidConst(out, a, c) => { regs[out] = regs[a].rem_euclid(*c as i64); },
-                PrecompiledOp::Tetration(out, a, b) => {
+                OsmibyteOp::ModEuclidConst(out, a, c) => { regs[out] = regs[a].rem_euclid(*c as i64); },
+                OsmibyteOp::Tetration(out, a, b) => {
                     match vm::tetration(regs[a], regs[b]) {
                         Ok(val) => regs[out] = val,
                         Err(err) => deopt_or_error!(err),
                     }
                 },
-                PrecompiledOp::Funkcia(out, a, b) => { regs[out] = funkcia::funkcia(regs[a], regs[b]) as i64 },
-                PrecompiledOp::Max(out, a, b) => { regs[out] = cmp::max(regs[a], regs[b]); },
-                PrecompiledOp::MaxConst(out, a, constant) => { regs[out] = cmp::max(regs[a], *constant as i64); },
-                PrecompiledOp::Min(out, a, b) => { regs[out] = cmp::min(regs[a], regs[b]); },
-                PrecompiledOp::MinConst(out, a, constant) => { regs[out] = cmp::min(regs[a], *constant as i64); },
-                PrecompiledOp::Clamp(out, value, lo, hi) => {
+                OsmibyteOp::Funkcia(out, a, b) => { regs[out] = funkcia::funkcia(regs[a], regs[b]) as i64 },
+                OsmibyteOp::Max(out, a, b) => { regs[out] = cmp::max(regs[a], regs[b]); },
+                OsmibyteOp::MaxConst(out, a, constant) => { regs[out] = cmp::max(regs[a], *constant as i64); },
+                OsmibyteOp::Min(out, a, b) => { regs[out] = cmp::min(regs[a], regs[b]); },
+                OsmibyteOp::MinConst(out, a, constant) => { regs[out] = cmp::min(regs[a], *constant as i64); },
+                OsmibyteOp::Clamp(out, value, lo, hi) => {
                     let val = regs[value];
                     let (lo, hi) = sort_tuple(regs[lo], regs[hi]);
                     regs[out] = val.clamp(lo, hi);
                 },
-                PrecompiledOp::ClampConst(out, value, lo, hi) => {
+                OsmibyteOp::ClampConst(out, value, lo, hi) => {
                     regs[out] = regs[value].clamp(*lo as i64, *hi as i64);
                 },
-                PrecompiledOp::Sgn(out, a) => { regs[out] = regs[a].signum() },
-                PrecompiledOp::AbsFactorial(out, a) => {
+                OsmibyteOp::Sgn(out, a) => { regs[out] = regs[a].signum() },
+                OsmibyteOp::AbsFactorial(out, a) => {
                     match vm::abs_factorial(regs[a]) {
                         Ok(val) => regs[out] = val,
                         Err(err) => deopt_or_error!(err),
                     }
                 },
-                PrecompiledOp::Lensum(out, a, b) => {
+                OsmibyteOp::Lensum(out, a, b) => {
                     regs[out] = vm::decimal_len(regs[a]) + vm::decimal_len(regs[b]);
                 },
-                PrecompiledOp::Universal2(out, op_reg, a, b) => {
+                OsmibyteOp::Universal2(out, op_reg, a, b) => {
                     let lhs = regs[a];
                     let rhs = regs[b];
                     match regs[op_reg] {
@@ -366,7 +366,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                         }
                     }
                 },
-                PrecompiledOp::Universal1(out, op_reg, a) => {
+                OsmibyteOp::Universal1(out, op_reg, a) => {
                     let value = regs[a];
                     match regs[op_reg] {
                         4 => match vm::abs_factorial(value) {
@@ -383,18 +383,18 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                         }
                     }
                 },
-                PrecompiledOp::And(out, a, b) => regs[out] = regs[a] & regs[b],
-                PrecompiledOp::AndConst(out, a, mask) => regs[out] = regs[a] & (*mask as i64),
-                PrecompiledOp::Or(out, a, b) => regs[out] = regs[a] | regs[b],
-                PrecompiledOp::OrConst(out, a, mask) => regs[out] = regs[a] | (*mask as i64),
-                PrecompiledOp::Xor(out, a, b) => regs[out] = regs[a] ^ regs[b],
-                PrecompiledOp::XorConst(out, a, mask) => regs[out] = regs[a] ^ (*mask as i64),
-                PrecompiledOp::ShiftL(out, a, b) => {
+                OsmibyteOp::And(out, a, b) => regs[out] = regs[a] & regs[b],
+                OsmibyteOp::AndConst(out, a, mask) => regs[out] = regs[a] & (*mask as i64),
+                OsmibyteOp::Or(out, a, b) => regs[out] = regs[a] | regs[b],
+                OsmibyteOp::OrConst(out, a, mask) => regs[out] = regs[a] | (*mask as i64),
+                OsmibyteOp::Xor(out, a, b) => regs[out] = regs[a] ^ regs[b],
+                OsmibyteOp::XorConst(out, a, mask) => regs[out] = regs[a] ^ (*mask as i64),
+                OsmibyteOp::ShiftL(out, a, b) => {
                     let shift = regs[b];
                     if shift < 0 { deopt_or_error!(OperationError::NegativeBitCount { bits: shift }) }
                     regs[out] = regs[a].unbounded_shl(shift.try_into().unwrap_or(64));
                 },
-                PrecompiledOp::ShiftR(out, a, b) => {
+                OsmibyteOp::ShiftR(out, a, b) => {
                     let shift = regs[b];
                     if shift < 0 { deopt_or_error!(OperationError::NegativeBitCount { bits: shift }) }
                     let amount = shift as u64;
@@ -405,15 +405,15 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                         value >> (amount as u32)
                     };
                 },
-                PrecompiledOp::ShiftConst(out, a, shift) => { regs[out] = if *shift >= 0 { regs[a] << shift } else { regs[a] >> -shift } },
-                PrecompiledOp::BinNot(out, a) => regs[out] = !regs[a],
-                PrecompiledOp::BoolNot(out, a) => regs[out] = (regs[a] == 0) as i64,
-                PrecompiledOp::SelectConst(out, condition, c1, c2) => regs[out] = select_unpredictable(eval_cond(&regs, condition.clone()), *c1, *c2) as i64,
-                PrecompiledOp::SelectConst0(out, condition, c1) => regs[out] = select_unpredictable(eval_cond(&regs, condition.clone()), *c1, 0) as i64,
-                PrecompiledOp::SelectConstReg(out, condition, c, a) => regs[out] = if eval_cond(&regs, condition.clone()) { *c as i64 } else { regs[a] },
-                PrecompiledOp::Select(out, condition, a, b) => regs[out] = if eval_cond(&regs, condition.clone()) { regs[a] } else { regs[b] },
-                PrecompiledOp::DigitSum(out, a) => regs[out] = digit_sum::digit_sum(regs[a]),
-                PrecompiledOp::DigitSumSmall(out, a) => {
+                OsmibyteOp::ShiftConst(out, a, shift) => { regs[out] = if *shift >= 0 { regs[a] << shift } else { regs[a] >> -shift } },
+                OsmibyteOp::BinNot(out, a) => regs[out] = !regs[a],
+                OsmibyteOp::BoolNot(out, a) => regs[out] = (regs[a] == 0) as i64,
+                OsmibyteOp::SelectConst(out, condition, c1, c2) => regs[out] = select_unpredictable(eval_cond(&regs, condition.clone()), *c1, *c2) as i64,
+                OsmibyteOp::SelectConst0(out, condition, c1) => regs[out] = select_unpredictable(eval_cond(&regs, condition.clone()), *c1, 0) as i64,
+                OsmibyteOp::SelectConstReg(out, condition, c, a) => regs[out] = if eval_cond(&regs, condition.clone()) { *c as i64 } else { regs[a] },
+                OsmibyteOp::Select(out, condition, a, b) => regs[out] = if eval_cond(&regs, condition.clone()) { regs[a] } else { regs[b] },
+                OsmibyteOp::DigitSum(out, a) => regs[out] = digit_sum::digit_sum(regs[a]),
+                OsmibyteOp::DigitSumSmall(out, a) => {
                     let value = regs[a];
                     if value.unsigned_abs() > 10_000 {
                         maybe_cold();
@@ -422,8 +422,8 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                     }
                     regs[out] = digit_sum::digit_sum(value);
                 },
-                PrecompiledOp::DigitSumTwice(out, a) => regs[out] = digit_sum::digit_sum_twice(regs[a]).1,
-                PrecompiledOp::DigitSumDigitSumLensum(out, a) => {
+                OsmibyteOp::DigitSumTwice(out, a) => regs[out] = digit_sum::digit_sum_twice(regs[a]).1,
+                OsmibyteOp::DigitSumDigitSumLensum(out, a) => {
                     let a = regs[a];
                     regs[out] = if a <= 18 {
                         2
@@ -432,14 +432,14 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                         vm::decimal_len(x) + vm::decimal_len(y)
                     }
                 },
-                PrecompiledOp::Gcd(out, a, b) => {
+                OsmibyteOp::Gcd(out, a, b) => {
                     let res = regs[a].unsigned_abs().gcd(&regs[b].unsigned_abs());
                     if res > i64::MAX as u64 {
                         deopt_or_error!(OperationError::IntegerOverflow)
                     }
                     regs[out] = res as i64;
                 }
-                PrecompiledOp::StackSwap(out, ix, val, depth) => {
+                OsmibyteOp::StackSwap(out, ix, val, depth) => {
                     let ix = regs[ix];
                     if ix < 0 || ix + *depth as i64 >= stack.len() as i64 {
                         maybe_cold(); deopt_auto = true; break; // we may be missing few elements on the top -> only deopt is safe
@@ -448,86 +448,86 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &PrecompiledBlock, stac
                     regs[out] = stack[ix as usize];
                     stack[ix as usize] = val;
                 },
-                PrecompiledOp::StackWrite(ix, val, depth) => {
+                OsmibyteOp::StackWrite(ix, val, depth) => {
                     let ix = regs[ix];
                     if ix < 0 || ix + *depth as i64 >= stack.len() as i64 {
                         maybe_cold(); deopt_auto = true; break;
                     }
                     stack[ix as usize] = regs[val];
                 },
-                PrecompiledOp::StackRead(out, ix, depth) => {
+                OsmibyteOp::StackRead(out, ix, depth) => {
                     let ix = regs[ix];
                     if ix < 0 || ix + *depth as i64 >= stack.len() as i64 {
                         maybe_cold(); deopt_auto = true; break;
                     }
                     regs[out] = stack[ix as usize];
                 },
-                PrecompiledOp::LoadConst(out, c) => regs[out] = *c as i64,
-                PrecompiledOp::LoadConstPow2Offset(out, pow, offset) => {
+                OsmibyteOp::LoadConst(out, c) => regs[out] = *c as i64,
+                OsmibyteOp::LoadConstPow2Offset(out, pow, offset) => {
                     let val = (1u64 << pow).overflowing_add_signed(*offset as i64).0;
                     regs[out] = val as i64;
                 },
-                PrecompiledOp::LoadConst64(out, id) => { regs[out] = prog.large_constants[*id as usize] },
-                PrecompiledOp::Jump(condition, new_ip) => {
+                OsmibyteOp::LoadConst64(out, id) => { regs[out] = prog.large_constants[*id as usize] },
+                OsmibyteOp::Jump(condition, new_ip) => {
                     if eval_cond(&regs, condition.clone()) {
                         ip = *new_ip as u32;
                     }
                 },
-                PrecompiledOp::Assert(condition, err, arg) => {
+                OsmibyteOp::Assert(condition, err, arg) => {
                     if !eval_cond(&regs, condition.clone()) {
                         deopt_or_error!(error_from_code(*err, regs[arg]))
                     }
                 },
-                PrecompiledOp::DeoptAssert(condition, di) => {
+                OsmibyteOp::DeoptAssert(condition, di) => {
                     if !eval_cond(&regs, condition.clone()) {
                         maybe_cold();
                         deopt_info = Some(*di as u32);
                         break;
                     }
                 },
-                PrecompiledOp::Done(continue_at) => {
+                OsmibyteOp::Done(continue_at) => {
                     simply_done = Some(*continue_at as usize);
                     break;
                 },
-                PrecompiledOp::Median2(out, a, b) => {
+                OsmibyteOp::Median2(out, a, b) => {
                     let a = regs[a];
                     let b = regs[b];
                     regs[out] = a / 2 + b / 2 + a % 2 + b % 2;
                 },
-                PrecompiledOp::MedianCursed2(out, a) => {
+                OsmibyteOp::MedianCursed2(out, a) => {
                     regs[out] = regs[a] / 2 + 1
                 },
-                PrecompiledOp::Median3(out, a, b, c) => {
+                OsmibyteOp::Median3(out, a, b, c) => {
                     let mut arr = [regs[a], regs[b], regs[c]];
                     arr.sort_unstable();
                     regs[out] = arr[1];
                 },
-                PrecompiledOp::MedianCursed3(out, a, b) => {
+                OsmibyteOp::MedianCursed3(out, a, b) => {
                     let mut arr = [3, regs[a], regs[b]];
                     arr.sort_unstable();
                     regs[out] = arr[1];
                 },
-                PrecompiledOp::MedianCursed5(out, a, b, c, d) => {
+                OsmibyteOp::MedianCursed5(out, a, b, c, d) => {
                     let mut arr = [5, regs[a], regs[b], regs[c], regs[d]];
                     arr.sort_unstable();
                     regs[out] = arr[2];
                 }
-                PrecompiledOp::KsplangOp(_op) => panic!("probably does not make sense anymore?"),
-                PrecompiledOp::KsplangOpWithArg(_op, _) => todo!("probably does not make sense anymore?"),
-                PrecompiledOp::KsplangOpsIncrement(x) => { ksplang_ops_done += *x as u64 },
-                PrecompiledOp::KsplangOpsIncrementVar(x) => { ksplang_ops_done += u64::try_from(regs[x]).unwrap() },
-                PrecompiledOp::KsplangOpsIncrementCond(condition, x) => {
+                OsmibyteOp::KsplangOp(_op) => panic!("probably does not make sense anymore?"),
+                OsmibyteOp::KsplangOpWithArg(_op, _) => todo!("probably does not make sense anymore?"),
+                OsmibyteOp::KsplangOpsIncrement(x) => { ksplang_ops_done += *x as u64 },
+                OsmibyteOp::KsplangOpsIncrementVar(x) => { ksplang_ops_done += u64::try_from(regs[x]).unwrap() },
+                OsmibyteOp::KsplangOpsIncrementCond(condition, x) => {
                     if eval_cond(&regs, condition.clone()) {
                         ksplang_ops_done += *x as u64
                     }
                 },
-                PrecompiledOp::Spill(ix, a) => {
+                OsmibyteOp::Spill(ix, a) => {
                     while spill.len() <= *ix as usize {
                         spill.push(0);
                     }
                     spill[*ix as usize] = regs[a]
                 },
-                PrecompiledOp::Unspill(a, ix) => { regs[a] = spill[*ix as usize] }
+                OsmibyteOp::Unspill(a, ix) => { regs[a] = spill[*ix as usize] }
             }
 
             debug_assert!(!deopt_auto && deopt_info.is_none() && simply_done.is_none());
