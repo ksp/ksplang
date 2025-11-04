@@ -662,6 +662,12 @@ impl OptInstr {
             effect,
         }
     }
+    pub fn validate(&self) {
+        assert!(!self.out.is_constant(), "Cannot assign to constant: {}", self);
+        assert!(!self.inputs.contains(&ValueId(0)), "Cannot use null ValueId: {}", self);
+        assert!(self.op.arity().contains(&self.inputs.len()), "Invalid op artity: {}", self);
+        assert_ne!(0, self.id.1, "0 is reserved for block head");
+    }
     pub fn assert(condition: Condition<ValueId>, error: OperationError, value: Option<ValueId>) -> Self {
         Self::new(InstrId::UNDEFINED, OptOp::Assert(condition, error), value.as_slice(), ValueId::from(0))
     }

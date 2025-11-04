@@ -75,6 +75,18 @@ impl BasicBlock {
         assert!(matches!(entry, std::collections::btree_map::Entry::Vacant(_)), "Instruction ID already exists in block: {:?}", id);
         entry.or_insert(instr)
     }
+
+    pub fn instruction_ids(&self) -> impl Iterator<Item = InstrId> + '_ {
+        self.instructions.keys().map(move |&ix| InstrId(self.id, ix))
+    }
+
+    pub fn following_blocks(&self) -> SmallVec<[BlockId; 5]> {
+        self.outgoing_jumps.iter().map(|(_, b)| *b).collect()
+    }
+
+    pub fn preceeding_blocks(&self) -> SmallVec<[BlockId; 5]> {
+        self.incoming_jumps.iter().map(|j| j.block_id()).collect()
+    }
 }
 
 impl fmt::Display for BasicBlock {
@@ -619,8 +631,6 @@ impl GraphBuilder {
     }
 
     pub fn push_instr(&mut self, op: OptOp<ValueId>, args: &[ValueId], value_numbering: bool, out_range: Option<RangeInclusive<i64>>, effect: Option<OpEffect>) -> (ValueId, Option<&mut OptInstr>) {
-        // assert!(!out.is_constant(), "Cannot assign to constant: {:?} <- {:?}{:?}", out, op, args);
-        assert!(!args.contains(&ValueId(0)), "Cannot use null ValueId: {:?}{:?}", op, args);
         let explicit_nop = !value_numbering && op == OptOp::Nop;
 
         let effect2 = match effect {
@@ -640,9 +650,11 @@ impl GraphBuilder {
             program_position: self.assumed_program_position.unwrap_or(usize::MAX),
             effect: effect2
         };
+        instr.validate();
 
         let (mut instr, simplifier_range) = simplifier::simplify_instr(self, instr);
         instr.id = InstrId(self.current_block, self.current_block_ref().next_instr_id);
+        instr.validate();
         assert_eq!(has_output, instr.op.has_output());
 
         if instr.op == OptOp::Nop && !explicit_nop {
@@ -781,6 +793,11 @@ impl GraphBuilder {
 
     pub fn block_mut(&mut self, id: BlockId) -> Option<&mut BasicBlock> {
         self.blocks.get_mut(id.0 as usize)
+    }
+
+    pub fn block_mut_(&mut self, id: BlockId) -> &mut BasicBlock {
+        self.block_(id); // get error
+        &mut self.blocks[id.0 as usize]
     }
 
     pub fn reachable_blocks<'a>(&'a self) -> impl Iterator<Item=&'a BasicBlock> + 'a {
@@ -926,6 +943,14 @@ impl GraphBuilder {
             Some(Cow::Owned(x))
         } else {
             self.values.get(&v).map(|v| Cow::Borrowed(v))
+        }
+    }
+
+    pub fn val_info_mut(&mut self, v: ValueId) -> Option<&mut ValueInfo> {
+        if v.is_computed() {
+            self.values.get_mut(&v)
+        } else {
+            None
         }
     }
 
