@@ -1,13 +1,13 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, collections::{BTreeMap, BTreeSet, HashMap}, i32, ops::{Range, RangeInclusive}, u32
+    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet, HashMap}, i32, ops::{Range, RangeInclusive}, u32
 };
 
 use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{analyzer, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::{self, Condition}, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
+use crate::{compiler::{analyzer, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -18,6 +18,8 @@ use crate::{compiler::{analyzer, config::{JitConfig, get_config}, ops::{BlockId,
 //     pub instruction_pointer: usize, // where to continue execution
 //     pub reverse_direction: bool // whether to continue in reverse direction
 // }
+
+const INSTR_ID_STEP: u32 = 10;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BasicBlock {
@@ -46,7 +48,7 @@ impl BasicBlock {
             instructions: BTreeMap::new(),
             incoming_jumps: Vec::new(),
             outgoing_jumps: Vec::new(),
-            next_instr_id: 1,
+            next_instr_id: INSTR_ID_STEP,
             ksplang_start_ip: start_ip,
             ksplang_instr_count_additional: Vec::new(),
             ksplang_instr_count: 0,
@@ -66,8 +68,9 @@ impl BasicBlock {
         instr.ksp_instr_count = self.ksplang_instr_count;
         let id = InstrId(self.id, self.next_instr_id);
         assert!(instr.id == InstrId(BlockId(0), 0) || instr.id == id, "Instruction already has an id: {:?}, expected {:?}", instr.id, id);
+        assert_ne!(0, id.1);
         instr.id = id;
-        self.next_instr_id += 1;
+        self.next_instr_id += INSTR_ID_STEP;
         if let OptOp::Jump(_, target) = &instr.op {
             self.outgoing_jumps.push((id, *target));
         }
@@ -446,7 +449,7 @@ impl GraphBuilder {
         None
     }
 
-    fn replace_values(&mut self, mut replace: BTreeMap<ValueId, ValueId>) {
+    pub fn replace_values(&mut self, mut replace: BTreeMap<ValueId, ValueId>) {
         while !replace.is_empty() {
             let (old, new) = replace.pop_first().unwrap();
             if old == new {
@@ -783,6 +786,99 @@ impl GraphBuilder {
         } else {
             self.push_instr(OptOp::DeoptAssert(c), &[], false, None, None);
         }
+    }
+
+
+    /// renames instruction in all use lists
+    /// WARNING: does not re-compute value ranges, intended mainly for re-numbering or block merging,
+    ///          not full blown code motion
+    pub fn rename_instruction(&mut self, id: InstrId, new_id: InstrId) {
+        if id == new_id {
+            return;
+        }
+
+        assert!(!self.block_(new_id.0).instructions.contains_key(&new_id.1));
+        let mut instr = self.block_mut_(id.0).instructions.remove(&id.1).unwrap();
+        instr.id = new_id;
+
+        if let Some(info) = self.val_info_mut(instr.out) {
+            info.assigned_at = Some(new_id);
+        }
+        for &arg in &instr.inputs {
+            if let Some(info) = self.val_info_mut(arg) {
+                info.used_at.remove(&id);
+                info.used_at.insert(new_id);
+                // TODO: do we need to do this for all values or just the direct args?
+                for (_, _, _, assumption_instr) in &mut info.assumptions {
+                    if *assumption_instr == id {
+                        *assumption_instr = new_id
+                    }
+                }
+            }
+        }
+        match instr.op {
+            OptOp::Jump(_, target) => {
+                let j = &mut self.block_mut_(target).incoming_jumps;
+                for jump in j.iter_mut() {
+                    if *jump == id {
+                        *jump = new_id;
+                    }
+                }
+                if id.0 != new_id.0 {
+                    todo!("oh shit, this might need updating predecessors and ehhh")
+                } else {
+                    let b = self.block_mut(id.0).unwrap();
+                    for jump in &mut b.outgoing_jumps {
+                        if jump.0 == id {
+                            assert_eq!(jump.1, target);
+                            *jump = (new_id, target)
+                        }
+                    }
+                }
+            },
+            _ => {}
+        }
+
+        let b = self.block_mut_(new_id.0);
+        b.instructions.insert(new_id.1, instr);
+
+    }
+
+    /// Returns ID right before/after the specified instruction
+    /// Moves other instructions forward if necessary
+    pub fn make_instr_id_at(&mut self, at: BeforeOrAfter<InstrId>) -> InstrId {
+        use BeforeOrAfter::*;
+        let ideal_id = match at { Before(id) => InstrId(id.0, cmp::max(id.1, 1)),
+                                  After(id)  => InstrId(id.0, id.1 + 1) };
+        let bid = ideal_id.0;
+        let b = self.block_mut_(bid);
+        if b.instructions.contains_key(&ideal_id.1) {
+            return ideal_id
+        }
+
+        let move_from = match at { Before(id) => id.1,
+                                   After(id) => id.1 + 1 };
+        let mut move_to = move_from;
+        let mut shift_by = 0;
+        for (&following_instr, _) in b.instructions.range(move_from..) {
+            let free_space = following_instr - move_to;
+            if free_space >= 1 {
+                // 
+                shift_by = free_space.div_ceil(2);
+            } else {
+                move_to += 1;
+            }
+        }
+
+        for move_instr in (move_from..move_to).rev() {
+            self.rename_instruction(InstrId(bid, move_instr), InstrId(bid, move_instr + shift_by));
+        }
+        ideal_id
+    }
+
+    pub fn insert_instr(&mut self, at: BeforeOrAfter<InstrId>, op: OptOp<ValueId>, args: &[ValueId], effect: OpEffect, out_range: Option<RangeInclusive<i64>>, store_vn: bool) {
+        let id = self.make_instr_id_at(at);
+        todo!()
     }
 
     pub fn block(&self, id: BlockId) -> Option<&BasicBlock> {

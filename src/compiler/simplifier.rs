@@ -666,6 +666,26 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
             }
 
+            OptOp::Sgn if *ranges[0].start() >= 1 => {
+                return (i.clone().with_op(OptOp::Add, &[ ValueId::C_ONE ], OpEffect::None), None)
+            }
+            OptOp::Sgn if *ranges[0].end() <= 1 => {
+                return (i.clone().with_op(OptOp::Add, &[ ValueId::C_NEG_ONE ], OpEffect::None), None)
+            }
+            OptOp::Sgn if *ranges[0].start() >= -1 && *ranges[0].end() <= 1 => {
+                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None);
+            }
+            OptOp::Sgn if *ranges[0].start() >= 0 => { // sgn(a) => min(1, a)
+                i.op = OptOp::Min;
+                i.inputs = smallvec![ValueId::C_ONE, i.inputs[0]];
+                continue;
+            }
+            OptOp::Sgn if *ranges[0].end() <= 0 => { // sgn(a) => max(-1, a)
+                i.op = OptOp::Max;
+                i.inputs = smallvec![ValueId::C_NEG_ONE, i.inputs[0]];
+                continue;
+            }
+
             OptOp::Add if i.inputs[0] == ValueId::C_ZERO => {
                 i.inputs.remove(0);
             }
@@ -1030,6 +1050,25 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 } else if *ranges[0].end() <= 0 {
                     i.op = OptOp::Select(Condition::Eq(x, ValueId::C_ZERO));
                     i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_NEG_ONE];
+                    changed = true;
+                }
+            }
+        }
+
+        if OptOp::AbsSub == i.op {
+            let x = i.inputs[0];
+            let y = i.inputs[1];
+            assert!(y.is_computed());
+            if let Some(nested) = cfg.get_defined_at(y) {
+                // |0 - sgn(a)| => condition(a != 0)
+                if nested.op == OptOp::Sgn && x == ValueId::C_ZERO {
+                    i.op = OptOp::Select(Condition::Eq(nested.inputs[0], ValueId::C_ZERO));
+                    i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                    changed = true;
+                }
+                // |0 - (a - b)| => |a - b|
+                else if nested.op == OptOp::Sub {
+                    i.inputs = nested.inputs.clone();
                     changed = true;
                 }
             }

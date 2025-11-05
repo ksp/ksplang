@@ -179,7 +179,7 @@ pub fn interpret_cfg(
 
     if let Some(deopt_instr) = deoptimized {
         let i = g.get_instruction_(deopt_instr);
-        executed_ksplang += i.ksp_instr_count as u64;
+        executed_ksplang += i.ksp_instr_count as u64; // TODO: this seems invalid, it should be the deopt instr, right?
         next_ip = restore_deopt_state(g, &values, stack, deopt_instr);
     }
 

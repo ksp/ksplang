@@ -3,7 +3,7 @@ use std::{cmp, collections::{BTreeSet, HashMap, HashSet, VecDeque}, ops::RangeIn
 use num_integer::Integer;
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, osmibytecode::Condition}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
+use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, osmibytecode::Condition}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
 
 pub trait TraceProvider {
     // type TracePointer
@@ -1102,6 +1102,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
         loop {
             self.interpret_block();
+
+            // try to hoist common code from successor blocks into the just-finished current block
+            let current_block_id = self.g.current_block;
+            let did_hois = hoist_up(&mut self.g, current_block_id);
+            if did_hois && self.conf.should_log(2) {
+                println!("  Hoisted code up from successors of block {:?}", self.g.block(current_block_id));
+            }
 
             let Some(pb) = self.pending_branches.pop_front() else {
                 break;
