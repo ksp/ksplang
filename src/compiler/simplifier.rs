@@ -577,19 +577,65 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             flatten_variadic(cfg, &mut i, dedup, /* limit */ 32);
         }
 
-        if !matches!(i.op, OptOp::Const(_) | OptOp::StackSwap | OptOp::Pop | OptOp::Push) &&
-            i.iter_inputs().all(|a| a.is_constant()) {
-            let all_args: SmallVec<[i64; 8]> = i.iter_inputs().map(|a| cfg.get_constant_(a)).collect();
-            match i.op.evaluate(&all_args) {
-                Ok(v) => return (i.with_op(OptOp::Const(v), &[], OpEffect::None), Some(v..=v)),
-                Err(Some(error)) => {
-                    // will always fail
-                    return (i.with_op(OptOp::Assert(Condition::False, error), &[], OpEffect::None), None);
-                },
-                Err(None) => {
-                    // cannot be evaluated
+        if !matches!(i.op, OptOp::Const(_) | OptOp::StackSwap | OptOp::Pop | OptOp::Push) {
+            if i.iter_inputs().all(|a| a.is_constant()) {
+                let all_args: SmallVec<[i64; 8]> = i.iter_inputs().map(|a| cfg.get_constant_(a)).collect();
+                match i.op.evaluate(&all_args) {
+                    Ok(v) => return (i.with_op(OptOp::Const(v), &[], OpEffect::None), Some(v..=v)),
+                    Err(Some(error)) => {
+                        // will always fail
+                        return (i.with_op(OptOp::Assert(Condition::False, error), &[], OpEffect::None), None);
+                    },
+                    Err(None) => {
+                        // cannot be evaluated
+                    }
                 }
             }
+
+            // optimize anything(const, const, X) into Select(X == ?, ?, ?) if X can only be one of 2 values
+            // if let Some(variable) = i.inputs.iter().find(|v| !v.is_constant()) &&
+            //     i.op.condition().is_none() &&
+            //     i.inputs.iter().filter(|v| !v.is_constant()).count() == 1 &&
+            //     let Some(var_info) = cfg.values.get(&variable)
+            // {
+            //
+            //     let vals = if let Some(assigned_at) = var_info.assigned_at &&
+            //               let Some(assigned_instr) = cfg.get_instruction(assigned_at) &&
+            //               let OptOp::Select(condition) = assigned_instr.op.clone() &&
+            //               assigned_instr.inputs.iter().all(|v| v.is_constant())
+            //     {
+            //         Some(([cfg.get_constant_(assigned_instr.inputs[0]), cfg.get_constant_(assigned_instr.inputs[1])], Some(condition)))
+            //     } else if var_info.range.start().abs_diff(*var_info.range.end()) <= 1 &&
+            //               !matches!(i.op, OptOp::Sub | OptOp::Add | OptOp::BoolNot) // not worth it, Select is not more interpretable
+            //     {
+            //         Some(([*var_info.range.start(), *var_info.range.end() ], None))
+            //     } else { // TODO: phis?
+            //         None
+            //     };
+            //
+            //     if let Some((values, cond)) = vals {
+            //         let cond = cond.unwrap_or_else(|| {
+            //             Condition::Eq(*variable, cfg.store_constant(values[0]))
+            //         });
+            //         let outputs = values.map(|variable_val| i.op.evaluate(&i.inputs.iter().map(|v| cfg.get_constant(*v).unwrap_or(variable_val)).collect::<Vec<i64>>()));
+            //
+            //         match outputs {
+            //             [Ok(out1), Ok(out2)] if out1 == out2 => {
+            //                 let c = cfg.store_constant(out1);
+            //                 return (i.clone().with_op(OptOp::Add, &[ c ], OpEffect::None), Some(out1..=out1));
+            //             }
+            //             [Ok(out1), Ok(out2)] => {
+            //                 i.op = OptOp::Select(cond);
+            //                 let out1 = cfg.store_constant(out1);
+            //                 let out2 = cfg.store_constant(out2);
+            //                 i.inputs = smallvec![out1, out2];
+            //                 i.effect = OpEffect::None;
+            //                 continue;
+            //             }
+            //             _ =>  { }
+            //         }
+            //     }
+            // }
         }
         let comm = i.op.is_commutative(i.inputs.len());
         if comm.end - comm.start > 1 {
@@ -675,12 +721,12 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Sgn if *ranges[0].start() >= -1 && *ranges[0].end() <= 1 => {
                 return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None);
             }
-            OptOp::Sgn if *ranges[0].start() >= 0 => { // sgn(a) => min(1, a)
+            OptOp::Sgn if *ranges[0].start() >= -1 => { // sgn(a) => min(1, a)
                 i.op = OptOp::Min;
                 i.inputs = smallvec![ValueId::C_ONE, i.inputs[0]];
                 continue;
             }
-            OptOp::Sgn if *ranges[0].end() <= 0 => { // sgn(a) => max(-1, a)
+            OptOp::Sgn if *ranges[0].end() <= 1 => { // sgn(a) => max(-1, a)
                 i.op = OptOp::Max;
                 i.inputs = smallvec![ValueId::C_NEG_ONE, i.inputs[0]];
                 continue;

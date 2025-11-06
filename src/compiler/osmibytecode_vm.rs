@@ -487,7 +487,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 },
                 OsmibyteOp::Done(continue_at) => {
                     simply_done = Some(*continue_at as usize);
-                    break;
+                    break 'main;
                 },
                 OsmibyteOp::Median2(out, a, b) => {
                     let a = regs[a];
@@ -555,12 +555,12 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
 
             let deopt = &prog.deopts[deopt_id as usize];
             performing_deopt = Some(deopt_id);
-            ksplang_ops_done += deopt.ksplang_ops_increment as u64;
-            program = &deopt.additional_opcodes;
+            ksplang_ops_done = ksplang_ops_done.overflowing_add_signed(deopt.ksplang_ops_increment as i64).0;
+            program = &deopt.opcodes;
         } else if let Some(deopt_id) = performing_deopt {
             assert_eq!(ip as usize, program.len());
             let deopt = &prog.deopts[deopt_id as usize];
-            debug_assert_eq!(&deopt.additional_opcodes[..], program);
+            debug_assert_eq!(&deopt.opcodes[..], program);
 
             for reg in &deopt.stack_reconstruction {
                 stack.push(regs[reg]);

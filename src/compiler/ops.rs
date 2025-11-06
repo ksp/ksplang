@@ -722,7 +722,10 @@ impl fmt::Display for OptInstr {
         if self.effect != self.op.worst_case_effect() {
             write!(f, "{:?} ", self.effect)?;
         }
-        write!(f, "IP={} ]", self.program_position)
+        if self.program_position != usize::MAX {
+            write!(f, "IP={} ", self.program_position)?;
+        }
+        write!(f, "]")
     }
 }
 

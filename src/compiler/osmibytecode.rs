@@ -21,7 +21,7 @@ impl fmt::Debug for RegId {
 }
 
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum OsmibyteOp<TReg: Display> {
     Push(TReg),
     Push2(TReg, TReg),
@@ -234,7 +234,7 @@ impl<TReg: Display> OsmibyteOp<TReg> {
 }
 
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Condition<TReg> {
     Eq(TReg, TReg), // a == b
     EqConst(TReg, i16), // a == const
@@ -406,14 +406,26 @@ impl<T: fmt::Display> fmt::Debug for Condition<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(self, f) }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DeoptInfo {
-    pub additional_opcodes: Box<[OsmibyteOp<RegId>]>,
-    pub stack_reconstruction: SmallVec<[RegId; 16]>,
     pub ip: usize,
-    pub ksplang_ops_increment: u32
+    pub stack_reconstruction: SmallVec<[RegId; 16]>,
+    pub ksplang_ops_increment: i32,
+    pub opcodes: Box<[OsmibyteOp<RegId>]>,
 }
 
+impl DeoptInfo {
+    pub fn new(ip: usize, stack: &[RegId], ksplang_ops_increment: i32, opcodes: &[OsmibyteOp<RegId>]) -> Self {
+        DeoptInfo {
+            ip,
+            stack_reconstruction: stack.into(),
+            ksplang_ops_increment,
+            opcodes: opcodes.into()
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct OsmibytecodeBlock {
     pub program: Box<[OsmibyteOp<RegId>]>,
     pub stack_space_required: u32,
@@ -454,7 +466,7 @@ impl fmt::Display for OsmibytecodeBlock {
             for (ix, deopt) in self.deopts.iter().enumerate() {
                 writeln!(f, "    #{ix:04}: ip={}, ksplang_ops_increment={}", deopt.ip, deopt.ksplang_ops_increment)?;
                 writeln!(f, "            stack reconstruction: {:?}", deopt.stack_reconstruction)?;
-                writeln!(f, "            ops: {:?}", deopt.additional_opcodes)?;
+                writeln!(f, "            ops: {:?}", deopt.opcodes)?;
             }
         }
 
@@ -468,7 +480,7 @@ impl fmt::Debug for OsmibytecodeBlock {
 
 impl OsmibytecodeBlock {
     pub fn from_cfg(g: &GraphBuilder) -> OsmibytecodeBlock {
-        let register_allocation = allocate_registers(g, ALLOCATABLE_REG_COUNT);
+        let register_allocation = allocate_registers(g, ALLOCATABLE_REG_COUNT, g.conf.error_as_deopt);
         println!("Register allocation: {}", register_allocation);
         let mut compiler = Compiler::new(g, register_allocation);
         compiler.compile();

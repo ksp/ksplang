@@ -1,4 +1,4 @@
-use std::{cmp, collections::{BTreeSet, HashMap, HashSet, VecDeque}, ops::RangeInclusive, vec};
+use std::{cmp, collections::{HashMap, VecDeque}, ops::RangeInclusive, vec};
 
 use num_integer::Integer;
 use smallvec::SmallVec;
@@ -1162,9 +1162,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         if self.conf.should_log(2) {
             println!("F Stack: {}", self.g.fmt_stack());
             println!("FINAL Program:");
-            for b in &self.g.blocks {
-                println!("{b}");
-            }
+            println!("{}", self.g);
         }
     }
 }

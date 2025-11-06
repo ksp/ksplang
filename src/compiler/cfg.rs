@@ -876,11 +876,6 @@ impl GraphBuilder {
         ideal_id
     }
 
-    pub fn insert_instr(&mut self, at: BeforeOrAfter<InstrId>, op: OptOp<ValueId>, args: &[ValueId], effect: OpEffect, out_range: Option<RangeInclusive<i64>>, store_vn: bool) {
-        let id = self.make_instr_id_at(at);
-        todo!()
-    }
-
     pub fn block(&self, id: BlockId) -> Option<&BasicBlock> {
         self.blocks.get(id.0 as usize)
     }

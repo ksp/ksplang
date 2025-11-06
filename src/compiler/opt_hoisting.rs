@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, ops::RangeInclusive};
+use std::ops::RangeInclusive;
 
 use smallvec::{smallvec, SmallVec};
 
@@ -43,6 +43,8 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
             assert_eq!(instr_ids.len(), successors.len(), "common instruction must exist in every successor block");
 
             let mut aggregated_effect = OpEffect::None;
+            let mut program_position = None;
+            let mut ksplang_ops_increment = None;
 
             for iid in instr_ids.iter() {
                 let block = g.block_(iid.0);
@@ -56,7 +58,16 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                     continue 'candidate;
                 }
 
+                if matches!(op, OptOp::Checkpoint) && (
+                    program_position.is_some_and(|p| p != instr.program_position) ||
+                    ksplang_ops_increment.is_some_and(|p| p != instr.ksp_instr_count))
+                {
+                    // all checkpoints must point to the same location
+                    continue 'candidate;
+                }
                 aggregated_effect = OpEffect::worse_of(aggregated_effect, instr.effect);
+                program_position = Some(instr.program_position);
+                ksplang_ops_increment = Some(instr.ksp_instr_count);
             }
 
             let Some(insert_pos) = choose_insert_position(g, predecessor) else {
@@ -125,7 +136,7 @@ fn get_common_instructions(
     // Find the smallest block (fewest instructions) to use as the starting point
     let starter_block = blocks.iter()
         .enumerate()
-        .min_by_key(|(_, &block_id)| g.block_(block_id).instructions.len())
+        .min_by_key(|&(_, &block_id)| g.block_(block_id).instructions.len())
         .map(|(idx, _)| idx)
         .unwrap();
 

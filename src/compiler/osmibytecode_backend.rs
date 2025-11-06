@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet}, u32};
+use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet}, mem, u32};
 use smallvec::{SmallVec, smallvec};
 
 use crate::compiler::{analyzer::dataflow, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteOp, OsmibytecodeBlock, RegId}};
@@ -11,12 +11,15 @@ pub struct Compiler<'a> {
     g: &'a GraphBuilder,
     program: Vec<OsmibyteOp<RegId>>,
     large_constants: Vec<i64>,
-    large_constant_lookup: HashMap<i64, u16>,
+    large_constant_lookup: BTreeMap<i64, u16>,
     deopts: Vec<DeoptInfo>,
-    block_starts: HashMap<BlockId, u16>,
+    deopts_lookup: HashMap<DeoptInfo, u32>,
+    ip2deopt: BTreeMap<u32, u32>,
+    block_starts: BTreeMap<BlockId, u16>,
     register_allocation: RegisterAllocation,
     jump_fixups: Vec<(usize, BlockId)>,
     temp_regs: TempRegPool,
+    current_deopt: Option<DeoptInfo>,
 }
 
 
@@ -33,6 +36,12 @@ impl OutputSpec {
             OutputSpec::Spill { reg, .. } => *reg,
         }
     }
+    fn load_instr(&self) -> Option<OsmibyteOp<RegId>> {
+        match self {
+            OutputSpec::Register(_) => None,
+            OutputSpec::Spill { reg, slot } => Some(OsmibyteOp::Unspill(*reg, *slot))
+        }
+    }
 }
 
 impl<'a> Compiler<'a> {
@@ -41,12 +50,15 @@ impl<'a> Compiler<'a> {
             g,
             program: Vec::new(),
             large_constants: Vec::new(),
-            large_constant_lookup: HashMap::new(),
+            large_constant_lookup: BTreeMap::new(),
             deopts: Vec::new(),
-            block_starts: HashMap::new(),
+            deopts_lookup: HashMap::new(),
+            ip2deopt: BTreeMap::new(),
+            block_starts: BTreeMap::new(),
             register_allocation,
             jump_fixups: Vec::new(),
             temp_regs: TempRegPool::new(),
+            current_deopt: None
         }
     }
 
@@ -60,6 +72,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn compile_block(&mut self, block: &BasicBlock) {
+        self.current_deopt = self.prepare_block_deopt(block.id);
         let instrs: Vec<_> = block.instructions.values().collect();
         let mut i = 0;
         while i < instrs.len() {
@@ -75,6 +88,18 @@ impl<'a> Compiler<'a> {
         use OptOp::*;
         let instr = instrs[0];
         let mut consumed = 1;
+
+        fn follows_checkpoint(instrs: &[&OptInstr]) -> bool {
+            for i in &instrs[1..] {
+                if i.op == OptOp::Checkpoint {
+                    return true
+                }
+                if i.effect != OpEffect::None {
+                    return false
+                }
+            }
+            return false
+        }
 
         match &instr.op {
             Const(_) => panic!("Special op, should not be in CfG"),
@@ -125,13 +150,19 @@ impl<'a> Compiler<'a> {
             Select(condition) => self.lower_select(instr, condition.clone()),
             DigitSum => consumed = self.lower_digit_sum(instrs),
             Gcd => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Gcd(out, a, b), |_, _, _| None),
-            Push => self.lower_push(instr),
+            Push => self.lower_push(&instr.inputs, false),
             Pop => self.lower_pop(instr),
-            StackSwap => self.lower_stack_swap(instr),
+            StackSwap => self.lower_stack_swap(instr, follows_checkpoint(instrs)),
             Jump(condition, target) => self.lower_jump(instr, condition.clone(), *target),
-            Assert(condition, error) => self.lower_assert(instr, condition.clone(), error.clone()),
-            DeoptAssert(_) => todo!(),
-            Checkpoint => { },
+            Assert(condition, error) => {
+                if self.g.conf.error_as_deopt {
+                    self.lower_deopt(instr, condition.clone());
+                } else {
+                    self.lower_assert(instr, condition.clone(), error.clone())
+                }
+            }
+            DeoptAssert(condition) => self.lower_deopt(instr, condition.clone()),
+            Checkpoint => self.lower_checkpoint(instr),
             Nop => { },
             Median | MedianCursed | Universal => todo!("{instr:?}"),
         }
@@ -157,13 +188,16 @@ impl<'a> Compiler<'a> {
             let second_reg = self.materialize_value_(second_val);
             // Check if first input is a constant (due to commutative property)
             if let Some(const_op) = self.g.get_constant(first_val).and_then(|v| op_const(dest, second_reg, v)) {
+                self.save_deopt_maybe(instr);
                 self.program.push(const_op);
             } else {
                 let first_reg = self.materialize_value_(first_val);
+                self.save_deopt_maybe(instr);
                 self.program.push(op(dest, first_reg, second_reg));
             }
             for value in inputs {
                 let reg = self.materialize_value_(value);
+                self.save_deopt_maybe(instr);
                 self.program.push(op(dest, dest, reg));
             }
         } else {
@@ -187,6 +221,7 @@ impl<'a> Compiler<'a> {
             if let Some(const_op) = op_const_lhs(spec.target_reg(), const_val, RegId(0)) {
                 let rhs = self.materialize_value_(instr.inputs[1]);
                 // Replace the dummy register with the actual one
+                self.save_deopt_maybe(instr);
                 self.program.push(const_op.replace_regs(|reg, is_write| if is_write { *reg } else { rhs }));
                 self.finalize_output(spec);
                 return;
@@ -197,6 +232,7 @@ impl<'a> Compiler<'a> {
             if let Some(const_op) = op_const_rhs(spec.target_reg(), RegId(0), const_val) {
                 let lhs = self.materialize_value_(instr.inputs[0]);
                 // Replace the dummy register with the actual one
+                self.save_deopt_maybe(instr);
                 self.program.push(const_op.replace_regs(|reg, is_write| if is_write { *reg } else { lhs }));
                 self.finalize_output(spec);
                 return;
@@ -205,6 +241,7 @@ impl<'a> Compiler<'a> {
 
         let lhs = self.materialize_value_(instr.inputs[0]);
         let rhs = self.materialize_value_(instr.inputs[1]);
+        self.save_deopt_maybe(instr);
         self.program.push(op(spec.target_reg(), lhs, rhs));
 
         self.finalize_output(spec);
@@ -335,6 +372,7 @@ impl<'a> Compiler<'a> {
 
         let spec = self.prepare_output(instr.out);
         let input = self.materialize_value_(instr.inputs[0]);
+        self.save_deopt_maybe(instr);
         self.program.push(op(spec.target_reg(), input));
         self.finalize_output(spec);
     }
@@ -373,7 +411,7 @@ impl<'a> Compiler<'a> {
                     return;
                 }
 
-                if *val_range.start() >= -1 && *val_range.end() <= 1 { // TODO: generalize this optimization?
+                if *val_range.start() >= -1 && *val_range.end() <= 1 { // TODO: generalize this optimization? Make a CFG pass from this?
                     self.program.push(OsmibyteOp::AbsSubConst(spec.target_reg(), cond_reg, 0));
                 }
             }
@@ -417,8 +455,8 @@ impl<'a> Compiler<'a> {
         self.finalize_output(spec);
     }
 
-    fn lower_push(&mut self, instr: &OptInstr) {
-        let mut remaining = instr.inputs.as_slice();
+    fn lower_push(&mut self, inputs: &[ValueId], save_deopts: bool) {
+        let mut remaining = inputs;
 
         while !remaining.is_empty() {
             let mut regs: SmallVec<[RegId; 7]> = SmallVec::new();
@@ -436,37 +474,82 @@ impl<'a> Compiler<'a> {
                 panic!("ran out of temp registers completely in lower_push");
             }
 
-            match regs.len() {
-                1 => self.program.push(OsmibyteOp::Push(regs[0])),
-                2 => self.program.push(OsmibyteOp::Push2(regs[0], regs[1])),
-                3 => self.program.push(OsmibyteOp::Push3(regs[0], regs[1], regs[2])),
-                4 => self.program.push(OsmibyteOp::Push4(regs[0], regs[1], regs[2], regs[3])),
-                5 => self.program.push(OsmibyteOp::Push5(regs[0], regs[1], regs[2], regs[3], regs[4])),
-                6 => self.program.push(OsmibyteOp::Push6(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5])),
-                7 => self.program.push(OsmibyteOp::Push7(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6])),
-                _ => unreachable!(),
+            if save_deopts {
+                _ = self.save_deopt();
             }
+            self.emit_push(&regs);
 
             remaining = &remaining[regs.len()..];
             self.temp_regs.clear();
+
+            if let Some(deopt) = &mut self.current_deopt {
+                if deopt.stack_reconstruction.starts_with(&regs) {
+                    deopt.stack_reconstruction.drain(0..regs.len());
+                } else {
+                    todo!()
+                }
+            }
+        }
+    }
+
+    fn emit_push(&mut self, regs: &[RegId]) {
+        match regs.len() {
+            1 => self.program.push(OsmibyteOp::Push(regs[0])),
+            2 => self.program.push(OsmibyteOp::Push2(regs[0], regs[1])),
+            3 => self.program.push(OsmibyteOp::Push3(regs[0], regs[1], regs[2])),
+            4 => self.program.push(OsmibyteOp::Push4(regs[0], regs[1], regs[2], regs[3])),
+            5 => self.program.push(OsmibyteOp::Push5(regs[0], regs[1], regs[2], regs[3], regs[4])),
+            6 => self.program.push(OsmibyteOp::Push6(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5])),
+            7 => self.program.push(OsmibyteOp::Push7(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6])),
+            _ => unreachable!(),
         }
     }
 
     fn lower_pop(&mut self, instr: &OptInstr) {
+        self.save_deopt_maybe(instr);
         let spec = self.prepare_output(instr.out);
         self.program.push(OsmibyteOp::Pop(spec.target_reg()));
         self.finalize_output(spec);
+
+        if let Some(deopt) = &mut self.current_deopt {
+            let new_code = spec.load_instr().into_iter()
+                .chain([OsmibyteOp::Push(spec.target_reg())])
+                .chain(deopt.opcodes.iter().cloned())
+                .collect();
+            deopt.opcodes = new_code;
+        }
     }
 
-    fn lower_stack_swap(&mut self, instr: &OptInstr) {
+    fn lower_stack_swap(&mut self, instr: &OptInstr, ignore_deopt: bool) {
         debug_assert_eq!(instr.inputs.len(), 2);
-        let spec = self.prepare_output(instr.out);
 
         let index_reg = self.materialize_value_(instr.inputs[0]);
         let value_reg = self.materialize_value_(instr.inputs[1]);
 
-        self.program.push(OsmibyteOp::StackSwap(spec.target_reg(), index_reg, value_reg, 0));
-        self.finalize_output(spec);
+        if instr.out == ValueId(0) ||
+            ignore_deopt && self.g.values.get(&instr.out).is_some_and(|v| v.used_at.is_empty())
+        {
+            self.save_deopt().unwrap();
+            self.program.push(OsmibyteOp::StackWrite(index_reg, value_reg, 0));
+            self.current_deopt = None;
+        }
+        else {
+            let spec = self.prepare_output(instr.out);
+            self.save_deopt().unwrap();
+            self.program.push(OsmibyteOp::StackSwap(spec.target_reg(), index_reg, value_reg, 0));
+            self.finalize_output(spec);
+
+            if !ignore_deopt && self.current_deopt.is_some() {
+                let new_code = spec.load_instr().into_iter()
+                    .chain(self.mk_materialization(instr.inputs[0], index_reg))
+                    .chain([OsmibyteOp::StackWrite(index_reg, spec.target_reg(), 0)])
+                    .chain(self.current_deopt.as_ref().unwrap().opcodes.iter().cloned())
+                    .collect();
+                self.current_deopt.as_mut().unwrap().opcodes = new_code;
+            } else {
+                self.current_deopt = None
+            }
+        }
     }
 
     fn lower_jump(&mut self, instr: &OptInstr, condition: Condition<ValueId>, target: BlockId) {
@@ -527,7 +610,8 @@ impl<'a> Compiler<'a> {
         }
 
         for (value, reg) in consts {
-            self.load_constant(reg, value);
+            let const_op = self.mk_load_constant(reg, value);
+            self.program.push(const_op);
         }
 
         if let Some(jump_fixup) = jump_fixup {
@@ -591,6 +675,33 @@ impl<'a> Compiler<'a> {
         };
 
         self.program.push(OsmibyteOp::Assert(lowered_condition, code, arg_reg));
+    }
+
+    fn lower_deopt(&mut self, _instr: &OptInstr, condition: Condition<ValueId>) {
+        let lowered_condition = self.lower_condition(condition);
+
+        let deopt = self.current_deopt.as_ref().unwrap();
+
+        if lowered_condition == Condition::True &&
+            deopt.ip <= u32::MAX as usize &&
+            deopt.stack_reconstruction.len() <= 7 * 3 &&
+            deopt.ksplang_ops_increment >= 0
+        {
+            // compile to Done instruction
+            self.program.extend(deopt.opcodes.iter().cloned());
+            if deopt.ksplang_ops_increment != 0 {
+                self.program.push(OsmibyteOp::KsplangOpsIncrement(deopt.ksplang_ops_increment as u32));
+            }
+            let ip = deopt.ip;
+            for regs in deopt.stack_reconstruction.clone().chunks(7) {
+                self.emit_push(regs);
+            }
+            self.program.push(OsmibyteOp::Done(ip as u32));
+            return;
+        }
+
+        let id = self.save_deopt().unwrap();
+        self.program.push(OsmibyteOp::DeoptAssert(lowered_condition, id.try_into().expect("TODO")));
     }
 
     fn lower_condition(
@@ -676,12 +787,12 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn load_constant(&mut self, reg: RegId, value: i64) {
+    fn mk_load_constant(&mut self, reg: RegId, value: i64) -> OsmibyteOp<RegId> {
         if value >= i32::MIN as i64 && value <= i32::MAX as i64 {
-            self.program.push(OsmibyteOp::LoadConst(reg, value as i32));
+            OsmibyteOp::LoadConst(reg, value as i32)
         } else { // TODO: pow2 offset
             let idx = self.get_large_constant_index(value);
-            self.program.push(OsmibyteOp::LoadConst64(reg, idx));
+            OsmibyteOp::LoadConst64(reg, idx)
         }
     }
 
@@ -694,7 +805,8 @@ impl<'a> Compiler<'a> {
         let reg = if value.is_constant() {
             let constant = self.g.get_constant_(value);
             let reg = self.temp_regs.alloc().ok_or(())?;
-            self.load_constant(reg, constant);
+            let const_op = self.mk_load_constant(reg, constant);
+            self.program.push(const_op);
             self.temp_regs.insert_cache(value, reg);
             reg
         } else if let Some(location) = self.register_allocation.location(value) {
@@ -712,6 +824,25 @@ impl<'a> Compiler<'a> {
         };
 
         Ok(reg)
+    }
+
+    fn mk_materialization(&mut self, value: ValueId, reg: RegId) -> SmallVec<[OsmibyteOp<RegId>; 2]> {
+        if value.is_constant() {
+            let constant = self.g.get_constant_(value);
+            let const_op = self.mk_load_constant(reg, constant);
+            smallvec![const_op]
+        } else if let Some(location) = self.register_allocation.location(value) {
+            match location {
+                ValueLocation::Register(reg2) => {
+                    assert_eq!(reg2, reg);
+                    smallvec![]
+                }
+                ValueLocation::Spill(slot) =>
+                    smallvec![OsmibyteOp::Unspill(reg, slot)]
+            }
+        } else {
+            panic!("value {:?} has no register allocation", value)
+        }
     }
 
     fn get_usages(&'_ self, value: ValueId) -> Option<&'_ BTreeSet<InstrId>> {
@@ -790,13 +921,161 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    fn lower_checkpoint(&mut self, instr: &OptInstr) {
+        let deopt = self.with_clean_program(|this| {
+            let stack = this.materialize_deopt_stack(&instr.inputs[1..]);
+            DeoptInfo::new(instr.program_position, &stack, instr.ksp_instr_count as i32, &this.program)
+        });
+        self.current_deopt = Some(deopt)
+    }
+
+    fn needs_deopt(&self, instr: &OptInstr) -> bool {
+        match instr.effect {
+            OpEffect::None | OpEffect::ControlFlow => false,
+            OpEffect::MayFail => self.g.conf.error_as_deopt,
+            _ => true
+        }
+    }
+
+    fn save_deopt_maybe(&mut self, instr: &OptInstr) -> Option<u32> {
+        if self.needs_deopt(instr) {
+            self.save_deopt().ok()
+        } else {
+            None
+        }
+    }
+
+    fn save_deopt(&mut self) -> Result<u32, String> {
+        assert!(self.program.len() < u32::MAX as usize);
+        assert!(self.deopts.len() < u32::MAX as usize);
+
+        let deopt = self.current_deopt.clone().ok_or_else(|| format!("No deopt at {}", self.program.len()))?;
+        if let Some(&id) = self.deopts_lookup.get(&deopt) {
+            self.ip2deopt.insert(self.program.len() as u32, id);
+            return Ok(id)
+        }
+
+        let id = self.deopts.len() as u32;
+        self.deopts_lookup.insert(deopt.clone(), id);
+        self.deopts.push(deopt);
+        self.ip2deopt.insert(self.program.len() as u32, id);
+        Ok(id)
+    }
+
+    fn with_clean_program<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let program_backup = mem::take(&mut self.program);
+        let regs_backup = mem::take(&mut self.temp_regs);
+        let deopt_backup = mem::take(&mut self.current_deopt);
+        let jumps_check = self.jump_fixups.len();
+        let blocks_check = self.block_starts.len();
+
+        let result = f(self);
+
+        self.program = program_backup;
+        self.temp_regs = regs_backup;
+        self.current_deopt = deopt_backup;
+        assert_eq!(jumps_check, self.jump_fixups.len());
+        assert_eq!(blocks_check, self.block_starts.len());
+
+        result
+    }
+
+    fn prepare_block_deopt(&mut self, bid: BlockId) -> Option<DeoptInfo> {
+        let b = self.g.block_(bid);
+        if b.is_entry() {
+            return Some(DeoptInfo::new(b.ksplang_start_ip, &[], 0, &[]))
+        }
+        if b.incoming_jumps.len() != 1 {
+            return None
+        }
+
+        self.with_clean_program(move |this| {
+            let incoming = b.incoming_jumps[0].0;
+            // let mut ops = vec![];
+            let mut stack_push = vec![];
+            let mut stack_pop = 0;
+            let mut result = None;
+            for (_iid, i) in this.g.block_(incoming).instructions.iter().rev() {
+                match &i.op {
+                    OptOp::Pop => {
+                        if !i.out.is_computed() {
+                            return None
+                        }
+                        stack_push.push(i.out);
+                    }
+                    OptOp::Push => {
+                        for _ in &i.inputs {
+                            if stack_push.len() > 0 {
+                                stack_push.pop().unwrap();
+                            } else {
+                                stack_pop += 1;
+                            }
+                        }
+                    }
+                    OptOp::StackSwap => {
+                        if !i.out.is_computed() {
+                            return None
+                        }
+                        let val = this.materialize_value_(i.out);
+                        let ix = this.materialize_value_(i.inputs[0]);
+                        this.program.push(OsmibyteOp::StackWrite(ix, val, 0));
+                        this.temp_regs.release(val);
+                        this.temp_regs.release(ix);
+                    }
+                    // TODO: ksplang counter increment revert
+                    OptOp::Checkpoint => {
+                        result = Some((i.program_position, i.ksp_instr_count, i.inputs[1..].to_vec()))
+                    }
+                    _ => { }
+                }
+            }
+
+            if let Some((ip, ksplang_count, mut stack)) = result {
+                let ksplang_count = ksplang_count as i32 - this.g.block_(incoming).ksplang_instr_count as i32;
+                stack.splice(0..stack_pop, stack_push);
+                let stack = this.materialize_deopt_stack(&stack);
+                Some(DeoptInfo::new(ip, &stack, ksplang_count, &this.program))
+            } else {
+                this.lower_push(&stack_push, false);
+
+                if let Some(mut deopt) = this.prepare_block_deopt(incoming) {
+                    deopt.stack_reconstruction.drain(0..stack_pop);
+                    Some(deopt)
+                } else {
+                    return None;
+                }
+            }
+
+        })
+    }
+
+    fn materialize_deopt_stack(&mut self, stack: &[ValueId]) -> Vec<RegId> {
+        if stack.len() > self.temp_regs.available.len() {
+            let mut free_registers: BTreeSet<RegId> = (0..u8::MAX).map(RegId).collect();
+            for s in stack {
+                if let Some(ValueLocation::Register(reg)) = self.register_allocation.location(*s){
+                    free_registers.remove(&reg);
+                }
+            }
+            self.temp_regs.available.clear();
+            self.temp_regs.cache.clear();
+            self.temp_regs.available.extend(free_registers);
+        }
+
+        let mut result = vec![];
+        for s in stack {
+            result.push(self.materialize_value(*s).expect("TODO"))
+        }
+        result
+    }
+
     pub fn finish(mut self) -> OsmibytecodeBlock {
         for (pos, target) in self.jump_fixups {
             let target_ip = *self
                 .block_starts
                 .get(&target)
                 .unwrap_or_else(|| panic!("jump target block {:?} was not compiled", target));
-            if let Some(OsmibyteOp::Jump(_, ref mut dest)) = self.program.get_mut(pos) {
+            if let Some(OsmibyteOp::Jump(_, dest)) = self.program.get_mut(pos) {
                 *dest = target_ip;
             } else {
                 panic!("expected jump at position {}", pos);
@@ -809,7 +1088,7 @@ impl<'a> Compiler<'a> {
             stack_values_required: 0,
             start_ip: self.g.blocks.first().map(|b| b.ksplang_start_ip).unwrap_or(0),
             large_constants: self.large_constants.into_boxed_slice(),
-            ip2deopt: Box::new([]),
+            ip2deopt: self.ip2deopt.into_iter().collect(),
             deopts: self.deopts.into_boxed_slice(),
         }
     }
@@ -877,14 +1156,20 @@ const FIRST_TEMP_REG: u8 = ALLOCATABLE_REG_COUNT as u8;
 
 #[derive(Clone, Debug)]
 struct TempRegPool {
-    available: Vec<RegId>,
-    cache: HashMap<ValueId, RegId>,
+    available: SmallVec<[RegId; 16]>,
+    cache: BTreeMap<ValueId, RegId>,
+}
+
+impl Default for TempRegPool {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TempRegPool {
     fn new() -> Self {
-        let available: Vec<RegId> = (FIRST_TEMP_REG..=u8::MAX).rev().map(RegId).collect();
-        Self { available, cache: HashMap::new() }
+        let available = (FIRST_TEMP_REG..=u8::MAX).rev().map(RegId).collect();
+        Self { available, cache: BTreeMap::new() }
     }
 
     fn alloc(&mut self) -> Option<RegId> {
@@ -892,7 +1177,7 @@ impl TempRegPool {
     }
 
     fn release(&mut self, reg: RegId) {
-        if reg.0 >= FIRST_TEMP_REG {
+        if reg.0 >= FIRST_TEMP_REG && !self.available.contains(&reg) {
             self.available.push(reg);
         }
     }
@@ -914,32 +1199,34 @@ impl TempRegPool {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ValueSegment {
-    from: InstrId,
-    to: InstrId,
+    block: BlockId,
+    from: u32,
+    to: u32,
+    instr_count: u32,
 }
 
 impl ValueSegment {
-    fn overlap(&self, other: &ValueSegment) -> bool {
-        debug_assert_eq!(self.from.block_id(), self.to.block_id());
-        debug_assert_eq!(other.from.block_id(), other.to.block_id());
-        if self.from.block_id() != other.from.block_id() {
-            return false
+    fn new(block: &BasicBlock, from: u32, to: u32) -> Self {
+        assert!(from <= to);
+        let instr_count = if from == to {
+            1
+        } else if from == 0 && to == u32::MAX {
+            block.instructions.len().try_into().unwrap_or(u32::MAX)
+        } else {
+            block.instructions.range(from..=to).count().try_into().unwrap_or(u32::MAX)
+        };
+        assert!(instr_count != 0);
+        ValueSegment {
+            block: block.id,
+            from, to, instr_count
         }
-        let self_start = self.from.instr_ix();
-        let self_end = self.to.instr_ix();
-        debug_assert!(self_start <= self_end);
-        let other_start = other.from.instr_ix();
-        let other_end = other.to.instr_ix();
-        debug_assert!(other_start <= other_end);
-
-        self_start < other_end && other_start < self_end
     }
 
-    fn weight(&self) -> u64 {
-        let start = self.from.instr_ix() as u64;
-        let end = self.to.instr_ix() as u64;
-        let span_size = end.saturating_add(1).saturating_sub(start);
-        span_size.clamp(1, LONG_LIFETIME_WEIGHT)
+    fn overlap(&self, other: &ValueSegment) -> bool {
+        if self.block != other.block {
+            return false
+        }
+        self.from < other.to && other.from < self.to
     }
 }
 
@@ -952,7 +1239,7 @@ struct ValueCandidate {
     has_phi_friends: bool,
 }
 
-pub fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocation {
+pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bool) -> RegisterAllocation {
     if reg_count == 0 {
         return RegisterAllocation::default();
     }
@@ -961,8 +1248,8 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocatio
 
     let phi_friends = equivalence_preferences(g);
 
-    let lifetimes = analyze_value_lifetimes(g);
-    println!("Lifetimes: {lifetimes:?}");
+    let lifetimes = analyze_value_lifetimes(g, error_will_deopt);
+    println!("{lifetimes}");
 
     let mut value_segments: BTreeMap<ValueId, BTreeMap<BlockId, ValueSegment>> = BTreeMap::new();
     let mut candidates: Vec<ValueCandidate> = lifetimes
@@ -971,13 +1258,13 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocatio
         .filter(|(val, _)| val.is_computed())
         .filter_map(|(val, blocks)| {
             let segments: BTreeMap<BlockId, ValueSegment> =
-                blocks.iter().map(|(&block, &(from, to))| (block, ValueSegment { from, to }))
+                blocks.iter().map(|(&block, &(from, to))| (block, ValueSegment::new(g.block_(block), from.1, to.1)))
                              .collect();
             if segments.is_empty() {
                 return None;
             }
             value_segments.insert(*val, segments.clone());
-            let weight = segments.values().map(|seg| seg.weight()).sum::<u64>();
+            let weight = segments.values().map(|seg| seg.instr_count as u64).sum::<u64>();
             let use_count = g.val_info(*val).map_or(0, |info| info.used_at.len());
             let has_phi_friends = phi_friends
                 .range((*val, ValueId(i32::MIN))..=(*val, ValueId(i32::MAX)))
@@ -1033,7 +1320,7 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32) -> RegisterAllocatio
 
             let segments = &value_segments[&val];
             assert!(!has_conflict(&register_segments[chosen_reg], segments),
-                    "Unexpected conflicts between reg {chosen_reg} and {val}:\nAllocating {value} with {merged_friends:?}\nSegments: {value_segments:?}\nCFG: {g}");
+                    "Unexpected conflicts between reg {chosen_reg} and {val}:\nAllocating {value} with {merged_friends:?}\nSegments: {value_segments:?}\nRegister segments: {:?}\nCFG: {g}", register_segments[chosen_reg]);
 
             for (block, segment) in segments.iter() {
                 register_segments[chosen_reg].entry(*block).or_default().push(*segment);
@@ -1093,7 +1380,7 @@ fn reduce_registers_with_phi_friends(
 
         let friend_segments = &value_segments[&friend];
         // Check no self-conflict with already-selected friends
-        for &already_selected in &selected_friends {
+        for &already_selected in selected_friends.iter().chain(&[value]) {
             let selected_segments = &value_segments[&already_selected];
             for (block, friend_seg) in friend_segments {
                 if let Some(ready_seg) = selected_segments.get(block) {
@@ -1130,8 +1417,6 @@ fn reduce_registers_with_phi_friends(
 
     selected_friends
 }
-
-const LONG_LIFETIME_WEIGHT: u64 = 1_000_000;
 
 fn equivalence_preferences(g: &GraphBuilder) -> BTreeMap<(ValueId, ValueId), u32> {
     let mut result = BTreeMap::new();
@@ -1191,7 +1476,7 @@ fn remat_cost(g: &GraphBuilder, lr: &LiveRanges, max_cost: u32) -> HashMap<Value
     }
 
     fn cost_fn(at: InstrId, val: ValueId, rematerializable: &HashMap<ValueId, (u32, SmallVec<[ValueId; 4]>)>, lr: &LiveRanges, max_cost: u32) -> Option<u32> {
-        let Some((mut cost, deps)) = rematerializable.get(&val) else {
+        let Some(&(mut cost, ref deps)) = rematerializable.get(&val) else {
             return None
         };
         for dependency in deps {
@@ -1238,25 +1523,110 @@ impl LiveRanges {
     }
 }
 
-fn analyze_value_lifetimes(g: &GraphBuilder) -> LiveRanges {
+impl fmt::Display for LiveRanges {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Live Ranges:")?;
+
+        let mut values: Vec<_> = self.ranges.keys().collect();
+        values.sort();
+
+        for &val in values {
+            write!(f, "  {:6}", format!("{}", val))?;
+
+            let mut blocks: Vec<_> = self.ranges[&val].iter().collect();
+            blocks.sort_by_key(|(bid, _)| *bid);
+
+            for (block_id, (from, to)) in blocks {
+                if from.1 == 0 && to.1 == u32::MAX {
+                    write!(f, " | {}: entire", block_id)?;
+                } else if to.1 == u32::MAX {
+                    write!(f, " | {}: {}..end", block_id, from.1)?;
+                } else {
+                    write!(f, " | {}: {}..{}", block_id, from.1, to.1)?;
+                }
+            }
+            writeln!(f)?;
+        }
+        Ok(())
+    }
+}
+
+fn get_instr_stack_effect(i: &OptInstr) -> [ValueId; 2] {
+    const N: ValueId = ValueId(0);
+    match i.op {
+        OptOp::Pop => [i.out, N], // pop value
+        OptOp::StackSwap => [i.out, i.inputs[0]], // previous value
+        OptOp::Push => [N, N], // nothing removed from stack, can be reverted without any additional pinned values
+        _ => [N, N],
+    }
+}
+
+fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: bool) -> (BTreeMap<ValueId, u32>, BTreeMap<ValueId, u32>) {
+    let mut last_checkpoint: Option<Vec<ValueId>> = None;
+    let mut defined_at = BTreeMap::new();
+    let mut last_use: BTreeMap<ValueId, u32> = BTreeMap::new();
+
+    for p in &block.parameters { defined_at.insert(*p, 0); }
+
+    for (&iid, i) in block.instructions.iter() {
+        if matches!(i.op, OptOp::Checkpoint) {
+            last_checkpoint = Some(i.inputs.to_vec());
+            continue;
+        }
+        let needs_checkpoint = i.effect != OpEffect::None && i.effect != OpEffect::ControlFlow && (error_will_deopt || i.effect != OpEffect::MayFail);
+        if last_checkpoint.is_none() && needs_checkpoint {
+            // find checkpoint in previous blocks or panic
+            let mut block_id = block.id;
+            let mut additional_values = vec![];
+            'search_for_checkpoint: loop {
+                if block_id.is_first_block() {
+                    last_checkpoint = Some(additional_values.clone()); // starting point is empty stack, no problem
+                    break 'search_for_checkpoint;
+                }
+                let b = g.block_(block_id);
+                if g.block_(block_id).incoming_jumps.len() != 1 {
+                    panic!("Cannot determine deopt stack of {}, the {} block has multiple incoming jumps:\n\n{g}", i.id, block_id)
+                }
+                block_id = b.incoming_jumps[0].block_id();
+                for i in g.block_(block_id).instructions.values().rev() {
+                    if i.op == OptOp::Checkpoint {
+                        last_checkpoint = Some(i.inputs.to_vec());
+                        last_checkpoint.as_mut().unwrap().extend(additional_values);
+                        break 'search_for_checkpoint;
+                    }
+                    additional_values.extend(get_instr_stack_effect(i).into_iter().filter(|v| v.is_computed()));
+                }
+            }
+        }
+
+        for input in i.iter_inputs() {
+            if input.is_computed() {
+                last_use.insert(input, iid);
+            }
+        }
+        if needs_checkpoint {
+            for &v in last_checkpoint.as_ref().unwrap() {
+                last_use.insert(v, iid);
+            }
+        }
+        if i.out.is_computed() { defined_at.insert(i.out, iid); }
+
+        for x in get_instr_stack_effect(i) {
+            if x.is_computed() {
+                last_checkpoint.as_mut().unwrap().push(x);
+            }
+        }
+    }
+    (defined_at, last_use)
+}
+
+fn analyze_value_lifetimes(g: &GraphBuilder, error_will_deopt: bool) -> LiveRanges {
     //  defined values -> used values
     let blocks: Vec<(HashSet<ValueId>, HashSet<ValueId>)> =
         g.blocks.iter().map(|b| {
-            let mut defined = HashSet::new();
-            let mut require = HashSet::new();
-
-            for p in &b.parameters { defined.insert(*p); }
-
-            for i in b.instructions.values() {
-                for input in i.iter_inputs() {
-                    if input.is_computed() && !defined.contains(&input) {
-                        require.insert(input);
-                    }
-                }
-                if i.out.is_computed() { defined.insert(i.out); }
-            }
-
-            (defined, require)
+            let (defined, require) = get_value_usage_info(g, b, error_will_deopt);
+            (defined.keys().copied().collect(),
+             require.keys().copied().filter(|v| !defined.contains_key(v)).collect())
         })
         .collect();
 
@@ -1281,16 +1651,7 @@ fn analyze_value_lifetimes(g: &GraphBuilder) -> LiveRanges {
     let mut ranges = HashMap::new();
     let mut live_vars = HashMap::new();
     for block in &g.blocks {
-        let mut defined_at = HashMap::new();
-        let mut last_use: HashMap<ValueId, u32> = HashMap::new();
-        for (&id, i) in block.instructions.iter() {
-            for input in i.iter_inputs() {
-                if input.is_computed() {
-                    last_use.insert(input, id);
-                }
-            }
-            if i.out.is_computed() { defined_at.insert(i.out, id); }
-        }
+        let (defined_at, last_use) = get_value_usage_info(g, block, error_will_deopt);
         // println!("{} last use: {last_use:?}", block.id);
 
         let mut result = vec![];
@@ -1612,7 +1973,7 @@ mod register_alloc_tests {
     #[test]
     fn phi_friends_share_register_when_lifetimes_do_not_conflict() {
         let (g, phi, friend) = build_phi_merge_graph();
-        let allocation = allocate_registers(&g, 10);
+        let allocation = allocate_registers(&g, 10, true);
 
         let phi_location = allocation.location(phi);
         let friend_location = allocation.location(friend);
@@ -1625,22 +1986,22 @@ mod register_alloc_tests {
     fn pressure_causes_spilling() {
         let (g, phi, friend, block_local) = build_conflicting_phi_graph();
         println!("{g}");
-        let allocation = allocate_registers(&g, 1);
+        let allocation = allocate_registers(&g, 1, true);
         println!("{allocation}");
 
         // With phi-friend merging, phi and friend share a register
         // So with only 1 register available, block_local must spill
         assert!(allocation.location(phi) == allocation.location(friend) ||
-                allocation.location(phi) == Some(ValueLocation::Spill(0)));
-        assert!(allocation.location(block_local) == Some(ValueLocation::Spill(0)) ||
-                allocation.location(phi) == Some(ValueLocation::Spill(0)));
+                matches!(allocation.location(phi), Some(ValueLocation::Spill(_))));
+        assert!(matches!(allocation.location(block_local), Some(ValueLocation::Spill(_))) ||
+                matches!(allocation.location(phi), Some(ValueLocation::Spill(_))), "block_local={block_local} phi={phi}");
     }
 
     #[test]
     fn register_conflict_across_bb() {
         let (g, phi, friend, block_local) = build_conflicting_phi_graph();
         println!("{g}");
-        let allocation = allocate_registers(&g, 2);
+        let allocation = allocate_registers(&g, 2, true);
         println!("{allocation}");
 
         assert!(matches!(allocation.location(phi), Some(ValueLocation::Register(_))));
@@ -1702,7 +2063,7 @@ mod register_alloc_tests {
         finalize_diamond_merge(&mut g, merge_id, branch1_id, branch2_id, jump1_id, jump2_id);
 
         g.switch_to_block(merge_id, 0, vec![]);
-        g.push_instr(OptOp::Assert(Condition::EqConst(phi, 0), OperationError::IntegerOverflow), &[], false, None, None);
+        g.push_instr_may_deopt(OptOp::Assert(Condition::EqConst(phi, 0), OperationError::IntegerOverflow), &[]);
 
         (g, phi, val1, val2)
     }
@@ -1710,7 +2071,7 @@ mod register_alloc_tests {
     #[test]
     fn phi_with_two_incoming_edges_unified() {
         let (g, phi, val1, val2) = build_diamond_phi_graph();
-        let allocation = allocate_registers(&g, 10);
+        let allocation = allocate_registers(&g, 10, true);
         println!("{phi} {val1} {val2}\n{g}\n{allocation}");
 
         let phi_location = allocation.location(phi);
@@ -1746,7 +2107,7 @@ mod register_alloc_tests {
         finalize_diamond_merge(&mut g, merge_id, branch1_id, branch2_id, jump1_id, jump2_id);
 
         g.switch_to_block(merge_id, 0, vec![]);
-        g.push_instr(OptOp::Assert(Condition::EqConst(phi, 0), OperationError::IntegerOverflow), &[], false, None, None);
+        g.push_instr_may_deopt(OptOp::Assert(Condition::EqConst(phi, 0), OperationError::IntegerOverflow), &[]);
 
         (g, phi, val1, val2)
     }
@@ -1754,7 +2115,7 @@ mod register_alloc_tests {
     #[test]
     fn phi_with_two_incoming_edges_conflicting() {
         let (g, phi, val1, val2) = build_diamond_conflicting_graph();
-        let allocation = allocate_registers(&g, 10);
+        let allocation = allocate_registers(&g, 10, true);
         println!("{phi} {val1} {val2}\n{g}\n{allocation}");
         println!("{:?}", g.val_info(val1).unwrap());
         println!("{:?}", g.val_info(val2).unwrap());
@@ -1771,3 +2132,4 @@ mod register_alloc_tests {
         assert!(val2_location == phi_location || val1_location == phi_location);
     }
 }
+
