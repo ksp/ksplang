@@ -188,7 +188,7 @@ impl StackStateTracker {
 
     pub fn push(&mut self, val: ValueId) {
         self.push_count += 1;
-        self.lookup.entry(val).or_insert_with(Vec::new).push(self.stack.len() as u32);
+        self.lookup.entry(val).or_default().push(self.stack.len() as u32);
         self.stack.push(val);
     }
 
@@ -201,6 +201,27 @@ impl StackStateTracker {
     pub fn restore(&mut self, state: StackState) {
         self.stack = state.stack;
         self.stack_depth = state.depth;
+        self.rebuild_index();
+    }
+
+    pub fn rebuild_index(&mut self) {
+        self.lookup.clear();
+        for (ix, &val) in self.stack.iter().enumerate() {
+            self.lookup.entry(val).or_default().push(ix as u32);
+        }
+    }
+
+    pub fn check_invariants(&self) {
+        for (&val, ixs) in &self.lookup {
+            assert!(ixs.len() > 0);
+            for &ix in ixs {
+                assert_eq!(self.stack[ix as usize], val, "{val} {ixs:?} {:?} {:?}", self.stack, self.lookup);
+            }
+            assert!(ixs.is_sorted(), "{val} {ixs:?} {:?} {:?}", self.stack, self.lookup);
+        }
+        for (ix, val) in self.stack.iter().enumerate() {
+            assert!(self.lookup.get(val).is_some_and(|x| x.contains(&(ix as u32))), "{val} {ix} {:?} {:?}", self.stack, self.lookup)
+        }
     }
 }
 
@@ -450,6 +471,7 @@ impl GraphBuilder {
     }
 
     pub fn replace_values(&mut self, mut replace: BTreeMap<ValueId, ValueId>) {
+        self.stack.check_invariants();
         while !replace.is_empty() {
             let (old, new) = replace.pop_first().unwrap();
             if old == new {
@@ -485,6 +507,7 @@ impl GraphBuilder {
                     }
                 }
             }
+            self.stack.check_invariants();
         }
     }
 
@@ -955,6 +978,7 @@ impl GraphBuilder {
                 }
             }
             for i in 0..pops {
+                assert!(!self.stack.lookup.contains_key(&vals[i]));
                 self.stack.lookup.insert(vals[i], vec![i as u32]);
             }
         }

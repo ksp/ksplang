@@ -1,4 +1,4 @@
-use std::ops::RangeInclusive;
+use std::{collections::BTreeSet, ops::RangeInclusive};
 
 use smallvec::{smallvec, SmallVec};
 
@@ -12,10 +12,18 @@ use crate::compiler::{
 pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
     let pred_block = g.block_(predecessor);
 
+    if pred_block.ksplang_instr_count_additional.len() > 0 {
+        return false;
+    }
+
     let mut successors = pred_block.following_blocks();
     successors.sort();
     successors.dedup();
     let successors = successors;
+    println!("Running hoisting for {predecessor}: {successors:?}");
+    if g.conf.should_log(10) {
+        println!("  Attempting hoisting into {pred_block}");
+    }
 
     if successors.len() < 2 {
         return false; // TODO: merge?
@@ -23,6 +31,9 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
 
     for &succ_id in &successors {
         let succ_block = g.block_(succ_id);
+        if g.conf.should_log(10) {
+            println!("  Attempting hoisting from {succ_block}");
+        }
         //   can't safely           would not be productive
         if !succ_block.is_sealed || succ_block.incoming_jumps.len() > 1 {
             return false;
@@ -49,11 +60,15 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
             for iid in instr_ids.iter() {
                 let block = g.block_(iid.0);
                 let instr = &block.instructions[&iid.1];
+                assert_eq!(&instr.op, op);
+
+                // if instr.effect == OpEffect::StackWrite {
+                //     continue 'candidate; // TODO: why is this broken??
+                // }
 
                 if matches!(instr.op, OptOp::Jump(..)) {
                     continue 'candidate;
                 }
-
                 if !can_hoist_from_block(g, block, iid.1, instr) {
                     continue 'candidate;
                 }
@@ -98,8 +113,8 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                 op: op.clone(),
                 inputs: inputs.clone(),
                 out: new_out,
-                program_position: usize::MAX, // TODO: maybe fix, idk
-                ksp_instr_count: u32::MAX,
+                program_position: program_position.unwrap_or(usize::MAX),
+                ksp_instr_count: ksplang_ops_increment.map_or(u32::MAX, |ctr| ctr + g.block_(predecessor).ksplang_instr_count),
                 effect: aggregated_effect,
             };
 
@@ -111,7 +126,24 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                 block.instructions.remove(&iid.instr_ix()).unwrap();
             }
 
+            if g.conf.should_log(5) {
+                println!("Hoisted {hoisted_instr} ({program_position:?}, {ksplang_ops_increment:?})");
+            }
+
             hoisted_any = true;
+
+            if hoisted_instr.op.is_terminal() {
+                // remove all following instructions, mark following as unreachable
+                let block = g.block_mut_(predecessor);
+                block.outgoing_jumps.clear();
+                block.instructions.split_off(&(hoisted_instr.id.1 + 1));
+                for &f in &successors {
+                    let b = g.block_mut_(f);
+                    b.is_reachable = false;
+                    assert!(1 >= b.incoming_jumps.len());
+                    b.incoming_jumps.clear();
+                }
+            }
             continue 'main;
         }
         break;

@@ -924,6 +924,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         let baseline_instr_count: usize = self.g.reachable_blocks().filter(|b| b.id != self.g.current_block).map(|b| b.instructions.len()).sum();
 
         loop {
+            self.g.stack.check_invariants();
             self.g.set_program_position(Some(self.position));
             if self.termination_ip == Some(self.position) || self.position >= self.ops.len() {
                 break;
@@ -1096,6 +1097,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         if self.conf.allow_pruning {
             self.g.clean_poped_values();
         }
+        self.g.stack.check_invariants();
         self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
         self.g.current_block_mut().is_finalized = true;
     }
@@ -1108,10 +1110,11 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             self.interpret_block();
 
             // try to hoist common code from successor blocks into the just-finished current block
-            let current_block_id = self.g.current_block;
-            let did_hois = hoist_up(&mut self.g, current_block_id);
-            if did_hois && self.conf.should_log(2) {
-                println!("  Hoisted code up from successors of block {:?}", self.g.block(current_block_id));
+            if let &[incoming_jump] = &self.g.current_block_ref().incoming_jumps[..] {
+                let did_hois = hoist_up(&mut self.g, incoming_jump.0);
+                if did_hois && self.conf.should_log(2) {
+                    println!("  Hoisted code up from successors of block {}", self.g.block_(incoming_jump.0));
+                }
             }
 
             let Some(pb) = self.pending_branches.pop_front() else {

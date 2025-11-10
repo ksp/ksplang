@@ -129,7 +129,7 @@ fn test_dup(ksplang: &str, input_range: RangeInclusive<i64>) {
     } else {
         assert_eq!(g.stack.stack, vec![val, val]);
     }
-    assert_eq!(2, g.current_block_ref().instructions.len()); // Checkpoint + DeoptAssert
+    assert_eq!(2, g.block_(BlockId(0)).instructions.len()); // Checkpoint + DeoptAssert
 }
 
 fn test_neg(prog: &str) {
@@ -187,7 +187,9 @@ fn sgn_sgn() {
 
 // Duplikace ze vzoráku KSP
 const VZORAKOVA_DUP: &str = "CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum ++ CS lensum CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u";
-const SEJSELOVA_DUP: &str = "CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd ++ max CS CS % qeq CS CS CS ++ ++ qeq pop2 CS j ++ CS praise qeq qeq pop2 funkcia funkcia ++ % bitshift CS CS gcd CS ++ lroll CS u CS CS pop2 CS lensum m pop2 pop2";
+const ERIKOVA_DUP: &str = "CS CS lensum CS funkcia cs ++ ++ ++ m cs cs ++ gcd ++ max cs cs rem qeq cs cs cs ++ ++ qeq pop2 cs cs ++ gcd cs cs cs cs bitshift bitshift cs bitshift cs cs pop2 u bitshift cs cs gcd cs ++ lroll cs u cs cs ++ gcd ++ ++ m pop2 pop2";
+const SEJSELOVA_DUP: &str =  "CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd ++ max CS CS % qeq CS CS CS ++ ++ qeq pop2 CS j ++ CS praise qeq qeq pop2 funkcia funkcia ++ % bitshift CS CS gcd CS ++ lroll CS u CS CS pop2 CS lensum m pop2 pop2";
+const SEJSELOVA2_DUP: &str = "CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd ++ max CS CS % qeq CS CS CS ++ ++ qeq pop2 CS CS ^^ CS praise qeq qeq pop2 funkcia funkcia ++ % bitshift CS CS gcd CS ++ lroll CS u CS CS pop2 CS lensum m pop2 pop2";
 #[test]
 fn test_dup1() {
     test_dup(VZORAKOVA_DUP, FULL_RANGE);
@@ -198,11 +200,25 @@ fn test_dup1_trochu_jina() {
 }
 
 #[test]
-fn test_dup2() {
+fn test_dup2_s1() {
     test_dup(SEJSELOVA_DUP, i64::MIN..=0);
     test_dup(SEJSELOVA_DUP, 3..=i64::MAX);
     // test_dup(SEJSELOVA_DUP, FULL_RANGE); // TODO: support this
     // todo!()
+}
+
+#[test]
+fn test_dup2_e() {
+    test_dup(ERIKOVA_DUP, i64::MIN..=0);
+    test_dup(ERIKOVA_DUP, 3..=i64::MAX);
+    test_dup(ERIKOVA_DUP, FULL_RANGE);
+}
+
+#[test]
+fn test_dup2_s2() {
+    test_dup(SEJSELOVA2_DUP, i64::MIN..=0);
+    test_dup(SEJSELOVA2_DUP, 3..=i64::MAX);
+    test_dup(SEJSELOVA2_DUP, FULL_RANGE);
 }
 
 // #[test]
