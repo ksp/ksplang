@@ -568,6 +568,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             println!("Warning: simplify_instr infinite loop detected: {i:?} {change_path:?}");
             break;
         }
+        // println!("simplify_instr {:?}", change_path);
 
         assert!(i.op.arity().contains(&i.inputs.len()), "Invalid arity for {:?}: {}. Optimized as {change_path:?}", i.op, i.inputs.len());
 
@@ -715,7 +716,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Sgn if *ranges[0].start() >= 1 => {
                 return (i.clone().with_op(OptOp::Add, &[ ValueId::C_ONE ], OpEffect::None), None)
             }
-            OptOp::Sgn if *ranges[0].end() <= 1 => {
+            OptOp::Sgn if *ranges[0].end() <= -1 => {
                 return (i.clone().with_op(OptOp::Add, &[ ValueId::C_NEG_ONE ], OpEffect::None), None)
             }
             OptOp::Sgn if *ranges[0].start() >= -1 && *ranges[0].end() <= 1 => {
@@ -1148,7 +1149,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             if let Ok(r) = mul_pattern.try_match(cfg, &i.inputs) {
                 let a = r.get_named_single("v2").unwrap();
                 if i.inputs.contains(&a) {
-                    println!("DEBUG: bingo {:?}", r);
                     // rewrite to (a % 2) - 2
                     let modulo = cfg.value_numbering(OptOp::Mod, &[a, ValueId::C_TWO], None, None);
                     i.op = OptOp::Add;

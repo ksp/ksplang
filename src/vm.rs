@@ -6,7 +6,7 @@ use num_integer::{Integer, Roots};
 use smallvec::{SmallVec, ToSmallVec};
 use thiserror::Error;
 
-use crate::{compiler::{self, cfg::GraphBuilder, cfg_interpreter::interpret_cfg, config::get_config, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::digit_sum, funkcia, ops::Op};
+use crate::{compiler::{self, cfg::GraphBuilder, cfg_interpreter, config::get_config, osmibytecode::OsmibytecodeBlock, osmibytecode_vm, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::digit_sum, funkcia, ops::Op};
 
 #[cfg(test)]
 mod tests;
@@ -15,7 +15,7 @@ mod tests;
 ///
 /// This is the best choice if you do not need track anything while the
 /// program is executed.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct NoStats {}
 
 impl Tracer for NoStats {
@@ -47,6 +47,9 @@ struct State<'a, TTracer: Tracer> {
     pub max_stack_size: usize,
     pub pi_digits: &'a [i8],
     pub instructions_run: u64,
+    pub instructions_optimized: u64,
+    pub instructions_cfg_run: u64,
+    pub instructions_obc_run: u64,
     pub ip: usize,
     pub reversed: bool,
     pub reverse_undo_stack: Vec<(usize, usize)>,
@@ -320,6 +323,9 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             max_stack_size,
             pi_digits,
             instructions_run: 0,
+            instructions_cfg_run: 0,
+            instructions_optimized: 0,
+            instructions_obc_run: 0,
             ip: 0,
             reversed: false,
             reverse_undo_stack: vec![],
@@ -336,6 +342,9 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             max_stack_size: self.max_stack_size,
             pi_digits: self.pi_digits,
             instructions_run: self.instructions_run,
+            instructions_cfg_run: self.instructions_cfg_run,
+            instructions_optimized: self.instructions_optimized,
+            instructions_obc_run: self.instructions_obc_run,
             ip: self.ip,
             reversed: self.reversed,
             reverse_undo_stack: self.reverse_undo_stack,
@@ -1207,7 +1216,8 @@ struct OptimizedBlock {
     start_ip: usize,
     reversed: bool,
 
-    cfg: GraphBuilder,
+    cfg: Option<Box<GraphBuilder>>,
+    osmibytecode: Option<OsmibytecodeBlock>,
     stats: BlockStats,
 }
 
@@ -1451,11 +1461,21 @@ impl TraceProvider for ActualTracer {
 // }
 
 #[derive(Debug, Clone)]
+struct BlockInterpretResult {
+    executed_ksplang: u64,
+    executed_obc_ops: u64,
+    executed_cfg_ops: u64,
+    next_ip: usize,
+    exit_point_id: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct OptimizingVM {
     program: Vec<Op>,
     allow_deez: bool,
     opt: Optimizer,
     conf: &'static compiler::config::JitConfig,
+    obc_regs: osmibytecode_vm::RegFile
 }
 
 impl OptimizingVM {
@@ -1463,14 +1483,14 @@ impl OptimizingVM {
         let conf = compiler::config::get_config();
         let mut opt = Optimizer::default();
         opt.trigger_count = conf.trace_trigger_count;
-        Self { program, allow_deez, opt, conf }
+        Self { program, allow_deez, opt, conf, obc_regs: osmibytecode_vm::RegFile::new() }
     }
 
     pub fn run(&mut self, input_stack: Vec<i64>, opt: VMOptions) -> Result<RunResult<NoStats>, RunError> {
         let program_len = self.program.len();
         let mut s: State<Optimizer> = State::new(opt.max_stack_size, opt.pi_digits, self.program.to_vec(), input_stack);
         s.tracer = mem::take(&mut self.opt);
-        // self.optimize_start(&s, &opt);
+        self.optimize_start(&s, &opt);
 
         let (s, result) = self.run_internal(s, &opt);
 
@@ -1478,13 +1498,33 @@ impl OptimizingVM {
         if s.ops.len() > program_len {
             todo!("deez cleanup {}", self.allow_deez);
         }
-        let s = s.change_tracer(|old| {
+        let mut s = s.change_tracer(|old| {
             self.opt = old;
             NoStats::default()
         });
+        s.ops = vec![];
+        s.pi_digits = &[];
+        println!("final state: {:?}", s);
+
         match result {
-            Ok(()) => Ok(s.into()),
+            Ok(()) => {
+                Ok(s.into())
+            },
             Err(e) => Err(e)
+        }
+    }
+
+    fn interpret_block(block: &OptimizedBlock, stack: &mut Vec<i64>, regfile: &mut osmibytecode_vm::RegFile, error_is_deopt: bool) -> Result<BlockInterpretResult, OperationError> {
+        if let Some(ob) = &block.osmibytecode {
+            let r = if error_is_deopt {
+                osmibytecode_vm::interpret_block::<true>(ob, stack, regfile)?
+            } else {
+                osmibytecode_vm::interpret_block::<false>(ob, stack, regfile)?
+            };
+            Ok(BlockInterpretResult { executed_ksplang: r.ksplang_interpreted, executed_cfg_ops: 0, next_ip: r.continue_ip, executed_obc_ops: r.bytecode_interpreted, exit_point_id: r.exit_point.encode() })
+        } else {
+            let r = cfg_interpreter::interpret_cfg(block.cfg.as_ref().unwrap(), stack, error_is_deopt)?;
+            Ok(BlockInterpretResult { executed_ksplang: r.executed_ksplang, executed_cfg_ops: r.executed_cfg_ops, next_ip: r.next_ip, executed_obc_ops: 0, exit_point_id: r.exit_point_id  } )
         }
     }
 
@@ -1513,15 +1553,15 @@ impl OptimizingVM {
                 let result = if verify {
                     let mut state_backup = s.clone().swap_tracer(NoStats::default()).1;
                     let backup2 = state_backup.stack.clone();
-                    let r = interpret_cfg(&opt_block.cfg, &mut s.stack, false).unwrap();
+                    let r = Self::interpret_block(&opt_block, &mut s.stack, &mut self.obc_regs, self.conf.error_as_deopt).unwrap();
                     let mut options2 = options.clone();
                     options2.stop_after = s.instructions_run + r.executed_ksplang;
 
                     self::run_state(&mut state_backup, &options2).expect("Real program failed while optimized program ran fine :|");
-                    assert_eq!((&s.stack, r.next_ip), (&state_backup.stack, state_backup.ip), "Optimized block {} led to different stack than real execution:\n{:?}\nStarting stack: {:?}", s.ip, r, backup2);
+                    assert_eq!((&s.stack, r.next_ip), (&state_backup.stack, state_backup.ip), "Optimized block {} led to different stack than real execution:\n{:?}\n  start: {:?}", s.ip, r, backup2);
                     Ok(r)
                 } else {
-                    interpret_cfg(&opt_block.cfg, &mut s.stack, true)
+                    Self::interpret_block(&opt_block, &mut s.stack, &mut self.obc_regs, self.conf.error_as_deopt)
                 };
 
                 if should_log_runtime {
@@ -1533,17 +1573,16 @@ impl OptimizingVM {
                     Ok(result) => {
                         {
                             let block_stats = self.opt.get_block_mut(s.reversed, s.ip).unwrap();
-                            block_stats.stats.exit_count.entry(result.exit_point).and_modify(|c| *c += 1).or_insert(1);
+                            block_stats.stats.exit_count.entry(result.exit_point_id).and_modify(|c| *c += 1).or_insert(1);
                             block_stats.stats.ksplang_op_count += result.executed_ksplang;
-                            block_stats.stats.cfg_op_count += result.executed_cfg_ops;
+                            block_stats.stats.cfg_op_count += result.executed_cfg_ops + result.executed_obc_ops;
                             block_stats.stats.entry_count += 1;
                         }
                         s.instructions_run += result.executed_ksplang;
+                        s.instructions_optimized += result.executed_ksplang;
+                        s.instructions_cfg_run += result.executed_cfg_ops;
+                        s.instructions_obc_run += result.executed_obc_ops;
                         s.ip = result.next_ip;
-                        if !result.deoptimized {
-                            // program finished I guess
-                            return (s, Ok(()))
-                        }
                     }
                 }
             } else {
@@ -1586,37 +1625,50 @@ impl OptimizingVM {
         p.instr_limit = self.conf.adhoc_instr_limit as usize;
         p.interpret();
 
-        if s.conf.should_log(1) {
-            println!("Optimized at {start_ip}({reversed}):");
-            println!("{}", p.g);
-            println!("");
-            println!("===================================================================");
-        }
-
-        let b = OptimizedBlock { cfg: p.g, reversed, start_ip, stats: BlockStats::default() };
-        self.opt.insert_block(b);
+        self.save_block(start_ip, reversed, p.g);
 
         (s, Ok(()))
     }
 
-    fn optimize_start<'a>(&mut self, s: &State<'a, Optimizer>, options: &VMOptions) {
+    fn optimize_start<'a>(&mut self, s: &State<'a, Optimizer>, _options: &VMOptions) {
         // try to optimistically optimize from the start
         // makes debugging easier as the VM will just try to optimize the code I give it...
         // let limit = 50_000;
         let limit = self.conf.start_instr_limit as usize;
+        if limit == 0 {
+            return;
+        }
         let mut p = Precompiler::new(&s.ops, s.stack.len(), s.reversed, s.ip, limit, None, GraphBuilder::new(s.ip), NoTrace());
         p.bb_limit = self.conf.start_branch_limit as usize;
         p.instr_limit = self.conf.start_instr_limit as usize;
         p.interpret();
 
-        if s.conf.should_log(1) {
-            println!("Optimized at start:");
-            println!("{}", p.g);
+        self.save_block(0, false, p.g);
+    }
+
+    fn save_block(&mut self, start_ip: usize, reversed: bool, cfg: GraphBuilder) {
+        let osmibytecode = 
+            self.conf.allow_osmibyte_backend.then(|| OsmibytecodeBlock::from_cfg(&cfg));
+
+        if self.conf.should_log(1) {
+            println!("Optimized at {}{}:", start_ip, reversed.then_some(" reversed").unwrap_or(""));
+            println!("{}", cfg);
             println!("");
+            if let Some(obc) = &osmibytecode {
+                println!("Osmibytecode:");
+                println!("{}", obc);
+                println!("");
+            }
             println!("===================================================================");
         }
 
-        let b = OptimizedBlock { cfg: p.g, reversed: s.reversed, start_ip: s.ip, stats: BlockStats::default() };
+        let b = OptimizedBlock {
+            cfg: (osmibytecode.is_none() || self.conf.verify > 0).then(|| Box::new(cfg)),
+            osmibytecode,
+            reversed,
+            start_ip,
+            stats: BlockStats::default(),
+        };
         self.opt.insert_block(b);
     }
 }

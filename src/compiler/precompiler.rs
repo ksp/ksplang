@@ -436,8 +436,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     let out = self.g.value_numbering(OptOp::Median, &vals, None, None);
                     self.g.stack.push(out);
                 } else {
-                    let out = self.g.value_numbering(OptOp::MedianCursed, &vals, None, None);
-                    self.g.stack.push(out);
+                    if self.g.conf.allow_osmibyte_backend {
+                        return NevimJakChteloByToKonstantu(vec![n]); // TODO
+                    } else {
+                        let out = self.g.value_numbering(OptOp::MedianCursed, &vals, None, None);
+                        self.g.stack.push(out);
+                    }
                 }
                 Continue
             }
@@ -1148,6 +1152,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             self.g.seal_block(bid);
             for assume in pb.assumes {
                 self.g.add_assumption_simple(InstrId(bid, 0), assume);
+            }
+            if self.g.block_(bid).incoming_jumps.len() > 1 {
+                self.g.push_checkpoint();
             }
             assert_eq!(self.g.stack.stack.len(), pb.stack_snapshot[0].stack.len());
         }

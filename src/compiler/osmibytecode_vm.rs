@@ -1,8 +1,8 @@
-use std::{cmp, hint::select_unpredictable, ops::{Index, IndexMut}};
+use std::{cmp, hint::select_unpredictable, mem::MaybeUninit, ops::{Index, IndexMut}, process::exit, u32};
 
 use num_integer::Integer;
 
-use crate::{compiler::{utils::sort_tuple, osmibytecode::{Condition, OsmibytecodeBlock, OsmibyteOp, RegId}}, digit_sum, funkcia, vm::{self, OperationError}};
+use crate::{compiler::{osmibytecode::{Condition, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{SaturatingInto, sort_tuple}}, digit_sum, funkcia, vm::{self, OperationError}};
 
 
 
@@ -25,18 +25,37 @@ fn error_from_code(code: u16, value: i64) -> OperationError {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ExitPointId {
+    Start,
+    Deopt(u32),
+    Done(u32)
+}
+impl ExitPointId {
+    pub fn encode(&self) -> u64 {
+        match self {
+            ExitPointId::Deopt(id) => *id as u64 | (1u64 << 32),
+            ExitPointId::Done(id) => *id as u64,
+            ExitPointId::Start => 2u64 << 32,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunBlockResult {
     pub continue_ip: usize,
     pub ksplang_interpreted: u64,
     pub bytecode_interpreted: u64,
+    pub exit_point: ExitPointId
 }
 
-struct RegFile {
+#[derive(Debug, Clone)]
+pub struct RegFile {
     regs: [i64; 256]
 }
 impl RegFile {
-    fn new() -> Self { RegFile { regs: [0i64; 256] } }
+    pub fn new() -> Self { RegFile { regs: [0i64; 256] } }
+    // fn new_unsafe() -> Self { unsafe { RegFile { regs: MaybeUninit::uninit().assume_init() } } }
 }
 impl Index<u8> for RegFile {
     type Output = i64;
@@ -115,11 +134,11 @@ fn eval_cond(regs: &RegFile, cond: Condition<RegId>) -> bool {
 #[cold]
 fn maybe_cold() { } // not sure if this even works
 
-pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, stack: &mut Vec<i64>) -> Result<RunBlockResult, OperationError> {
+pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, stack: &mut Vec<i64>, regs: &mut RegFile) -> Result<RunBlockResult, OperationError> {
     if stack.len() <= prog.stack_values_required as usize {
-        return Ok(RunBlockResult { continue_ip: prog.start_ip, bytecode_interpreted: 0, ksplang_interpreted: 0 })
+        return Ok(RunBlockResult { continue_ip: prog.start_ip, bytecode_interpreted: 0, ksplang_interpreted: 0, exit_point: ExitPointId::Start })
     }
-    let mut regs = RegFile::new();
+    // let mut regs = RegFile::new();
     let mut spill: Vec<i64> = Vec::new();
     let mut ip: u32 = 0;
     let mut bytecode_ops_done = 0;
@@ -129,6 +148,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
     let mut deopt_info: Option<u32> = None;
     let mut deopt_auto = false;
     let mut simply_done: Option<usize> = None;
+    let mut exit_point = None;
 
     macro_rules! deopt_or_error {
         ($err:expr) => {
@@ -145,8 +165,11 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
     let mut program: &[OsmibyteOp<RegId>] = &prog.program;
 
     'main: loop {
-        'program: while (ip as usize) < program.len() {
+        '_program: while (ip as usize) < program.len() {
             let op = &program[ip as usize];
+            // println!("{bytecode_ops_done}: {ip}: {op:?} ({})",
+            //     op.read_regs().iter().map(|r| format!("{r}={}", regs[r])).collect::<Vec<_>>().join(", ")
+            // );
             bytecode_ops_done += 1;
             match op {
                 OsmibyteOp::Push(a) => { stack.push(regs[a]); },
@@ -392,7 +415,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 OsmibyteOp::ShiftL(out, a, b) => {
                     let shift = regs[b];
                     if shift < 0 { deopt_or_error!(OperationError::NegativeBitCount { bits: shift }) }
-                    regs[out] = regs[a].unbounded_shl(shift.try_into().unwrap_or(64));
+                    regs[out] = regs[a].unbounded_shl(shift.saturating_into());
                 },
                 OsmibyteOp::ShiftR(out, a, b) => {
                     let shift = regs[b];
@@ -471,6 +494,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 OsmibyteOp::Jump(condition, new_ip) => {
                     if eval_cond(&regs, condition.clone()) {
                         ip = *new_ip as u32;
+                        continue;
                     }
                 },
                 OsmibyteOp::Assert(condition, err, arg) => {
@@ -485,8 +509,10 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                         break;
                     }
                 },
-                OsmibyteOp::Done(continue_at) => {
+                OsmibyteOp::Done(continue_at, ctr_inc) => {
                     simply_done = Some(*continue_at as usize);
+                    ksplang_ops_done = ksplang_ops_done.overflowing_add_signed(*ctr_inc as i64).0;
+                    exit_point.get_or_insert(ExitPointId::Done(ip));
                     break 'main;
                 },
                 OsmibyteOp::Median2(out, a, b) => {
@@ -514,11 +540,11 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 }
                 OsmibyteOp::KsplangOp(_op) => panic!("probably does not make sense anymore?"),
                 OsmibyteOp::KsplangOpWithArg(_op, _) => todo!("probably does not make sense anymore?"),
-                OsmibyteOp::KsplangOpsIncrement(x) => { ksplang_ops_done += *x as u64 },
-                OsmibyteOp::KsplangOpsIncrementVar(x) => { ksplang_ops_done += u64::try_from(regs[x]).unwrap() },
+                OsmibyteOp::KsplangOpsIncrement(x) => { ksplang_ops_done = ksplang_ops_done.overflowing_add(*x as u64).0 },
+                OsmibyteOp::KsplangOpsIncrementVar(x) => { ksplang_ops_done = ksplang_ops_done.overflowing_add(u64::try_from(regs[x]).unwrap()).0 },
                 OsmibyteOp::KsplangOpsIncrementCond(condition, x) => {
                     if eval_cond(&regs, condition.clone()) {
-                        ksplang_ops_done += *x as u64
+                        ksplang_ops_done = ksplang_ops_done.overflowing_add(*x as u64).0
                     }
                 },
                 OsmibyteOp::Spill(ix, a) => {
@@ -530,12 +556,18 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 OsmibyteOp::Unspill(a, ix) => { regs[a] = spill[*ix as usize] }
             }
 
+            // println!("{bytecode_ops_done}: {ip}: -> {}",
+            //     op.write_regs().iter().map(|r| format!("{r}={}", regs[r])).collect::<Vec<_>>().join(", ")
+            // );
+
             debug_assert!(!deopt_auto && deopt_info.is_none() && simply_done.is_none());
             ip += 1;
         }
 
         if simply_done.is_some() {
             debug_assert!(!deopt_auto && deopt_info.is_none());
+            // println!("done at {ip} {simply_done:?}");
+            exit_point.get_or_insert(ExitPointId::Done(ip));
             break;
         }
 
@@ -543,6 +575,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
         if deopt_auto {
             debug_assert!(deopt_info.is_none());
             assert!(performing_deopt.is_none(), "auto-deopt is not supported when in a deopt (IP is ambiguous). Deopt instructions must not fail");
+            // println!("deopt_auto at {ip}");
             match prog.ip2deopt.binary_search_by_key(&ip, |x| x.0) {
                 Err(ix) => panic!("Operation {ip} auto-deopts, but corresponding deopt is not recorded? (closest is {ix} {:?}", prog.ip2deopt[ix]),
                 Ok(ix) => deopt_info = Some(prog.ip2deopt[ix].1)
@@ -554,9 +587,12 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
             deopt_auto = false;
 
             let deopt = &prog.deopts[deopt_id as usize];
+            // println!("DEOPT at {ip}: {deopt_id} {:?}", deopt);
+            exit_point.get_or_insert(ExitPointId::Deopt(deopt_id));
             performing_deopt = Some(deopt_id);
             ksplang_ops_done = ksplang_ops_done.overflowing_add_signed(deopt.ksplang_ops_increment as i64).0;
             program = &deopt.opcodes;
+            ip = 0;
         } else if let Some(deopt_id) = performing_deopt {
             assert_eq!(ip as usize, program.len());
             let deopt = &prog.deopts[deopt_id as usize];
@@ -575,5 +611,6 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
         continue_ip,
         ksplang_interpreted: ksplang_ops_done,
         bytecode_interpreted: bytecode_ops_done,
+        exit_point: exit_point.unwrap()
     })
 }

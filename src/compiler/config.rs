@@ -1,4 +1,4 @@
-use std::{any::Any, cell::{LazyCell, OnceCell}, cmp, str::FromStr, sync::LazyLock};
+use std::{cmp, str::FromStr, sync::LazyLock};
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,6 +17,7 @@ pub struct JitConfig {
     pub allow_pruning: bool,
     pub verify: u8, // 0 = off, 1 = first run, 2 = full
     pub error_as_deopt: bool,
+    pub allow_osmibyte_backend: bool,
     pub trace_limit: u32,
     pub trace_trigger_count: u32,
 }
@@ -78,6 +79,7 @@ fn create_config() -> JitConfig {
 
         allow_pruning: parse_env("KSPLANGJIT_PRUNING", true),
         error_as_deopt: parse_env("KSPLANGJIT_ERROR_AS_DEOPT", true),
+        allow_osmibyte_backend: parse_env("KSPLANGJIT_ALLOW_OSMIBYTE_BACKEND", true),
         verify: parse_env("KSPLANGJIT_VERIFY", 1),
         trace_limit: parse_env("KSPLANGJIT_TRACE_LIMIT", 1000),
         trace_trigger_count: parse_env("KSPLANGJIT_TRIGGER_COUNT", 3),

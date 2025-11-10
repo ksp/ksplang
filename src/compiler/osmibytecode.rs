@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{fmt::Display, u32};
+use std::{fmt::{Debug, Display}, u32};
 use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 
@@ -22,7 +22,7 @@ impl fmt::Debug for RegId {
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum OsmibyteOp<TReg: Display> {
+pub enum OsmibyteOp<TReg: Debug + Clone> {
     Push(TReg),
     Push2(TReg, TReg),
     Push3(TReg, TReg, TReg),
@@ -103,7 +103,7 @@ pub enum OsmibyteOp<TReg: Display> {
 
     Assert(Condition<TReg>, u16, TReg), // error code + argument (optional)
     DeoptAssert(Condition<TReg>, u16), // if false: abort block execution, deopt info number
-    Done(u32), // instruction pointer where to continue execution (if it can't fit into u32, then we'll standard deopt)
+    Done(u32, i16), // target instruction pointer + CTR increment (if it can't fit into u32/i16, then we'll standard deopt)
     Median2(TReg, TReg, TReg), // a <- median(b, c)
     MedianCursed2(TReg, TReg), // a <- median(b, 2)
     Median3(TReg, TReg, TReg, TReg), // a <- median(b, c, d)
@@ -120,9 +120,9 @@ pub enum OsmibyteOp<TReg: Display> {
     Unspill(TReg, u32), // a <- somewhere[ix]
 }
 
-impl<TReg: Display> OsmibyteOp<TReg> {
-    pub fn replace_regs<TReg2: Display, F>(&self, f: F) -> OsmibyteOp<TReg2>
-        where F: Fn(&TReg, bool) -> TReg2
+impl<TReg: Debug + Clone> OsmibyteOp<TReg> {
+    pub fn replace_regs<TReg2: Debug + Clone, F>(&self, mut f: F) -> OsmibyteOp<TReg2>
+        where F: FnMut(&TReg, bool) -> TReg2
     {
         match self {
             OsmibyteOp::Push(a) => OsmibyteOp::Push(f(a, false)),
@@ -212,7 +212,7 @@ impl<TReg: Display> OsmibyteOp<TReg> {
 
             OsmibyteOp::Assert(condition, code, arg) => OsmibyteOp::Assert(condition.replace_regs(|r| f(r, false)), *code, f(arg, false)),
             OsmibyteOp::DeoptAssert(condition, id) => OsmibyteOp::DeoptAssert(condition.replace_regs(|r| f(r, false)), *id),
-            OsmibyteOp::Done(ip) => OsmibyteOp::Done(*ip),
+            OsmibyteOp::Done(ip, ctr) => OsmibyteOp::Done(*ip, *ctr),
 
             OsmibyteOp::Median2(a, b, c) => OsmibyteOp::Median2(f(a, true), f(b, false), f(c, false)),
             OsmibyteOp::MedianCursed2(a, b) => OsmibyteOp::MedianCursed2(f(a, true), f(b, false)),
@@ -230,6 +230,28 @@ impl<TReg: Display> OsmibyteOp<TReg> {
             OsmibyteOp::Spill(value, a) => OsmibyteOp::Spill(*value, f(a, false)),
             OsmibyteOp::Unspill(a, value) => OsmibyteOp::Unspill(f(a, true), *value),
         }
+    }
+
+    pub fn read_regs(&self) -> ArrayVec<TReg, 8> {
+        let mut out = ArrayVec::<TReg, 8>::new();
+        self.replace_regs(|r, write| {
+            if !write {
+                out.push(r.clone());
+            }
+            ()
+        });
+        out
+    }
+
+    pub fn write_regs(&self) -> ArrayVec<TReg, 8> {
+        let mut out = ArrayVec::<TReg, 8>::new();
+        self.replace_regs(|r, write| {
+            if write {
+                out.push(r.clone());
+            }
+            ()
+        });
+        out
     }
 }
 
@@ -378,31 +400,31 @@ impl<TReg> Condition<TReg> {
     }
 }
 
-impl<T: fmt::Display> fmt::Display for Condition<T> {
+impl<T: fmt::Debug> fmt::Display for Condition<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Condition::Eq(a, b) => write!(f, "{} == {}", a, b),
-            Condition::EqConst(a, c) => write!(f, "{} == [{}]", a, c),
-            Condition::Neq(a, b) => write!(f, "{} != {}", a, b),
-            Condition::NeqConst(a, c) => write!(f, "{} != [{}]", a, c),
-            Condition::Lt(a, b) => write!(f, "{} < {}", a, b),
-            Condition::LtConst(a, c) => write!(f, "{} < [{}]", a, c),
-            Condition::Leq(a, b) => write!(f, "{} <= {}", a, b),
-            Condition::LeqConst(a, c) => write!(f, "{} <= [{}]", a, c),
-            Condition::Gt(a, b) => write!(f, "{} > {}", a, b),
-            Condition::GtConst(a, c) => write!(f, "{} > [{}]", a, c),
-            Condition::Geq(a, b) => write!(f, "{} >= {}", a, b),
-            Condition::GeqConst(a, c) => write!(f, "{} >= [{}]", a, c),
-            Condition::Divides(a, b) => write!(f, "{} % {} == 0", a, b),
-            Condition::DividesConst(a, c) => write!(f, "{} % [{}] == 0", a, c),
-            Condition::NotDivides(a, b) => write!(f, "{} % {} != 0", a, b),
-            Condition::NotDividesConst(a, c) => write!(f, "{} % [{}] != 0", a, c),
+            Condition::Eq(a, b) => write!(f, "{:?} == {:?}", a, b),
+            Condition::EqConst(a, c) => write!(f, "{:?} == '{}'", a, c),
+            Condition::Neq(a, b) => write!(f, "{:?} != {:?}", a, b),
+            Condition::NeqConst(a, c) => write!(f, "{:?} != '{}'", a, c),
+            Condition::Lt(a, b) => write!(f, "{:?} < {:?}", a, b),
+            Condition::LtConst(a, c) => write!(f, "{:?} < '{}'", a, c),
+            Condition::Leq(a, b) => write!(f, "{:?} <= {:?}", a, b),
+            Condition::LeqConst(a, c) => write!(f, "{:?} <= '{}'", a, c),
+            Condition::Gt(a, b) => write!(f, "{:?} > {:?}", a, b),
+            Condition::GtConst(a, c) => write!(f, "{:?} > '{}'", a, c),
+            Condition::Geq(a, b) => write!(f, "{:?} >= {:?}", a, b),
+            Condition::GeqConst(a, c) => write!(f, "{:?} >= '{}'", a, c),
+            Condition::Divides(a, b) => write!(f, "{:?} % {:?} == 0", a, b),
+            Condition::DividesConst(a, c) => write!(f, "{:?} % '{}' == 0", a, c),
+            Condition::NotDivides(a, b) => write!(f, "{:?} % {:?} != 0", a, b),
+            Condition::NotDividesConst(a, c) => write!(f, "{:?} % '{}' != 0", a, c),
             Condition::True => write!(f, "true"),
             Condition::False => write!(f, "false"),
         }
     }
 }
-impl<T: fmt::Display> fmt::Debug for Condition<T> {
+impl<T: fmt::Debug> fmt::Debug for Condition<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(self, f) }
 }
 
@@ -410,12 +432,12 @@ impl<T: fmt::Display> fmt::Debug for Condition<T> {
 pub struct DeoptInfo {
     pub ip: usize,
     pub stack_reconstruction: SmallVec<[RegId; 16]>,
-    pub ksplang_ops_increment: i32,
+    pub ksplang_ops_increment: i64,
     pub opcodes: Box<[OsmibyteOp<RegId>]>,
 }
 
 impl DeoptInfo {
-    pub fn new(ip: usize, stack: &[RegId], ksplang_ops_increment: i32, opcodes: &[OsmibyteOp<RegId>]) -> Self {
+    pub fn new(ip: usize, stack: &[RegId], ksplang_ops_increment: i64, opcodes: &[OsmibyteOp<RegId>]) -> Self {
         DeoptInfo {
             ip,
             stack_reconstruction: stack.into(),
@@ -463,10 +485,18 @@ impl fmt::Display for OsmibytecodeBlock {
 
         if !self.deopts.is_empty() {
             writeln!(f, "  deopts ({}):", self.deopts.len())?;
-            for (ix, deopt) in self.deopts.iter().enumerate() {
-                writeln!(f, "    #{ix:04}: ip={}, ksplang_ops_increment={}", deopt.ip, deopt.ksplang_ops_increment)?;
-                writeln!(f, "            stack reconstruction: {:?}", deopt.stack_reconstruction)?;
-                writeln!(f, "            ops: {:?}", deopt.opcodes)?;
+            for (ix, d) in self.deopts.iter().enumerate() {
+                write!(f, "    #{ix:04}: IP = {}", d.ip)?;
+                if d.ksplang_ops_increment != 0 {
+                    write!(f, ", CTR += {}", d.ksplang_ops_increment)?;
+                }
+                writeln!(f)?;
+                if d.opcodes.len() > 0 {
+                    writeln!(f, "           ops: {:?}", d.opcodes)?;
+                }
+                if d.stack_reconstruction.len() > 0 {
+                    writeln!(f, "           stack: {:?}", d.stack_reconstruction)?;
+                }
             }
         }
 

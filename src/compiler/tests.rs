@@ -2,9 +2,20 @@ use std::{ops::RangeInclusive};
 
 use rand::{Rng, SeedableRng};
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{OptOp, ValueId}, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{NoStats, RunError, RunResult, VMOptions}};
+use crate::{compiler::{cfg::GraphBuilder, ops::{BlockId, OptOp, ValueId}, osmibytecode::{OsmibyteOp, OsmibytecodeBlock, RegId}, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{NoStats, RunError, RunResult, VMOptions}};
 
-fn precompile(ksplang: &str, terminate_at: Option<usize>, initial_values: &[RangeInclusive<i64>]) -> (GraphBuilder, Vec<ValueId>) {
+const PUSH_0: &str = "CS CS lensum CS funkcia";
+const PUSH_1: &str = "CS CS lensum CS funkcia ++";
+const PUSH_2: &str = "CS CS lensum ++ CS lensum";
+const PUSH_3: &str = "CS CS lensum ++ CS lensum ++";
+const PUSH_4: &str = "CS CS lensum ++ CS lensum ++ ++";
+const PUSH_5: &str = "CS CS lensum ++ CS lensum ++ ++ ++";
+const PUSH_6: &str = "CS CS lensum ++ CS lensum CS ++ funkcia";
+const PUSH_7: &str = "CS CS lensum ++ CS lensum CS ++ funkcia ++";
+const PUSH_8: &str = "CS CS lensum ++ CS lensum CS bitshift";
+const PUSH_NEG_1: &str = "CS CS lensum ++ CS CS CS % qeq";
+
+fn precompile<const N: usize>(ksplang: &str, terminate_at: Option<usize>, initial_values: [RangeInclusive<i64>; N]) -> (GraphBuilder, [ValueId; N]) {
     let parsed = parser::parse_program(ksplang).unwrap();
     let mut g = GraphBuilder::new(0);
     for r in initial_values {
@@ -14,15 +25,16 @@ fn precompile(ksplang: &str, terminate_at: Option<usize>, initial_values: &[Rang
             info.id
         };
         g.stack.push(val);
+        g.block_mut_(BlockId(0)).parameters.push(val);
     }
     let vals = g.stack.stack.clone();
     let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, terminate_at, g, NoTrace());
     precompiler.interpret();
-    (precompiler.g, vals)
+    (precompiler.g, vals.try_into().unwrap())
 }
 
 fn test_constant(prog: &str, c: i64) {
-    let g = precompile(prog, None, &[]).0;
+    let g = precompile(prog, None, []).0;
 
     for bb in &g.blocks {
         println!("{}", bb);
@@ -107,6 +119,9 @@ fn test_dup(ksplang: &str, input_range: RangeInclusive<i64>) {
     let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, None, g, NoTrace());
     precompiler.interpret();
     let g = precompiler.g;
+    println!("DUP CFG: {g}");
+    let ob = OsmibytecodeBlock::from_cfg(&g);
+    println!("DUP OB:\n{}", ob);
 
     if *input_range.start() == *input_range.end() {
         let c = g.constant_lookup.get(input_range.start()).unwrap();
@@ -118,7 +133,7 @@ fn test_dup(ksplang: &str, input_range: RangeInclusive<i64>) {
 }
 
 fn test_neg(prog: &str) {
-    let (g, vals) = precompile(prog, None, &[(FULL_RANGE)]);
+    let (g, vals) = precompile(prog, None, [(FULL_RANGE)]);
     assert_eq!(1, g.stack.stack.len());
     let result_val = g.stack.stack[0];
     let result_info = &g.values[&result_val];
@@ -127,6 +142,16 @@ fn test_neg(prog: &str) {
     assert_eq!(OptOp::Sub, defined_at.op);
     assert_eq!([ValueId::C_ZERO, vals[0]], defined_at.inputs[..]);
     assert_eq!(3, g.current_block_ref().instructions.len()); // Pop + Checkpoint + DeoptAssert
+
+
+    let ob = OsmibytecodeBlock::from_cfg(&g);
+    println!("{}", ob);
+    let reg = RegId(0);
+    assert_eq!(&ob.program[..], [
+        OsmibyteOp::SubConst(reg, 0, reg),
+        OsmibyteOp::Push(reg),
+        OsmibyteOp::Done(g.blocks[0].ksplang_instr_count, g.blocks[0].ksplang_instr_count as i16)
+    ]);
 }
 
 #[test]
@@ -144,6 +169,21 @@ fn test_neg_b() {
         u
     ");
 }
+
+#[test]
+fn sgn_sgn() {
+    let sgn_sgn = format!("
+        {PUSH_5} u
+        {PUSH_5} u
+    ");
+    let (g, [val1]) = precompile(&sgn_sgn, None, [(FULL_RANGE)]);
+    assert_eq!(1, g.stack.stack.len());
+    let result_val = g.val_info(g.stack.stack[0]).unwrap();
+    let defined_at = g.get_instruction_(result_val.assigned_at.unwrap());
+    assert_eq!((&OptOp::Sgn, [val1].as_slice()), (&defined_at.op, &defined_at.inputs[..]));
+    assert_eq!(3, g.current_block_ref().instructions.len()); // Sgn + Checkpoint + DeoptAssert
+}
+
 
 // Duplikace ze vzoráku KSP
 const VZORAKOVA_DUP: &str = "CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum ++ CS lensum m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum ++ CS lensum CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u";

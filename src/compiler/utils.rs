@@ -1,6 +1,7 @@
-use std::{cmp, collections::HashSet, ops::RangeInclusive};
+use std::{cmp::{self, min}, collections::HashSet, fmt::Debug, ops::RangeInclusive};
 
-use num_traits::{CheckedMul, One, SaturatingAdd, SaturatingMul, SaturatingSub, Zero};
+use num_integer::Integer;
+use num_traits::{Bounded, CheckedMul, One, SaturatingAdd, SaturatingMul, SaturatingSub, Zero};
 
 pub const EMPTY_RANGE: RangeInclusive<i64> = 1..=0;
 pub const FULL_RANGE: RangeInclusive<i64> = i64::MIN..=i64::MAX;
@@ -149,3 +150,49 @@ pub fn eval_combi_u64<F: Fn(u64, u64) -> Option<u64>>(
     }
 }
 
+
+
+pub trait SaturatingInto<T> {
+    fn saturating_into(self) -> T;
+}
+
+impl <T, U> SaturatingInto<U> for T
+where T: Clone + TryFrom<U> + Ord,
+      U: TryFrom<T> + Bounded + Clone
+{
+    fn saturating_into(self) -> U {
+        if let Some(min) = T::try_from(U::min_value()).ok() {
+            if self < min {
+                return U::min_value();
+            }
+        }
+        if let Some(max) = T::try_from(U::max_value()).ok() {
+            if self > max {
+                return U::max_value();
+            }
+        }
+        let Ok(result) = self.try_into() else {
+            unreachable!("saturating_into: conversion failed unexpectedly")
+        };
+        result
+    }
+}
+
+pub trait AssertInto<T> {
+    fn assert_into(self) -> T;
+}
+impl <T, U> AssertInto<U> for T
+where U: TryFrom<T>,
+      T: Clone + Debug
+{
+    #[inline]
+    fn assert_into(self) -> U {
+        #[cfg(debug_assertions)]
+        let Ok(result) = self.clone().try_into() else {
+            panic!("assert_into: conversion {} -> {} failed unexpectedly: {:?}", std::any::type_name::<T>(), std::any::type_name::<U>(), self);
+        };
+        #[cfg(not(debug_assertions))]
+        let Ok(result) = self.try_into() else { unreachable!() };
+        result
+    }
+}

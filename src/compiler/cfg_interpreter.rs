@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use smallvec::SmallVec;
 
@@ -15,7 +15,7 @@ pub struct CfgInterpretStats {
     pub executed_cfg_ops: u64,
     pub next_ip: usize,
     pub deoptimized: bool,
-    pub exit_point: u64,
+    pub exit_point_id: u64,
 }
 
 pub fn interpret_cfg(
@@ -23,7 +23,7 @@ pub fn interpret_cfg(
     stack: &mut Vec<i64>,
     error_is_deopt: bool,
 ) -> Result<CfgInterpretStats, OperationError> {
-    let mut values: HashMap<ValueId, i64> = HashMap::new();
+    let mut values: BTreeMap<ValueId, i64> = BTreeMap::new();
     let mut executed_cfg_ops: u64 = 0;
     let mut executed_ksplang: u64 = 0;
     let mut next_ip: usize = usize::MAX;
@@ -188,13 +188,13 @@ pub fn interpret_cfg(
         executed_cfg_ops,
         next_ip,
         deoptimized: deoptimized.is_some(),
-        exit_point: deoptimized.map_or(0, |id| id.into()),
+        exit_point_id: deoptimized.map_or(0, |id| id.into()),
     })
 }
 
 fn restore_deopt_state(
     g: &GraphBuilder,
-    values: &HashMap<ValueId, i64>,
+    values: &BTreeMap<ValueId, i64>,
     stack: &mut Vec<i64>,
     start: InstrId,
 ) -> usize {
@@ -230,7 +230,7 @@ fn restore_deopt_state(
 
 fn revert_stack_effect(
     g: &GraphBuilder,
-    values: &HashMap<ValueId, i64>,
+    values: &BTreeMap<ValueId, i64>,
     instr: &OptInstr,
     stack: &mut Vec<i64>,
 ) {
@@ -266,7 +266,7 @@ fn revert_stack_effect(
 
 fn build_stack_from_checkpoint<'a>(
     g: &'a GraphBuilder,
-    values: &'a HashMap<ValueId, i64>,
+    values: &'a BTreeMap<ValueId, i64>,
     checkpoint_instr: &'a OptInstr,
 ) -> impl Iterator<Item = i64> + 'a {
     assert!(matches!(checkpoint_instr.op, OptOp::Checkpoint));
@@ -277,7 +277,7 @@ fn build_stack_from_checkpoint<'a>(
         .map(|value_id| resolve_value(g, values, *value_id))
 }
 
-fn resolve_value(g: &GraphBuilder, values: &HashMap<ValueId, i64>, id: ValueId) -> i64 {
+fn resolve_value(g: &GraphBuilder, values: &BTreeMap<ValueId, i64>, id: ValueId) -> i64 {
     assert!(!id.is_null(), "Invalid CFG: null ValueId encountered during interpretation");
     if id.is_constant() {
         if let Some(value) = id.to_predefined_const() {
@@ -290,7 +290,7 @@ fn resolve_value(g: &GraphBuilder, values: &HashMap<ValueId, i64>, id: ValueId) 
 
 fn eval_condition(
     g: &GraphBuilder,
-    values: &HashMap<ValueId, i64>,
+    values: &BTreeMap<ValueId, i64>,
     condition: &Condition<ValueId>,
 ) -> bool {
     if condition == &Condition::True {

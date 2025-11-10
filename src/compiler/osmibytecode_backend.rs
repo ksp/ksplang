@@ -2,7 +2,7 @@ use core::fmt;
 use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet}, mem, u32};
 use smallvec::{SmallVec, smallvec};
 
-use crate::compiler::{analyzer::dataflow, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteOp, OsmibytecodeBlock, RegId}};
+use crate::compiler::{analyzer::dataflow, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{AssertInto, SaturatingInto}};
 use crate::vm::OperationError;
 
 #[allow(dead_code)]
@@ -75,7 +75,20 @@ impl<'a> Compiler<'a> {
         self.current_deopt = self.prepare_block_deopt(block.id);
         let instrs: Vec<_> = block.instructions.values().collect();
         let mut i = 0;
+        let mut added_increment = false;
         while i < instrs.len() {
+            if matches!(&instrs[i].op, OptOp::Jump(_, _)) && !added_increment {
+                added_increment = true;
+
+                if block.ksplang_instr_count != 0 {
+                    self.program.push(OsmibyteOp::KsplangOpsIncrement(block.ksplang_instr_count));
+                }
+                for &xx in &block.ksplang_instr_count_additional {
+                    let reg = self.materialize_value_(xx);
+                    self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg));
+                    self.temp_regs.release(reg);
+                }
+            }
             let consumed = self.compile_instruction(&instrs[i..]);
             assert_ne!(0, consumed);
             i += consumed;
@@ -615,9 +628,9 @@ impl<'a> Compiler<'a> {
         }
 
         if let Some(jump_fixup) = jump_fixup {
-            let current_loc = self.program.len().try_into().unwrap();
+            let current_loc = self.program.len();
             let OsmibyteOp::Jump(_, target) = &mut self.program[jump_fixup] else { panic!() };
-            *target = current_loc;
+            *target = (current_loc + 1).assert_into();
             // condition is already in the first jump
             self.program.push(OsmibyteOp::Jump(Condition::True, 0))
         } else {
@@ -677,26 +690,28 @@ impl<'a> Compiler<'a> {
         self.program.push(OsmibyteOp::Assert(lowered_condition, code, arg_reg));
     }
 
-    fn lower_deopt(&mut self, _instr: &OptInstr, condition: Condition<ValueId>) {
+    fn lower_deopt(&mut self, instr: &OptInstr, condition: Condition<ValueId>) {
         let lowered_condition = self.lower_condition(condition);
+        assert_ne!(lowered_condition, Condition::True, "{instr}");
 
         let deopt = self.current_deopt.as_ref().unwrap();
 
-        if lowered_condition == Condition::True &&
+        if lowered_condition == Condition::False &&
             deopt.ip <= u32::MAX as usize &&
             deopt.stack_reconstruction.len() <= 7 * 3 &&
-            deopt.ksplang_ops_increment >= 0
+            deopt.ksplang_ops_increment.unsigned_abs() <= i16::MAX as u64
         {
             // compile to Done instruction
             self.program.extend(deopt.opcodes.iter().cloned());
-            if deopt.ksplang_ops_increment != 0 {
-                self.program.push(OsmibyteOp::KsplangOpsIncrement(deopt.ksplang_ops_increment as u32));
+            let ctr_inc = deopt.ksplang_ops_increment.try_into();
+            if ctr_inc.is_err() {
+                self.program.push(OsmibyteOp::KsplangOpsIncrement(deopt.ksplang_ops_increment.assert_into()));
             }
             let ip = deopt.ip;
             for regs in deopt.stack_reconstruction.clone().chunks(7) {
                 self.emit_push(regs);
             }
-            self.program.push(OsmibyteOp::Done(ip as u32));
+            self.program.push(OsmibyteOp::Done(ip as u32, ctr_inc.unwrap()));
             return;
         }
 
@@ -797,7 +812,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn materialize_value(&mut self, value: ValueId) -> Result<RegId, ()> {
-        // Check if we already have this value in a temp register
         if let Some(cached_reg) = self.temp_regs.get_cached(value) {
             return Ok(cached_reg);
         }
@@ -924,7 +938,7 @@ impl<'a> Compiler<'a> {
     fn lower_checkpoint(&mut self, instr: &OptInstr) {
         let deopt = self.with_clean_program(|this| {
             let stack = this.materialize_deopt_stack(&instr.inputs[1..]);
-            DeoptInfo::new(instr.program_position, &stack, instr.ksp_instr_count as i32, &this.program)
+            DeoptInfo::new(instr.program_position, &stack, instr.ksp_instr_count as i64, &this.program)
         });
         self.current_deopt = Some(deopt)
     }
@@ -1031,7 +1045,7 @@ impl<'a> Compiler<'a> {
             }
 
             if let Some((ip, ksplang_count, mut stack)) = result {
-                let ksplang_count = ksplang_count as i32 - this.g.block_(incoming).ksplang_instr_count as i32;
+                let ksplang_count = ksplang_count as i64 - this.g.block_(incoming).ksplang_instr_count as i64;
                 stack.splice(0..stack_pop, stack_push);
                 let stack = this.materialize_deopt_stack(&stack);
                 Some(DeoptInfo::new(ip, &stack, ksplang_count, &this.program))
@@ -1211,9 +1225,9 @@ impl ValueSegment {
         let instr_count = if from == to {
             1
         } else if from == 0 && to == u32::MAX {
-            block.instructions.len().try_into().unwrap_or(u32::MAX)
+            block.instructions.len().saturating_into()
         } else {
-            block.instructions.range(from..=to).count().try_into().unwrap_or(u32::MAX)
+            block.instructions.range(from..=to).count().saturating_into()
         };
         assert!(instr_count != 0);
         ValueSegment {
@@ -1338,7 +1352,6 @@ fn has_conflict(existing: &BTreeMap<BlockId, Vec<ValueSegment>>, candidate: &BTr
         if let Some(existing_segments) = existing.get(block) {
             for present in existing_segments {
                 if candidate_segment.overlap(present) {
-                    println!("{existing:?} has conflict with {candidate:?}");
                     return true;
                 }
             }
@@ -1570,7 +1583,7 @@ fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: 
 
     for (&iid, i) in block.instructions.iter() {
         if matches!(i.op, OptOp::Checkpoint) {
-            last_checkpoint = Some(i.inputs.to_vec());
+            last_checkpoint = Some(i.inputs.iter().copied().filter(|c| c.is_computed()).collect());
             continue;
         }
         let needs_checkpoint = i.effect != OpEffect::None && i.effect != OpEffect::ControlFlow && (error_will_deopt || i.effect != OpEffect::MayFail);
@@ -1590,7 +1603,7 @@ fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: 
                 block_id = b.incoming_jumps[0].block_id();
                 for i in g.block_(block_id).instructions.values().rev() {
                     if i.op == OptOp::Checkpoint {
-                        last_checkpoint = Some(i.inputs.to_vec());
+                        last_checkpoint = Some(i.inputs.iter().copied().filter(|c| c.is_computed()).collect());
                         last_checkpoint.as_mut().unwrap().extend(additional_values);
                         break 'search_for_checkpoint;
                     }
