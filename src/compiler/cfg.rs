@@ -212,15 +212,18 @@ impl StackStateTracker {
     }
 
     pub fn check_invariants(&self) {
+        let mut checked_stack = SmallVec::<[bool; 32]>::from_elem(false, self.stack.len());
         for (&val, ixs) in &self.lookup {
             assert!(ixs.len() > 0);
             for &ix in ixs {
                 assert_eq!(self.stack[ix as usize], val, "{val} {ixs:?} {:?} {:?}", self.stack, self.lookup);
+                checked_stack[ix as usize] = true;
             }
             assert!(ixs.is_sorted(), "{val} {ixs:?} {:?} {:?}", self.stack, self.lookup);
         }
         for (ix, val) in self.stack.iter().enumerate() {
-            assert!(self.lookup.get(val).is_some_and(|x| x.contains(&(ix as u32))), "{val} {ix} {:?} {:?}", self.stack, self.lookup)
+            if checked_stack[ix] { continue;}
+            assert!(checked_stack[ix], "FP={} {val} {ix} {:?} {:?}", self.lookup.get(val).is_some_and(|x| x.contains(&(ix as u32))), self.stack, self.lookup)
         }
     }
 }

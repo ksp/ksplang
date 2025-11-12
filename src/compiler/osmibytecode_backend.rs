@@ -164,7 +164,7 @@ impl<'a> Compiler<'a> {
             DigitSum => consumed = self.lower_digit_sum(instrs),
             Gcd => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Gcd(out, a, b), |_, _, _| None),
             Push => self.lower_push(&instr.inputs, false),
-            Pop => self.lower_pop(instr),
+            Pop => return self.lower_pop(instrs),
             StackSwap => self.lower_stack_swap(instr, follows_checkpoint(instrs)),
             Jump(condition, target) => self.lower_jump(instr, condition.clone(), *target),
             Assert(condition, error) => {
@@ -197,7 +197,7 @@ impl<'a> Compiler<'a> {
         let first_val = inputs.next().unwrap();
 
         if let Some(second_val) = inputs.next() {
-            debug_assert!(!second_val.is_constant());
+            debug_assert!(!second_val.is_constant(), "{instr}");
             let second_reg = self.materialize_value_(second_val);
             // Check if first input is a constant (due to commutative property)
             if let Some(const_op) = self.g.get_constant(first_val).and_then(|v| op_const(dest, second_reg, v)) {
@@ -506,31 +506,46 @@ impl<'a> Compiler<'a> {
     }
 
     fn emit_push(&mut self, regs: &[RegId]) {
-        match regs.len() {
-            1 => self.program.push(OsmibyteOp::Push(regs[0])),
-            2 => self.program.push(OsmibyteOp::Push2(regs[0], regs[1])),
-            3 => self.program.push(OsmibyteOp::Push3(regs[0], regs[1], regs[2])),
-            4 => self.program.push(OsmibyteOp::Push4(regs[0], regs[1], regs[2], regs[3])),
-            5 => self.program.push(OsmibyteOp::Push5(regs[0], regs[1], regs[2], regs[3], regs[4])),
-            6 => self.program.push(OsmibyteOp::Push6(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5])),
-            7 => self.program.push(OsmibyteOp::Push7(regs[0], regs[1], regs[2], regs[3], regs[4], regs[5], regs[6])),
-            _ => unreachable!(),
-        }
+        self.program.push(OsmibyteOp::create_push(regs))
     }
 
-    fn lower_pop(&mut self, instr: &OptInstr) {
-        self.save_deopt_maybe(instr);
-        let spec = self.prepare_output(instr.out);
-        self.program.push(OsmibyteOp::Pop(spec.target_reg()));
-        self.finalize_output(spec);
+    fn lower_pop(&mut self, instrs: &[&OptInstr]) -> usize {
+        self.save_deopt_maybe(&instrs[0]);
+        let mut pops = vec![];
+        let mut out_specs = vec![];
+        let mut out_regs = vec![];
+        for i in instrs {
+            if pops.len() >= 4 { break; }
+            if let OptOp::Pop = i.op {
+                pops.push(i.out);
+                let spec = self.prepare_output(i.out);
+                out_specs.push(spec);
+                out_regs.push(spec.target_reg());
+            } else {
+                break;
+            }
+        }
+        self.program.push(match &out_regs[..] {
+            &[a] => OsmibyteOp::Pop(a),
+            &[a, b] => OsmibyteOp::Pop2(a, b),
+            &[a, b, c] => OsmibyteOp::Pop3(a, b, c),
+            &[a, b, c, d] => OsmibyteOp::Pop4(a, b, c, d),
+            _ => unreachable!()
+        });
+        for &spec in &out_specs {
+            self.finalize_output(spec);
+        }
 
         if let Some(deopt) = &mut self.current_deopt {
-            let new_code = spec.load_instr().into_iter()
-                .chain([OsmibyteOp::Push(spec.target_reg())])
+            out_specs.reverse();
+            out_regs.reverse();
+            let new_code = out_specs.iter().filter_map(|s| s.load_instr())
+                .chain([OsmibyteOp::create_push(&out_regs)])
                 .chain(deopt.opcodes.iter().cloned())
                 .collect();
             deopt.opcodes = new_code;
         }
+        pops.len()
     }
 
     fn lower_stack_swap(&mut self, instr: &OptInstr, ignore_deopt: bool) {
@@ -1263,7 +1278,9 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
     let phi_friends = equivalence_preferences(g);
 
     let lifetimes = analyze_value_lifetimes(g, error_will_deopt);
-    println!("{lifetimes}");
+    if g.conf.should_log(16) {
+        println!("{lifetimes}");
+    }
 
     let mut value_segments: BTreeMap<ValueId, BTreeMap<BlockId, ValueSegment>> = BTreeMap::new();
     let mut candidates: Vec<ValueCandidate> = lifetimes
@@ -1309,7 +1326,6 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
             (options.next(), smallvec![])
         } else {
             let mut candidate_regs: BTreeSet<usize> = options.collect();
-            println!("Choosing regs for {value} out of {candidate_regs:?} with friends {phi_friends:?}");
             let merged_friends = reduce_registers_with_phi_friends(
                 value,
                 &mut candidate_regs,
@@ -1318,7 +1334,6 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
                 &value_segments,
                 &register_segments,
             );
-            println!("Chosen {candidate_regs:?} with friends {merged_friends:?}");
             (candidate_regs.into_iter().next(), merged_friends)
         };
         assert!(!merged_friends.contains(&value));
@@ -1643,8 +1658,6 @@ fn analyze_value_lifetimes(g: &GraphBuilder, error_will_deopt: bool) -> LiveRang
         })
         .collect();
 
-    println!("LFB {blocks:?}");
-
     let perblock_req = dataflow(g, /*reverse:*/ true,
         |b| blocks[b.id.0 as usize].1.clone(),
         |b, state, _inputs, outputs| {
@@ -1659,13 +1672,11 @@ fn analyze_value_lifetimes(g: &GraphBuilder, error_will_deopt: bool) -> LiveRang
             }
             return required
         });
-    println!("Post dataflow {perblock_req:?}");
 
     let mut ranges = HashMap::new();
     let mut live_vars = HashMap::new();
     for block in &g.blocks {
         let (defined_at, last_use) = get_value_usage_info(g, block, error_will_deopt);
-        // println!("{} last use: {last_use:?}", block.id);
 
         let mut result = vec![];
 
@@ -1677,7 +1688,6 @@ fn analyze_value_lifetimes(g: &GraphBuilder, error_will_deopt: bool) -> LiveRang
                 // defined_at.remove(&next_requires);
             }
         }
-        // println!("{} last use: {last_use:?}", block.id);
 
         for (&var, &last_use) in last_use.iter() {
             let &from = defined_at.get(&var).unwrap_or(&0);
@@ -1697,7 +1707,6 @@ fn analyze_value_lifetimes(g: &GraphBuilder, error_will_deopt: bool) -> LiveRang
             // var_ranges.insert(block.id, (from.clone(), to.clone()));
             var_ranges.entry(block.id).or_insert((from.clone(), to.clone()));
         }
-        // println!("{} result {result:?}\n    {ranges:?}", block.id);
 
         live_vars.insert(block.id, result);
     }

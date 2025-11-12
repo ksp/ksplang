@@ -121,6 +121,19 @@ pub enum OsmibyteOp<TReg: Debug + Clone> {
 }
 
 impl<TReg: Debug + Clone> OsmibyteOp<TReg> {
+    pub fn create_push(regs: &[TReg]) -> OsmibyteOp<TReg> {
+        match regs.len() {
+            1 => OsmibyteOp::Push(regs[0].clone()),
+            2 => OsmibyteOp::Push2(regs[0].clone(), regs[1].clone()),
+            3 => OsmibyteOp::Push3(regs[0].clone(), regs[1].clone(), regs[2].clone()),
+            4 => OsmibyteOp::Push4(regs[0].clone(), regs[1].clone(), regs[2].clone(), regs[3].clone()),
+            5 => OsmibyteOp::Push5(regs[0].clone(), regs[1].clone(), regs[2].clone(), regs[3].clone(), regs[4].clone()),
+            6 => OsmibyteOp::Push6(regs[0].clone(), regs[1].clone(), regs[2].clone(), regs[3].clone(), regs[4].clone(), regs[5].clone()),
+            7 => OsmibyteOp::Push7(regs[0].clone(), regs[1].clone(), regs[2].clone(), regs[3].clone(), regs[4].clone(), regs[5].clone(), regs[6].clone()),
+            _ => unreachable!(),
+        }
+    }
+
     pub fn replace_regs<TReg2: Debug + Clone, F>(&self, mut f: F) -> OsmibyteOp<TReg2>
         where F: FnMut(&TReg, bool) -> TReg2
     {
@@ -511,7 +524,9 @@ impl fmt::Debug for OsmibytecodeBlock {
 impl OsmibytecodeBlock {
     pub fn from_cfg(g: &GraphBuilder) -> OsmibytecodeBlock {
         let register_allocation = allocate_registers(g, ALLOCATABLE_REG_COUNT, g.conf.error_as_deopt);
-        println!("Register allocation: {}", register_allocation);
+        if g.conf.should_log(16) {
+            println!("Register allocation: {}", register_allocation);
+        }
         let mut compiler = Compiler::new(g, register_allocation);
         compiler.compile();
         compiler.finish()

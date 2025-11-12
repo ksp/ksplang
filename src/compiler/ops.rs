@@ -3,7 +3,7 @@ use std::{cmp, collections::BTreeSet, fmt::{self, Debug, Display}, num::NonZeroI
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec};
 
-use crate::{compiler::{range_ops::{range_div, range_mod, range_mod_euclid, range_num_digits}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}, osmibytecode::Condition}, digit_sum, funkcia, vm::{self, median, OperationError}};
+use crate::{compiler::{osmibytecode::Condition, range_ops::{range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -471,16 +471,9 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                     Some(vm::abs_factorial(cmp::min(start , 20) as i64).unwrap()..=vm::abs_factorial(cmp::min(end, 20) as i64).unwrap())
                 }
             },
-            OptOp::And => {
-                // TODO: there has to be better way
-                if inputs.iter().any(|r| *r.start() >= 0) {
-                    Some(0..=inputs.iter().map(|r| *r.end()).min().unwrap())
-                } else {
-                    None
-                }
-            },
-            OptOp::Or => None, // TODO
-            OptOp::Xor => None, // TODO
+            OptOp::And => inputs.iter().cloned().reduce(range_and),
+            OptOp::Or => inputs.iter().cloned().reduce(range_or),
+            OptOp::Xor => inputs.iter().cloned().reduce(range_xor),
             OptOp::ShiftL => {
                 // essentially mul by always positive number
                 let can_overflow = inputs[0].end().leading_zeros() as i64 <= *inputs[1].end();

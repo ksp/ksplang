@@ -1,6 +1,6 @@
 //! Functions for executing ksplang programs.
 use core::panic;
-use std::{collections::{BTreeMap, HashMap}, mem};
+use std::{collections::{BTreeMap, HashMap}, mem, sync::Arc};
 
 use num_integer::{Integer, Roots};
 use smallvec::{SmallVec, ToSmallVec};
@@ -55,7 +55,7 @@ struct State<'a, TTracer: Tracer> {
     pub ip: usize,
     pub reversed: bool,
     pub reverse_undo_stack: Vec<(usize, usize)>,
-    pub ops: Vec<Op>, // TODO: Arc?
+    pub ops: Arc<Vec<Op>>,
     pub tracer: TTracer,
     pub conf: &'a compiler::config::JitConfig,
 }
@@ -332,7 +332,7 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             reversed: false,
             reverse_undo_stack: vec![],
             stack,
-            ops,
+            ops: Arc::new(ops),
             tracer: Default::default(),
             conf: get_config()
         }
@@ -1113,11 +1113,13 @@ fn run_state<'a, T: Tracer>(
                             stop_after: options.stop_after - s.instructions_run,
                         },
                     )?;
+                    let mut ops_mut = Arc::unwrap_or_clone(mem::take(&mut s.ops));
                     for value in result.stack {
                         let op = Op::by_id(value as usize)
                             .ok_or(build_err(OperationError::InvalidInstructionId { id: value }))?;
-                        s.ops.push(op);
+                        ops_mut.push(op);
                     }
+                    s.ops = Arc::new(ops_mut);
                     (IPChange::Increment, 1 + result.instruction_counter)
                 }
                 Ok(Effect::TemporaryReverse(offset)) => {
@@ -1504,7 +1506,7 @@ impl OptimizingVM {
             self.opt = old;
             NoStats::default()
         });
-        s.ops = vec![];
+        s.ops = Arc::new(vec![]);
         s.pi_digits = &[];
         println!("final state: {:?}", s);
 

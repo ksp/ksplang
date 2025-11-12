@@ -186,9 +186,19 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         // A > (b + C) => (A - C) > b
                         let shift = cfg.get_constant_(def.inputs[0]);
                         let b2 = def.inputs[1];
-                        let a2 = cfg.store_constant(ac - shift);
+                        let a2 = cfg.store_constant(ac.strict_sub(shift));
 
                         return condition.replace_arr(vec![a2, b2])
+                    }
+
+                    if matches!(def.op, OptOp::Sub) && def.inputs.len() == 2 && def.inputs[0].is_constant() {
+                        // A > (C - b) => b > -(C + A)
+                        // i.e. 100 > (30 - b) => -70 < b
+                        let shift = cfg.get_constant_(def.inputs[0]);
+                        let b2 = def.inputs[1];
+                        let a2 = cfg.store_constant(ac.strict_add(shift));
+
+                        return condition.replace_arr(vec![b2, a2])
                     }
 
                     // if matches!(def.op, OptOp::Mul) && def.inputs.len() == 2 && def.inputs[0].is_constant() { // TODO
@@ -547,6 +557,13 @@ fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit
         instr.inputs = new_inputs;
     }
     changed
+}
+
+fn merge_constants(cfg: &mut GraphBuilder, i: &mut OptInstr, merge: impl FnMut(i64, i64) -> i64) {
+    let (constants, vars) = i.inputs.iter().copied().partition::<SmallVec<_>, _>(|v| v.is_constant());
+    let c = constants.into_iter().map(|c| cfg.get_constant_(c)).reduce(merge).unwrap();
+    i.inputs = vars;
+    i.inputs.insert(0, cfg.store_constant(c));
 }
 
 /// Returns (changed, new instruction)
@@ -914,6 +931,11 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     changed = false;
                 }
             }
+
+            OptOp::And if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a & b); continue; }
+            OptOp::Or if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a | b); continue; }
+            OptOp::Xor if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a ^ b); continue; }
+            OptOp::Add if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a + b); continue; }
 
             _ => {
                 changed = false;

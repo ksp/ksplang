@@ -1,9 +1,13 @@
-use std::{cmp, ops::RangeInclusive};
+use std::{borrow::Borrow, cmp, ops::RangeInclusive};
 
+use arrayvec::ArrayVec;
 use num_integer::Integer;
 use num_traits::{CheckedAdd, CheckedMul, CheckedSub};
 
-use crate::{compiler::utils::{abs_range, range_2_i64, u64neg}, vm};
+use crate::{compiler::utils::{SaturatingInto, abs_range, range_2_i64, u64neg, union_range}, vm};
+
+type IRange = RangeInclusive<i64>;
+type URange = RangeInclusive<u64>;
 
 #[inline]
 pub fn range_signum(r: RangeInclusive<i64>) -> RangeInclusive<i64> {
@@ -164,6 +168,105 @@ pub fn range_div(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> RangeInclu
     min..=max
 }
 
+// Returns (bits always set, bits may be set)
+// pub fn get_bitsets(a: &RangeInclusive<i64>) -> (u64, u64) {
+//     const ALL_SET: u64 = (-1i64) as u64;
+//     let (a, b) = a.clone().into_inner();
+//
+//     if a < 0 && b >= 0 {
+//         return (0, ALL_SET);
+//     }
+//
+//     let mut always = 0u64;
+//     let mut maybe = 0u64;
+//
+//     if b < 0 {
+//         always |= 1 << 64;
+//         maybe |= 1 << 64;
+//     } else if a < 0 {
+//         maybe |= 1 << 64;
+//     }
+//
+//     (always, maybe)
+// }
+
+pub fn get_bitsets(a: &RangeInclusive<u64>) -> (u64, u64) {
+    assert!(!a.is_empty());
+    let (a, b) = a.clone().into_inner();
+
+    let variable_bits = (b ^ a).checked_add(1).and_then(|x| x.checked_next_power_of_two()).map_or(u64::MAX, |x| x - 1);
+    // let variable_bits = (b ^ a).next_power_of_two() - 1;
+    assert_eq!(a & !variable_bits, b & !variable_bits, "range={a}..={b}: variable_bits={variable_bits}");
+    let const_bits = a & !variable_bits;
+    return (const_bits, const_bits | variable_bits);
+}
+
+fn split_range_unsigned_bitwise(a: impl Borrow<IRange>) -> ArrayVec<URange, 2> {
+    let a = a.borrow();
+    let mut res = ArrayVec::new();
+    if *a.end() >= 0 {
+        res.push(cmp::max(*a.start(), 0) as u64 ..= *a.end() as u64);
+    }
+    if *a.start() < 0 {
+        res.push(*a.start() as u64 ..= *a.end().min(&-1) as u64);
+    }
+    res
+}
+
+fn splice_unsigned_bitwise(a: &IRange, b: &IRange,
+                               mut f: impl FnMut(URange, URange) -> URange) -> IRange
+{
+    let mut out = None;
+
+    for sa in split_range_unsigned_bitwise(a) {
+        for sb in split_range_unsigned_bitwise(b) {
+            let (from, to) = f(sa.clone(), sb.clone()).into_inner();
+            let from = from as i64;
+            let to = to as i64;
+            assert_eq!(from < 0, to < 0, "{a:?} {b:?} {sa:?} {sb:?} {from} {to}");
+
+            out = match out {
+                None => Some(from..=to),
+                Some(prev) => Some(union_range(prev, from..=to))
+            }
+        }
+    }
+
+    out.unwrap()
+}
+
+pub fn range_and(a: impl Borrow<IRange>, b: impl Borrow<IRange>) -> IRange {
+    splice_unsigned_bitwise(a.borrow(), b.borrow(), |a, b| {
+        let (aalways, avar) = get_bitsets(&a);
+        let (balways, bvar) = get_bitsets(&b);
+        let min = aalways & balways;
+        let max = cmp::min(avar & bvar, cmp::min(*a.end(), *b.end()));
+        min..=max
+    })
+}
+
+pub fn range_or(a: impl Borrow<IRange>, b: impl Borrow<IRange>) -> IRange {
+    splice_unsigned_bitwise(a.borrow(), b.borrow(), |a, b| {
+        let (aalways, avar) = get_bitsets(&a);
+        let (balways, bvar) = get_bitsets(&b);
+        let min = cmp::max(aalways | balways, cmp::max(*a.start(), *b.start()));
+        let max = avar | bvar;
+        min..=max
+    })
+}
+
+pub fn range_xor(a: impl Borrow<IRange>, b: impl Borrow<IRange>) -> IRange {
+    splice_unsigned_bitwise(a.borrow(), b.borrow(), |a, b| {
+        let (aalways, avar) = get_bitsets(&a);
+        let (balways, bvar) = get_bitsets(&b);
+        let avar = avar & !aalways;
+        let bvar = bvar & !balways;
+        println!("range_xor({a:?}, {b:?})  | {aalways} {avar}  | {balways} {bvar}");
+        let min = (aalways ^ balways) & !avar & !bvar;
+        let max = (aalways ^ balways) | avar | bvar;
+        min..=max
+    })
+}
 
 pub fn eval_combi<T1, T2, TR, F: FnMut(T1, T2) -> Option<TR>>(
     a: RangeInclusive<T1>,
@@ -373,4 +476,54 @@ fn test_range_div() {
     assert_eq!(42..=43, range_div(&(22806..=23349), &(543..=543)));
     assert_eq!(0..=1, range_div(&(i64::MIN..=i64::MAX), &(i64::MIN..=i64::MIN)));
     assert_eq!(1..=1, range_div(&(i64::MIN..=i64::MIN), &(i64::MIN..=i64::MIN)));
+}
+
+
+#[cfg(test)]
+fn test_helper_bitops(a: IRange, b: IRange) {
+    println!("Testing {a:?}  |  {b:?}");
+    fn sample(a: &IRange) -> impl Iterator<Item = i64> {
+        let zero = a.contains(&0).then_some(0);
+        let m1 = a.contains(&-1).then_some(-1);
+        let step_size = cmp::max(1, a.end().abs_diff(*a.start()) / 100);
+        a.clone().step_by(step_size.saturating_into()).chain(zero).chain(m1).chain([*a.end()])
+    }
+
+    let and = range_and(&a, &b);
+    let or = range_or(&a, &b);
+    let xor = range_xor(&a, &b);
+
+    // if let Some(chk_and) = eval_combi(a.clone(), b.clone(), 4096, |a, b| Some(a & b)) {
+    //     assert_eq!(and, chk_and, "range_and({a:?}, {b:?})");
+    // }
+    // if let Some(chk_or) = eval_combi(a.clone(), b.clone(), 4096, |a, b| Some(a | b)) {
+    //     assert_eq!(or, chk_or, "range_or({a:?}, {b:?})");
+    // }
+    // if let Some(chk_xor) = eval_combi(a.clone(), b.clone(), 4096, |a, b| Some(a ^ b)) {
+    //     assert_eq!(xor, chk_xor, "range_xor({a:?}, {b:?})");
+    // }
+
+    for sample_a in sample(&a) {
+        for sample_b in sample(&b) {
+            assert!(and.contains(&(sample_a & sample_b)), "range_and({a:?}, {b:?}) = {and:?} does not contain {sample_a} & {sample_b} = {}", sample_a & sample_b);
+            assert!(or.contains(&(sample_a | sample_b)), "range_or({a:?}, {b:?}) = {or:?} does not contain {sample_a} | {sample_b} = {}", sample_a | sample_b);
+            assert!(xor.contains(&(sample_a ^ sample_b)), "range_xor({a:?}, {b:?}) = {xor:?} does not contain {sample_a} ^ {sample_b} = {}", sample_a ^ sample_b);
+        }
+    }
+}
+
+#[test]
+fn test_range_bitops() {
+    let mut vals = [i64::MIN, i64::MIN + 1, -12454331, -1, 0, 2, 123456523132, i64::MAX - 2, i64::MAX - 1, i64::MAX];
+    vals.sort();
+
+    for i1 in 0..vals.len() {
+        for i2 in i1..vals.len() {
+            for i3 in i1..vals.len() {
+                for i4 in i3..vals.len() {
+                    test_helper_bitops(vals[i1]..=vals[i2], vals[i3]..=vals[i4]);
+                }
+            }
+        }
+    }
 }

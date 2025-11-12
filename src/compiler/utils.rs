@@ -1,4 +1,4 @@
-use std::{cmp::{self, min}, collections::HashSet, fmt::Debug, ops::RangeInclusive};
+use std::{borrow::Borrow, cmp::{self, min}, collections::HashSet, fmt::Debug, ops::RangeInclusive};
 
 use num_integer::Integer;
 use num_traits::{Bounded, CheckedMul, One, SaturatingAdd, SaturatingMul, SaturatingSub, Zero};
@@ -76,7 +76,9 @@ pub fn mul_range(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> (RangeIncl
     (min..=max, may_overflow)
 }
 
-pub fn union_range(a: RangeInclusive<i64>, b: RangeInclusive<i64>) -> RangeInclusive<i64> {
+pub fn union_range(a: impl Borrow<RangeInclusive<i64>>, b: impl Borrow<RangeInclusive<i64>>) -> RangeInclusive<i64> {
+    let a = a.borrow();
+    let b = b.borrow();
     let start = cmp::min(*a.start(), *b.start());
     let end = cmp::max(*a.end(), *b.end());
     start..=end
