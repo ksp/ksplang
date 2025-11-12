@@ -251,7 +251,7 @@ impl GraphBuilder {
             constant_lookup: HashMap::new(),
             value_index: HashMap::new(),
             assumed_program_position: None,
-            conf: &get_config()
+            conf: get_config()
         }
     }
 
@@ -570,9 +570,9 @@ impl GraphBuilder {
             // we are doing deopt false, no reason to add the "void" assumption
             return
         }
-        debug_assert!(self.values.contains_key(&val));
+        debug_assert!(self.values.contains_key(&val), "{val} not in {self}");
         assert!(cond == Condition::True || cond.regs().contains(&val));
-        debug_assert!(cond == simplify_cond(self, cond.clone(), InstrId::default()));
+        debug_assert_eq!(cond, simplify_cond(self, cond.clone(), InstrId::default()));
 
         let current_range = self.val_range_at(val, at);
         let pure_range = intersect_range(&range, &current_range);

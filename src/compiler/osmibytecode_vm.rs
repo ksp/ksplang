@@ -55,6 +55,7 @@ pub struct RegFile {
 }
 impl RegFile {
     pub fn new() -> Self { RegFile { regs: [0i64; 256] } }
+    pub fn new_debug() -> Self { RegFile { regs: [0xbadda4abadda4aai64; 256] } }
     // fn new_unsafe() -> Self { unsafe { RegFile { regs: MaybeUninit::uninit().assume_init() } } }
 }
 impl Index<u8> for RegFile {

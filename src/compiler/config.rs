@@ -20,6 +20,8 @@ pub struct JitConfig {
     pub allow_osmibyte_backend: bool,
     pub trace_limit: u32,
     pub trace_trigger_count: u32,
+
+    pub shrinker_final_verbosity: u8,
 }
 
 impl JitConfig {
@@ -37,8 +39,7 @@ impl JitConfig {
         self.verbosity() >= level
     }
 }
-
-fn parse_env<T>(key: &str, default: T) -> T
+fn parse_env_opt<T>(key: &str) -> Option<T>
 where
     T: FromStr + 'static, <T as FromStr>::Err: std::fmt::Display
 {
@@ -52,21 +53,29 @@ where
             }
         }
         match val.parse::<T>() {
-            Ok(v) => v,
+            Ok(v) => Some(v),
             Err(err) => if val == "" {
-                default
+                None
             } else {
                 panic!("Failed to parse env var {key} with value {val}: {err}");
             }
         }
     } else {
-        default
+        None
     }
 }
 
+fn parse_env<T>(key: &str, default: T) -> T
+where
+    T: FromStr + 'static, <T as FromStr>::Err: std::fmt::Display
+{
+    parse_env_opt(key).unwrap_or(default)
+}
+
 fn create_config() -> JitConfig {
+    let verbosity = parse_env("KSPLANGJIT_VERBOSITY", if cfg!(debug_assertions) { 10 } else { 1 });
     let c = JitConfig {
-        verbosity: parse_env("KSPLANGJIT_VERBOSITY", if cfg!(debug_assertions) { 10 } else { 1 }),
+        verbosity,
         start_interpret_limit: parse_env("KSPLANGJIT_START_LIMIT", 50_000),
         start_branch_limit: parse_env("KSPLANGJIT_START_BRANCH_LIMIT", 1024),
         start_instr_limit: parse_env("KSPLANGJIT_START_INSTR_LIMIT", 3000),
@@ -83,6 +92,8 @@ fn create_config() -> JitConfig {
         verify: parse_env("KSPLANGJIT_VERIFY", 1),
         trace_limit: parse_env("KSPLANGJIT_TRACE_LIMIT", 1000),
         trace_trigger_count: parse_env("KSPLANGJIT_TRIGGER_COUNT", 3),
+
+        shrinker_final_verbosity: parse_env("KSPLANGJIT_SHRINKER_FINAL_VERBOSITY", verbosity)
     };
 
     #[cfg(not(debug_assertions))] {

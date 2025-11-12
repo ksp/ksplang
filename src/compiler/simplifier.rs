@@ -37,7 +37,7 @@ pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: 
             }
         }
     }
-    if cfg!(debug_assertions) && cond_mut != condition {
+    if cfg!(debug_assertions) && cond_mut != condition && cfg.conf.should_log(5) {
         println!("simplify_cond({condition}, {at}) -> {cond_mut}")
     }
     cond_mut

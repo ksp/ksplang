@@ -25,9 +25,11 @@ fn run_op_is_ok(initial_stack: &[i64], op: Op) -> bool {
     run_is_ok(initial_stack, &[op])
 }
 
+const EMPTY: [i64;0] = []; // woraround for some fucking error[E0282]: type annotations needed
+
 #[test]
 fn test_empty() {
-    assert_eq!(run(&[], &[]), &[]);
+    assert_eq!(run(&[], &[]), EMPTY);
 }
 
 #[test]
@@ -76,7 +78,7 @@ fn test_praise() {
 
 #[test]
 fn test_nop() {
-    assert_eq!(run_op(&[], Op::Nop), &[]);
+    assert_eq!(run_op(&[], Op::Nop), EMPTY);
     assert_eq!(run_op(&[1, 2, 3], Op::Nop), &[1, 2, 3]);
 }
 
@@ -98,7 +100,7 @@ fn test_pop2() {
 
 #[test]
 fn test_lswap() {
-    assert_eq!(run_op(&[], Op::LSwap), []);
+    assert_eq!(run_op(&[], Op::LSwap), EMPTY);
     assert_eq!(run_op(&[1], Op::LSwap), [1]);
     assert_eq!(run_op(&[1, 2, 3, 4], Op::LSwap), [4, 2, 3, 1]);
 }
@@ -112,8 +114,8 @@ fn test_lroll() {
     assert!(!run_op_is_ok(&[1, 1], Op::Roll));
     assert!(!run_op_is_ok(&[1, 2, 3, 1, 4], Op::Roll));
 
-    assert_eq!(run_op(&[0, 0], Op::Roll), []);
-    assert_eq!(run_op(&[1, 0], Op::Roll), []);
+    assert_eq!(run_op(&[0, 0], Op::Roll), EMPTY);
+    assert_eq!(run_op(&[1, 0], Op::Roll), EMPTY);
     assert_eq!(run_op(&[1, 2, 3, 4, 1, 4], Op::Roll), [4, 1, 2, 3]);
     assert_eq!(run_op(&[1, 2, 3, 4, -1, 4], Op::Roll), [2, 3, 4, 1]);
     assert_eq!(run_op(&[0, 1, 2, 3, 4, 2, 4], Op::Roll), [0, 3, 4, 1, 2]);
@@ -163,7 +165,7 @@ fn test_swap() {
 
 #[test]
 fn test_kpi() {
-    assert_eq!(run_op(&[], Op::KPi), []);
+    assert_eq!(run_op(&[], Op::KPi), EMPTY);
     assert_eq!(run_op(&[0], Op::KPi), [3]);
     assert_eq!(run_op(&[1, 2, 3, 4, 5], Op::KPi), [3, 1, 4, 1, 5]);
     assert_eq!(run_op(&[2, 2, 2, 2, 2], Op::KPi), [2, 2, 4, 2, 2]);
@@ -584,7 +586,7 @@ fn test_qeq() {
     // (x-3)(x-3) = x^2 - 6x + 9
     assert_eq!(run_op(&[9, -6, 1], Op::Qeq), [3]);
     // 2 non-integer solutions
-    assert_eq!(run_op(&[-7, 3, 1], Op::Qeq), []);
+    assert_eq!(run_op(&[-7, 3, 1], Op::Qeq), EMPTY);
 
     assert_eq!(run_op(&[0, i64::MIN + 1, 1], Op::Qeq), [0, i64::MAX]);
     assert_eq!(run_op(&[0, i64::MAX, 1], Op::Qeq), [i64::MIN + 1, 0]);
@@ -593,17 +595,17 @@ fn test_qeq() {
     // 2x+4 = 0 -> x = -2
     assert_eq!(run_op(&[4, 2, 0], Op::Qeq), [-2]);
     // 2x+3 = 0 -> x is not integer
-    assert_eq!(run_op(&[3, 2, 0], Op::Qeq), []);
+    assert_eq!(run_op(&[3, 2, 0], Op::Qeq), EMPTY);
     // constant = 0 -> x is not integer
-    assert_eq!(run_op(&[4, 0, 0], Op::Qeq), []);
+    assert_eq!(run_op(&[4, 0, 0], Op::Qeq), EMPTY);
     // MIN x + MIN = 0 -> x = -1
     assert_eq!(run_op(&[i64::MIN, i64::MIN, 0], Op::Qeq), [-1]);
 
     // Internal overflow:
     // highest possible discriminant
-    assert_eq!(run_op(&[i64::MAX, i64::MIN, i64::MIN], Op::Qeq), []);
+    assert_eq!(run_op(&[i64::MAX, i64::MIN, i64::MIN], Op::Qeq), EMPTY);
     // lowest possible discriminant
-    assert_eq!(run_op(&[i64::MIN, 0, i64::MIN], Op::Qeq), []);
+    assert_eq!(run_op(&[i64::MIN, 0, i64::MIN], Op::Qeq), EMPTY);
     // discriminant overflows i128 but equation has two small integer solutions
     let multiplier = i64::MIN / -2;
     assert_eq!(run_op(&[-2 * multiplier, -1 * multiplier, 1 * multiplier], Op::Qeq), [-1, 2]);
@@ -674,8 +676,8 @@ fn test_branchifzero() {
     assert!(!run_is_ok(&[-1, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
 
     assert_eq!(run(&[4, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), [4]);
-    assert_eq!(run(&[3, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), []);
-    assert_eq!(run(&[1, 2, 3, 4], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), []);
+    assert_eq!(run(&[3, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), EMPTY);
+    assert_eq!(run(&[1, 2, 3, 4], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), EMPTY);
 }
 
 #[test]
@@ -722,7 +724,7 @@ fn test_jump() {
     // Pop, pop, jump back to start, two more pops, then jump to the last pop.
     assert_eq!(
         run(&[3, 0, -3, 0, 0], &[Op::Pop, Op::Pop, Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]),
-        []
+        EMPTY
     );
 }
 

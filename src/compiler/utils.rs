@@ -7,13 +7,6 @@ pub const EMPTY_RANGE: RangeInclusive<i64> = 1..=0;
 pub const FULL_RANGE: RangeInclusive<i64> = i64::MIN..=i64::MAX;
 
 
-pub fn most_set_bits_in_range(from: u64, to: u64) -> u64 {
-    let difference = from ^ to;
-    let highest_diff_bit = 63 - difference.leading_zeros();
-
-    todo!()// TODO
-}
-
 pub fn range_size(r: &RangeInclusive<i64>) -> u128 {
     if r.is_empty() {
         0
