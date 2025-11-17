@@ -318,7 +318,7 @@ impl<TReg> Condition<TReg> {
         }
     }
 
-    pub fn replace_arr<TReg2>(&self, mut f: Vec<TReg2>) -> Condition<TReg2> {
+    pub fn replace_arr<TReg2>(&self, mut f: ArrayVec<TReg2, 2>) -> Condition<TReg2> {
         f.reverse();
         let c2 = self.replace_regs(|_| f.pop().unwrap());
         assert_eq!(0, f.len());
