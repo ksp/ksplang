@@ -163,6 +163,7 @@ impl<'a> Compiler<'a> {
             Select(condition) => self.lower_select(instr, condition.clone()),
             DigitSum => consumed = self.lower_digit_sum(instrs),
             Gcd => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Gcd(out, a, b), |_, _, _| None),
+            Median => self.lower_median(instr),
             Push => self.lower_push(&instr.inputs, false),
             Pop => return self.lower_pop(instrs),
             StackSwap => self.lower_stack_swap(instr, follows_checkpoint(instrs)),
@@ -177,7 +178,7 @@ impl<'a> Compiler<'a> {
             DeoptAssert(condition) => self.lower_deopt(instr, condition.clone()),
             Checkpoint => self.lower_checkpoint(instr),
             Nop => { },
-            Median | MedianCursed | Universal => todo!("{instr:?}"),
+            MedianCursed | Universal => todo!("{instr:?}"),
         }
         self.temp_regs.clear();
         consumed
@@ -466,6 +467,35 @@ impl<'a> Compiler<'a> {
 
         self.program.push(OsmibyteOp::Select(spec.target_reg(), lowered_condition, true_reg, false_reg));
         self.finalize_output(spec);
+    }
+
+    fn lower_median(&mut self, instr: &OptInstr) {
+        let spec = self.prepare_output(instr.out);
+        macro_rules! vals_without {
+            ($x:expr) => { {
+                let mut first = true;
+                self.materialize_values(instr.inputs.iter().copied().filter(|v| if first && *v == $x { first = false; false } else { true }))
+            } }
+        }
+        match instr.inputs.len() {
+            0 | 1 | 2 => unreachable!("wtf {instr}"),
+            3 if instr.inputs.contains(&ValueId::C_THREE) => {
+                let xs = vals_without!(ValueId::C_THREE);
+                let [a, b] = xs.as_slice() else { unreachable!() };
+                self.program.push(OsmibyteOp::MedianCursed3(spec.target_reg(), *a, *b));
+            }
+            3 => {
+                let xs = self.materialize_values(instr.inputs.iter().copied());
+                let [a, b, c] = xs.as_slice() else { unreachable!() };
+                self.program.push(OsmibyteOp::Median3(spec.target_reg(), *a, *b, *c));
+            }
+            5 if instr.inputs.contains(&ValueId::C_FIVE) => {
+                let xs = vals_without!(ValueId::C_FIVE);
+                let [a, b, c, d] = xs.as_slice() else { unreachable!("{xs:?} {instr}") };
+                self.program.push(OsmibyteOp::MedianCursed5(spec.target_reg(), *a, *b, *c, *d));
+            }
+            _ => todo!()
+        }
     }
 
     fn lower_push(&mut self, inputs: &[ValueId], save_deopts: bool) {
@@ -853,6 +883,14 @@ impl<'a> Compiler<'a> {
         };
 
         Ok(reg)
+    }
+
+    fn materialize_values(&mut self, values: impl Iterator<Item = ValueId>) -> SmallVec<[RegId; 8]> {
+        let mut result = smallvec![];
+        for v in values {
+            result.push(self.materialize_value_(v))
+        }
+        result
     }
 
     fn mk_materialization(&mut self, value: ValueId, reg: RegId) -> SmallVec<[OsmibyteOp<RegId>; 2]> {

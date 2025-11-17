@@ -28,7 +28,7 @@ fn precompile<const N: usize>(ksplang: &str, terminate_at: Option<usize>, initia
         g.block_mut_(BlockId(0)).parameters.push(val);
     }
     let vals = g.stack.stack.clone();
-    let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, terminate_at, g, NoTrace());
+    let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, true, terminate_at, g, NoTrace());
     precompiler.interpret();
     (precompiler.g, vals.try_into().unwrap())
 }
@@ -116,7 +116,7 @@ fn test_dup(ksplang: &str, input_range: RangeInclusive<i64>) {
         info.id
     };
     g.stack.push(val);
-    let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, None, g, NoTrace());
+    let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, true, None, g, NoTrace());
     precompiler.interpret();
     let g = precompiler.g;
     println!("DUP CFG: {g}");
@@ -301,5 +301,128 @@ fn test_sort_2() {
     input.sort();
     assert_eq!(res.stack, input);
     // todo!()
+}
+
+fn parse_in_num(str: &str) -> Vec<i64> {
+    let mut stack = vec![];
+    for line in str.lines() {
+        for word in line.split_whitespace() {
+            stack.push(word.parse().unwrap());
+        }
+    }
+    stack
+}
+fn parse_in_txt(str: &str) -> Vec<i64> {
+    str.chars().map(|c| c as i64).collect()
+}
+
+#[test]
+fn test_aoc24_1_1() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-1-1.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-1-short.in");
+
+    let input = parse_in_num(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [379802]);
+}
+
+#[test]
+fn test_aoc24_1_2() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-1-2.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-1-short.in");
+
+    let input = parse_in_num(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [297525]);
+}
+
+#[test]
+fn test_aoc24_2_1() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-2-1.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-2-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [0]);
+}
+
+#[test]
+fn test_aoc24_3_1() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-3-1.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-3-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [31748124]);
+}
+
+// #[test]
+// fn test_aoc24_3_2() {
+//     const PROG: &str = include_str!("../../benches/programs/aoc24-3-2.ksplang");
+//     const IN: &str = include_str!("../../benches/programs/aoc24-3-short.in");
+//
+//     let input = parse_in_txt(IN);
+//     let res = run_with_opt(&input, PROG).unwrap();
+//     assert_eq!(res.stack, [19281440]);
+// }
+
+#[test]
+fn test_aoc24_4_1() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-4-1.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-4-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [77]);
+}
+
+#[test]
+fn test_aoc24_4_2() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-4-2.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-4-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [67]);
+}
+
+#[test]
+fn test_aoc24_5_1() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-5-1.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-5-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [158]);
+}
+
+#[test]
+fn test_aoc24_5_2() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-5-2.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-5-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [76]);
+}
+
+#[test]
+fn test_aoc24_6_2() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-5-2.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-5-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [76]);
+}
+
+#[test]
+fn test_aoc24_7_1() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-7-1.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-7-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [314001004]);
 }
 

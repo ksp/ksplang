@@ -4,6 +4,7 @@ use std::{cmp, str::FromStr, sync::LazyLock};
 #[derive(Debug, Clone, PartialEq)]
 pub struct JitConfig {
     pub verbosity: u8,
+    pub soften_limits: bool,
     pub start_interpret_limit: u32,
     pub start_instr_limit: u32,
     pub start_branch_limit: u32,
@@ -76,6 +77,7 @@ fn create_config() -> JitConfig {
     let verbosity = parse_env("KSPLANGJIT_VERBOSITY", if cfg!(debug_assertions) { 10 } else { 1 });
     let c = JitConfig {
         verbosity,
+        soften_limits: parse_env("KSPLANGJIT_SOFTEN_LIMITS", true),
         start_interpret_limit: parse_env("KSPLANGJIT_START_LIMIT", 50_000),
         start_branch_limit: parse_env("KSPLANGJIT_START_BRANCH_LIMIT", 1024),
         start_instr_limit: parse_env("KSPLANGJIT_START_INSTR_LIMIT", 3000),

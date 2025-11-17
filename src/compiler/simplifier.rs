@@ -1,6 +1,6 @@
 use std::{cmp, ops::RangeInclusive};
 
-use smallvec::{smallvec, SmallVec, ToSmallVec};
+use smallvec::{SmallVec, ToSmallVec, smallvec, smallvec_inline};
 
 use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, osmibytecode::Condition}, vm::OperationError};
 
@@ -16,21 +16,28 @@ fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeIncl
 
 pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: InstrId) -> Condition<ValueId> {
     let mut cond_mut = condition.clone();
+    let mut changelog: SmallVec<[Condition<ValueId>; 4]> = smallvec![cond_mut.clone()];
     loop {
         let new_cond = simplify_cond_core(cfg, &cond_mut, at);
         let done = new_cond == cond_mut;
         cond_mut = new_cond;
         if done {
             break;
+        } else {
+            changelog.push(cond_mut.clone())
         }
     }
 
-    if let Some(info) =
-        cond_mut.regs().into_iter().filter(|x| x.is_computed()).next()
-        .and_then(|v| cfg.val_info(v)) {
+    if let Some(info) = cond_mut.regs().into_iter().filter(|x| x.is_computed()).next()
+                                .and_then(|v| cfg.val_info(v))
+    {
         for (assumption, _, _, _) in info.iter_assumptions(at, &cfg.block_(at.block_id()).predecessors) {
-            if let Some(implied) = cond_implies(cfg, &assumption, &cond_mut, at) {
+            if let Some(implied) = cond_implies(cfg, &assumption, &cond_mut, at) && implied != cond_mut {
+                if cfg.conf.should_log(10) {
+                    println!("simplify_cond: condition '{cond_mut}' + assumption '{assumption}' imply '{implied}'")
+                }
                 cond_mut = implied;
+                changelog.push(cond_mut.clone());
                 if cond_mut == Condition::True || cond_mut == Condition::False {
                     break;
                 }
@@ -38,7 +45,7 @@ pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: 
         }
     }
     if cfg!(debug_assertions) && cond_mut != condition && cfg.conf.should_log(5) {
-        println!("simplify_cond({condition}, {at}) -> {cond_mut}")
+        println!("simplify_cond({condition}, {at}) ... {:?} -> {cond_mut}", changelog)
     }
     cond_mut
 }
@@ -47,28 +54,28 @@ pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: 
 fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at: InstrId) -> Condition<ValueId> {
     match condition.clone() {
         Condition::EqConst(a, b) => {
-            let b = cfg.store_constant(b as i64);
-            Condition::Eq(a, b)
+            let c = cfg.store_constant(b as i64);
+            Condition::Eq(c, a)
         }
         Condition::NeqConst(a, b) => {
-            let b = cfg.store_constant(b as i64);
-            Condition::Neq(a, b)
+            let c = cfg.store_constant(b as i64);
+            Condition::Neq(c, a)
         }
         Condition::LtConst(a, b) => {
-            let b = cfg.store_constant(b as i64);
-            Condition::Lt(a, b)
+            let c = cfg.store_constant(b as i64);
+            Condition::Gt(c, a)
         }
         Condition::LeqConst(a, b) => {
-            let b = cfg.store_constant(b as i64);
-            Condition::Leq(a, b)
+            let c = cfg.store_constant(b as i64);
+            Condition::Geq(c, a)
         }
         Condition::GtConst(a, b) => {
-            let b = cfg.store_constant(b as i64);
-            Condition::Gt(a, b)
+            let c = cfg.store_constant(b as i64);
+            Condition::Lt(c, a)
         }
         Condition::GeqConst(a, b) => {
-            let b = cfg.store_constant(b as i64);
-            Condition::Geq(a, b)
+            let c = cfg.store_constant(b as i64);
+            Condition::Leq(c, a)
         }
         Condition::DividesConst(a, b) => {
             let b = cfg.store_constant(b as i64);
@@ -193,10 +200,11 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
 
                     if matches!(def.op, OptOp::Sub) && def.inputs.len() == 2 && def.inputs[0].is_constant() {
                         // A > (C - b) => b > -(C + A)
-                        // i.e. 100 > (30 - b) => -70 < b
-                        let shift = cfg.get_constant_(def.inputs[0]);
+                        // i.e. 100 > (30 - b) => b > -70
+                        // i.e. 12 == (0 - b) => b == -12
+                        let c = cfg.get_constant_(def.inputs[0]);
                         let b2 = def.inputs[1];
-                        let a2 = cfg.store_constant(ac.strict_add(shift));
+                        let a2 = cfg.store_constant(c.strict_sub(ac));
 
                         return condition.replace_arr(vec![b2, a2])
                     }

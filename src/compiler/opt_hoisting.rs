@@ -20,8 +20,8 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
     successors.sort();
     successors.dedup();
     let successors = successors;
-    println!("Running hoisting for {predecessor}: {successors:?}");
     if g.conf.should_log(10) {
+        println!("Running hoisting for {predecessor}: {successors:?}");
         println!("  Attempting hoisting into {pred_block}");
     }
 
@@ -94,16 +94,20 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
 
             let new_out = if op.has_output() {
                 let output_values: Vec<ValueId> =
-                    instr_ids.iter().map(|id| g.get_instruction_(*id).out).collect();
-                let range = output_values.iter().map(|val| g.val_info(*val).unwrap().range.clone())
-                    .reduce(|a, b| union_range(a, b)).unwrap();
-                let out_info = g.new_value();
-                out_info.range = range;
-                out_info.assigned_at = Some(new_iid);
-                let new_out = out_info.id;
-                g.replace_values(output_values.iter().map(|v| (*v, new_out)).collect());
-                // TODO: copy all assumes or is it invalid?
-                new_out
+                    instr_ids.iter().map(|id| g.get_instruction_(*id).out).filter(ValueId::is_computed).collect();
+                if output_values.is_empty() {
+                    ValueId(0)
+                } else {
+                    let range = output_values.iter().map(|val| g.val_info_(*val).range.clone())
+                        .reduce(|a, b| union_range(a, b)).unwrap();
+                    let out_info = g.new_value();
+                    out_info.range = range;
+                    out_info.assigned_at = Some(new_iid);
+                    let new_out = out_info.id;
+                    g.replace_values(output_values.iter().map(|v| (*v, new_out)).collect());
+                    // TODO: copy all assumes or is it invalid?
+                    new_out
+               }
             } else {
                 ValueId(0)
             };

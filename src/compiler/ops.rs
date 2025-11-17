@@ -15,6 +15,11 @@ impl ValueId {
     pub const C_ZERO: ValueId = Self::from_predefined_const(0).unwrap();
     pub const C_ONE: ValueId = Self::from_predefined_const(1).unwrap();
     pub const C_TWO: ValueId = Self::from_predefined_const(2).unwrap();
+    pub const C_THREE: ValueId = Self::from_predefined_const(3).unwrap();
+    pub const C_FOUR: ValueId = Self::from_predefined_const(4).unwrap();
+    pub const C_FIVE: ValueId = Self::from_predefined_const(5).unwrap();
+    pub const C_SIX: ValueId = Self::from_predefined_const(6).unwrap();
+    pub const C_SEVEN: ValueId = Self::from_predefined_const(7).unwrap();
     pub const C_IMIN: ValueId = Self::from_predefined_const(i64::MIN).unwrap();
     pub const C_IMAX: ValueId = Self::from_predefined_const(i64::MAX).unwrap();
     pub const fn is_null(&self) -> bool {
@@ -249,6 +254,16 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         }
     }
 
+    pub fn condition_mut(&mut self) -> Option<&mut Condition<TVal>> {
+        match self {
+            OptOp::Select(cond) => Some(cond),
+            OptOp::Jump(cond, _) => Some(cond),
+            OptOp::Assert(cond, _) => Some(cond),
+            OptOp::DeoptAssert(cond) => Some(cond),
+            _ => None,
+        }
+    }
+
     pub fn deopt_always() -> Self {
         OptOp::DeoptAssert(Condition::False)
     }
@@ -475,12 +490,15 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Or => inputs.iter().cloned().reduce(range_or),
             OptOp::Xor => inputs.iter().cloned().reduce(range_xor),
             OptOp::ShiftL => {
-                // essentially mul by always positive number
                 let can_overflow = inputs[0].end().leading_zeros() as i64 <= *inputs[1].end();
-                if can_overflow {
+                if *inputs[1].end() < 0 {
+                    None // always error
+                } else if can_overflow {
                     None
                 } else {
-                    Some(inputs[0].start() << inputs[1].end()..=inputs[0].end() << inputs[1].end())
+                    assert!(*inputs[1].end() < 64);
+                    assert!(*inputs[1].start() < 64);
+                    Some((inputs[0].start() << inputs[1].start().max(&0))..=(inputs[0].end() << inputs[1].end()))
                 }
             }
             OptOp::ShiftR => None, // TODO
@@ -615,7 +633,7 @@ impl OpEffect {
     }
 
     pub fn allows_value_numbering(&self) -> bool {
-        !matches!(self, OpEffect::StackRead | OpEffect::StackWrite)
+        !matches!(self, OpEffect::StackRead | OpEffect::StackWrite | OpEffect::ControlFlow)
     }
 
     pub fn better_of(a: OpEffect, b: OpEffect) -> OpEffect {

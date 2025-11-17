@@ -1617,7 +1617,7 @@ impl OptimizingVM {
             return (s, Ok(()));
         }
 
-        let mut p = Precompiler::new(&s.ops, start_stack_size, reversed, start_ip, limit, None, GraphBuilder::new(start_ip), trace);
+        let mut p = Precompiler::new(&s.ops, start_stack_size, reversed, start_ip, limit, self.conf.soften_limits, None, GraphBuilder::new(start_ip), trace);
         p.bb_limit = self.conf.adhoc_branch_limit as usize;
         p.instr_limit = self.conf.adhoc_instr_limit as usize;
         p.interpret();
@@ -1635,7 +1635,7 @@ impl OptimizingVM {
         if limit == 0 {
             return;
         }
-        let mut p = Precompiler::new(&s.ops, s.stack.len(), s.reversed, s.ip, limit, None, GraphBuilder::new(s.ip), NoTrace());
+        let mut p = Precompiler::new(&s.ops, s.stack.len(), s.reversed, s.ip, limit, self.conf.soften_limits, None, GraphBuilder::new(s.ip), NoTrace());
         p.bb_limit = self.conf.start_branch_limit as usize;
         p.instr_limit = self.conf.start_instr_limit as usize;
         p.interpret();

@@ -230,13 +230,14 @@ impl StackStateTracker {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphBuilder {
-    pub values: HashMap<ValueId, ValueInfo>,
+    pub values: BTreeMap<ValueId, ValueInfo>,
+    pub replaced_values: BTreeMap<ValueId, ValueId>, // must keep track of this since Precompiler keeps some code fragments in branches
     pub blocks: Vec<BasicBlock>,
     pub current_block: BlockId,
     pub stack: StackStateTracker,
     pub next_val_id: i32,
     pub constants: Vec<i64>,
-    pub constant_lookup: HashMap<i64, ValueId>,
+    pub constant_lookup: BTreeMap<i64, ValueId>,
     pub value_index: HashMap<(OptOp<ValueId>, SmallVec<[ValueId; 4]>), Vec<(ValueId, InstrId)>>, // value numbering - common subexpression elimination
     pub assumed_program_position: Option<usize>,
     pub conf: &'static JitConfig
@@ -245,13 +246,14 @@ pub struct GraphBuilder {
 impl GraphBuilder {
     pub fn new(start_ip: usize) -> Self {
         Self {
-            values: HashMap::new(),
+            values: BTreeMap::new(),
+            replaced_values: BTreeMap::new(),
             blocks: vec![BasicBlock::new(BlockId(0), start_ip, true, vec![])],
             current_block: BlockId(0),
             stack: StackStateTracker::new(),
             next_val_id: 1,
             constants: vec![],
-            constant_lookup: HashMap::new(),
+            constant_lookup: BTreeMap::new(),
             value_index: HashMap::new(),
             assumed_program_position: None,
             conf: get_config()
@@ -432,7 +434,10 @@ impl GraphBuilder {
         }
     }
 
-    pub fn switch_to_block(&mut self, id: BlockId, stack_depth: u32, stack_state: Vec<ValueId>) {
+    pub fn switch_to_block(&mut self, id: BlockId, stack_depth: u32, mut stack_state: Vec<ValueId>) {
+        for v in &mut stack_state {
+            *v = self.fix_replaced_value(*v)
+        }
         self.current_block = id;
         self.stack.restore(StackState {
             depth: stack_depth,
@@ -451,7 +456,7 @@ impl GraphBuilder {
             assumptions: Vec::new(),
         };
         let entry = self.values.entry(id);
-        assert!(matches!(entry, std::collections::hash_map::Entry::Vacant(_)), "Value ID already exists: {:?}", entry);
+        assert!(matches!(entry, std::collections::btree_map::Entry::Vacant(_)), "Value ID already exists: {:?}", entry);
         entry.or_insert(info)
     }
 
@@ -475,6 +480,9 @@ impl GraphBuilder {
 
     pub fn replace_values(&mut self, mut replace: BTreeMap<ValueId, ValueId>) {
         self.stack.check_invariants();
+        if self.conf.should_log(5) && !replace.is_empty() {
+            println!("Replacing values: {:?}", replace)
+        }
         while !replace.is_empty() {
             let (old, new) = replace.pop_first().unwrap();
             if old == new {
@@ -498,20 +506,44 @@ impl GraphBuilder {
                         *inp = new;
                     }
                 }
+                if let Some(cond) = instr.op.condition_mut() {
+                    // println!("Replacing condition {cond}");
+                    *cond = cond.clone().replace_regs(|r| if *r == old { new } else { *r });
+                    // println!("Replaced condition in {instr}");
+                }
 
-                let instr = self.get_instruction(instr_id).unwrap();
+                let instr = self.get_instruction_(instr_id);
 
                 // simplifier::simplify_instr(cfg, i) TODO
 
                 if instr.effect.allows_value_numbering() {
                     if let Some(v) = self.value_numbering_try_lookup(instr.op.clone(), &instr.inputs, instr_id) {
                         replace.insert(instr.out, v);
+                        if self.conf.should_log(5) {
+                            println!("Replacing values: additional {} -> {v}, thanks to value-numbering", instr.out)
+                        }
                         // self.instr_mut(instr_id).unwrap().effect = OpEffect::None;
+                        // TODO: remove this instruction if without effect?
                     }
                 }
+                // TODO: merge phis to sealed blocks
             }
+            self.val_info_mut(new).unwrap().used_at.extend(info.used_at);
+            self.replaced_values.insert(old, new);
             self.stack.check_invariants();
         }
+    }
+
+    pub fn fix_replaced_value(&self, mut v: ValueId) -> ValueId {
+        while v.is_computed() &&
+              let Some(replaced) = self.replaced_values.get(&v).copied() {
+            v = replaced
+        }
+        v
+    }
+
+    pub fn fix_replaced_values_cond(&self, c: &Condition<ValueId>) -> Condition<ValueId> {
+        c.replace_regs(|v| self.fix_replaced_value(*v))
     }
 
     fn value_numbering_store(&mut self, op: OptOp<ValueId>, args: &[ValueId], val: ValueId, defined_at: InstrId) {
@@ -560,6 +592,23 @@ impl GraphBuilder {
         }
     }
 
+    fn validate_val(&self, val: ValueId, at: InstrId) {
+        if !val.is_computed() { return }
+        if let Some(v) = self.values.get(&val) {
+            if let Some(defined_at) = v.assigned_at {
+                if defined_at.0 == at.0 {
+                    assert!(defined_at.1 < at.1, "Cannot use value {val} before it has been defined (use={at}, defined_at={defined_at})");
+                } else {
+                    assert!(defined_at.0.is_first_block() || self.block_(at.0).predecessors.contains(&defined_at.0),
+                            "Cannot use value {val} before it has been defined (use={at}, defined_at={defined_at}, {} predecessors are: {:?})", at.0, self.block_(at.0).predecessors)
+                }
+            }
+        } else if let Some(replaced) = self.replaced_values.get(&val) {
+            panic!("Cannot use {val}, it has been replaced by {replaced}")
+        } else {
+            panic!("Cannot use {val}, it has not been defined")
+        }
+    }
 
     pub fn add_assumption_simple(&mut self, at: InstrId, cond: Condition<ValueId>) {
         for val in cond.regs() {
@@ -685,6 +734,9 @@ impl GraphBuilder {
             effect: effect2
         };
         instr.validate();
+        for v in instr.iter_inputs() {
+            self.validate_val(v, instr.id);
+        }
 
         let (mut instr, simplifier_range) = simplifier::simplify_instr(self, instr);
         instr.id = InstrId(self.current_block, self.current_block_ref().next_instr_id);
@@ -1067,6 +1119,15 @@ impl GraphBuilder {
         } else {
             self.values.get(&v).map(|v| Cow::Borrowed(v))
         }
+    }
+
+    pub fn val_info_<'a>(&'a self, v: ValueId) -> Cow<'a, ValueInfo> {
+        self.val_info(v).unwrap_or_else(|| {
+            if let Some(repl) = self.replaced_values.get(&v) {
+                panic!("Value {v} has been replaced by {repl}")
+            }
+            panic!("Value {v} not defined.")
+        })
     }
 
     pub fn val_info_mut(&mut self, v: ValueId) -> Option<&mut ValueInfo> {

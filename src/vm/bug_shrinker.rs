@@ -68,6 +68,7 @@ pub fn verify_block<'prog, 'opts>(
 struct CompileSettings {
     use_trace: bool,
     use_osmibyte: bool,
+    soft_limits: bool,
     bb_limit: usize,
     instr_limit: usize,
     interpret_limit: usize,
@@ -152,6 +153,7 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             bb_limit,
             instr_limit,
             interpret_limit,
+            soft_limits: false, // TODO Maybe try true if we hit reproducibility problems?
             override_verbosity: Some(0)
         }
     }
@@ -358,6 +360,7 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             self.start_state.reversed,
             self.start_state.ip,
             settings.interpret_limit,
+            settings.soft_limits,
             None,
             GraphBuilder::new(self.start_state.ip),
             tracer,
@@ -402,6 +405,29 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
         initial_mismatch: (&[i64], usize),
         initial_baseline: (&[i64], usize),
     ) -> ! {
+        println!("\nRecompiling with verbosity {}...", self.vm.conf.shrinker_final_verbosity);
+        let mut changed_settings = settings.clone();
+        changed_settings.override_verbosity = Some(self.vm.conf.shrinker_final_verbosity);
+        let block = self.build_block(&changed_settings);
+
+        println!("\nCFG:\n{}", block.cfg.unwrap());
+        if let Some(obc) = &block.osmibytecode {
+            println!("\nOsmibytecode: {}", obc);
+        }
+
+        if changed_settings.interpret_limit > 1 {
+            changed_settings.override_verbosity = Some(0);
+            changed_settings.interpret_limit -= 1;
+            println!("Recompiling with limit-1 = {}...", changed_settings.interpret_limit);
+            debug_assert_eq!(self.compile_and_reproduce(&changed_settings).kind, OutcomeKind::Works);
+            let ok_block = self.build_block(&changed_settings);
+
+            println!("\nOK CFG for comparison\n{}", ok_block.cfg.unwrap());
+            if let Some(obc) = &ok_block.osmibytecode {
+                println!("\nOK Osmibytecode: {}", obc);
+            }
+        }
+
         println!("shrinker report:");
         println!(
             "  origin ip {} reversed={} stack_len={}",
@@ -428,20 +454,7 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             initial_baseline.1,
             format_stack_preview(initial_baseline.0)
         );
-        
-        println!("\nRecompiling with verbosity {}...", self.vm.conf.shrinker_final_verbosity);
-        let mut verbose_settings = settings.clone();
-        verbose_settings.override_verbosity = Some(self.vm.conf.shrinker_final_verbosity);
-        let block = self.build_block(&verbose_settings);
-        
-        println!("\nCFG:");
-        println!("{}", block.cfg.unwrap());
-        
-        if let Some(ref obc) = block.osmibytecode {
-            println!("\nOsmibytecode:");
-            println!("{}", obc);
-        }
-        
+
         panic!("shrinker: mismatch reproduced at {}: {outcome:?}", self.start_state.ip);
     }
 }

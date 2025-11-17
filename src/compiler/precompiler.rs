@@ -52,8 +52,8 @@ pub struct Precompiler<'a, TP: TraceProvider> {
     // deopt_info: HashMap<u32, DeoptInfo<u32>>,
     pub position: usize,
     pub instr_interpreted_count: usize,
-    pub interpretation_soft_limit: usize,
-    pub interpretation_hard_limit: usize,
+    pub interpretation_limit: usize,
+    pub soften_limits: bool,
     pub bb_limit: usize,
     pub instr_limit: usize,
     pub termination_ip: Option<usize>,
@@ -87,6 +87,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         reversed_direction: bool,
         initial_position: usize,
         interpretation_limit: usize,
+        soften_limits: bool,
         termination_ip: Option<usize>,
         initial_graph: GraphBuilder,
         tracer: TP
@@ -97,8 +98,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             reversed_direction,
             initial_position,
             position: initial_position,
-            interpretation_soft_limit: interpretation_limit,
-            interpretation_hard_limit: interpretation_limit * 2,
+            interpretation_limit,
+            soften_limits,
             instr_interpreted_count: 0,
             bb_limit: usize::MAX,
             instr_limit: usize::MAX,
@@ -900,12 +901,16 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         }
     }
 
+    fn interpretation_soft_limit(&self) -> usize { self.interpretation_limit }
+    fn interpretation_hard_limit(&self) -> usize {
+        if self.soften_limits { 2 * self.interpretation_limit } else { self.interpretation_limit } }
+
     fn branching_limit_exhausted(&self) -> bool {
         let instr_count = self.g.reachable_blocks().map(|b| b.instructions.len()).sum::<usize>();
         self.g.reachable_blocks().count() >= self.bb_limit ||
         instr_count >= self.instr_limit ||
         // self.instr_interpreted_count * 2 > self.interpretation_soft_limit && !self.pending_branches.is_empty() ||
-        self.instr_interpreted_count > self.interpretation_soft_limit 
+        self.instr_interpreted_count > self.interpretation_soft_limit()
     }
 
     // fn condition_cnf(&mut self, cnf: &[Vec<Condition<ValueId>>]) -> Condition<ValueId> { if cnf.len() == 0 { return Condition::True; }
@@ -932,13 +937,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             if self.g.stack.stack_depth as usize + 1 >= self.initial_stack_size {
                 break;
             }
-            if self.instr_interpreted_count >= self.interpretation_hard_limit {
+            if self.instr_interpreted_count >= self.interpretation_hard_limit() {
                 if self.conf.should_log(1) {
                     println!("Interpretation hard limit reached");
                 }
                 break;
             }
-            if self.instr_interpreted_count >= self.interpretation_soft_limit {
+            if self.instr_interpreted_count >= self.interpretation_soft_limit() {
                 let top = self.g.val_range_at(self.g.stack.peek().unwrap_or(ValueId(0)), self.g.next_instr_id());
                 let op = &self.ops[self.position];
                 // terminate if we don't seem to be building a constants
@@ -1001,7 +1006,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             println!("    (but will deopt due to limits [bbs {} <= {}, instr {} <= {}, interpreted {} <= {}])",
                                 self.g.reachable_blocks().count(), self.bb_limit,
                                 baseline_instr_count + self.g.current_block_ref().incoming_jumps.len(), self.instr_limit,
-                                self.instr_interpreted_count, self.interpretation_soft_limit,
+                                self.instr_interpreted_count, self.interpretation_soft_limit(),
                             );
                         }
                     }
@@ -1106,24 +1111,36 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
     pub fn interpret(&mut self) -> () {
         self.g.set_program_position(Some(self.position));
 
-        loop {
+        'main: loop {
             self.interpret_block();
 
             // try to hoist common code from successor blocks into the just-finished current block
             if let &[incoming_jump] = &self.g.current_block_ref().incoming_jumps[..] {
-                let did_hois = hoist_up(&mut self.g, incoming_jump.0);
-                if did_hois && self.conf.should_log(2) {
+                let did_hoist = hoist_up(&mut self.g, incoming_jump.0);
+                if did_hoist && self.conf.should_log(2) {
                     println!("  Hoisted code up from successors of block {}", self.g.block_(incoming_jump.0));
+                    for s in self.g.block_(incoming_jump.0).following_blocks() {
+                        println!("  {}", self.g.block_(s))
+                    }
                 }
             }
 
-            let Some(pb) = self.pending_branches.pop_front() else {
-                break;
+            let pb = loop {
+                let Some(pb) = self.pending_branches.pop_front() else {
+                    break 'main;
+                };
+                if !self.g.block_(pb.to_bb).is_reachable {
+                    if self.conf.should_log(2) {
+                        println!("Skipping pending branch {pb:?}, the target block is unreachable")
+                    }
+                    continue;
+                }
+                if self.conf.should_log(2) {
+                    println!("Continuing on pending branch {pb:?}");
+                }
+                break pb;
             };
             let bid = pb.to_bb;
-            if self.conf.should_log(2) {
-                println!("Continuing on pending branch {pb:?}");
-            }
             assert_eq!(self.g.block_(bid).parameters, []);
             assert!(!pb.stack_snapshot.is_empty());
             let stack_depth = pb.stack_snapshot[0].depth;
@@ -1148,12 +1165,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 block_mut.incoming_jumps.extend_from_slice(&pb.from);
                 block_mut.predecessors = preds;
             }
-            // stack will be created by seal_block from auto-created parameters
             self.position = pb.target;
+            // stack will be created by seal_block from auto-created parameters
             self.g.switch_to_block(bid, pb.stack_snapshot[0].depth, vec![]);
             assert_eq!(self.g.stack.stack, []);
             self.g.seal_block(bid);
             for assume in pb.assumes {
+                let assume = self.g.fix_replaced_values_cond(&assume);
                 self.g.add_assumption_simple(InstrId(bid, 0), assume);
             }
             if self.g.block_(bid).incoming_jumps.len() > 1 {
