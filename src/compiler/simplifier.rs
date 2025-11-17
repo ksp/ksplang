@@ -1,6 +1,6 @@
 use std::{cmp, ops::RangeInclusive};
 
-use smallvec::{SmallVec, ToSmallVec, smallvec, smallvec_inline};
+use smallvec::{SmallVec, ToSmallVec, smallvec};
 
 use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, osmibytecode::Condition}, vm::OperationError};
 
@@ -211,8 +211,8 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
 
                     if matches!(def.op, OptOp::Sub) && ac == 0 && def.inputs.len() == 2 {
                         // 0 == (a - b) => a == b
-                        // 0 >= (a - b) => a >= b
-                        return condition.replace_arr([def.inputs[0], def.inputs[1]].into())
+                        // 0 >= (a - b) => b >= a
+                        return condition.replace_arr([def.inputs[1], def.inputs[0]].into())
                     }
 
                     // if matches!(def.op, OptOp::Mul) && def.inputs.len() == 2 && def.inputs[0].is_constant() { // TODO
@@ -1000,6 +1000,42 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     new_args.sort();
                     i.inputs = new_args;
                     continue;
+                }
+            }
+
+            for (ix, d) in defines.iter().enumerate() {
+                if let Ok(Some(sub_i)) = d &&
+                    matches!(sub_i.op, OptOp::Sub)
+                {
+                    if i.inputs.contains(&sub_i.inputs[1]) {
+                        // a + b + c + (d - c) => a + b + d
+                        i.inputs.remove(ix);
+                        let to_remove = i.inputs.iter().position(|v| *v == sub_i.inputs[1]).unwrap();
+                        i.inputs.remove(to_remove);
+                        i.inputs.push(sub_i.inputs[0]);
+                        i.inputs.sort();
+                        continue 'main
+                    }
+
+                    if i.inputs.len() == 2 && i.inputs[0].is_constant() && sub_i.inputs[0].is_constant() {
+                        // C1 + (C2 - x) =>  (C1 + C2) - x
+                        assert!(ix == 1);
+                        i.op = OptOp::Sub;
+                        let c1 = cfg.get_constant_(i.inputs[0]);
+                        let c2 = cfg.get_constant_(sub_i.inputs[0]);
+                        let negated = sub_i.inputs[1];
+                        let c_new = cfg.store_constant(c1 + c2);
+                        i.inputs = smallvec![c_new, negated];
+                        continue 'main
+                    }
+
+                    if i.inputs.len() == 2 && sub_i.inputs[0] == ValueId::C_ZERO {
+                        // a + (0 - b) => a - b
+                        i.op = OptOp::Sub;
+                        let other_add = i.inputs[1-ix];
+                        i.inputs = smallvec![other_add, sub_i.inputs[1]];
+                        continue 'main
+                    }
                 }
             }
         }
