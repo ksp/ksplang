@@ -3,7 +3,7 @@ use std::{cmp, collections::BTreeSet, fmt::{self, Debug, Display}, num::NonZeroI
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec};
 
-use crate::{compiler::{osmibytecode::Condition, range_ops::{range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
+use crate::{compiler::{osmibytecode::Condition, range_ops::{eval_combi, range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -472,7 +472,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::CursedDiv => Some(union_range(range_div(&inputs[0], &inputs[1]), range_mod(inputs[0].clone(), inputs[1].clone()))),
             OptOp::Mod => Some(range_mod(inputs[0].clone(), inputs[1].clone())),
             OptOp::ModEuclid => Some(range_mod_euclid(inputs[0].clone(), inputs[1].clone())),
-            OptOp::Tetration => todo!(), // TODO
+            OptOp::Tetration => eval_combi(inputs[0].clone(), inputs[1].clone(), 16, |a, b| vm::tetration(a, b).ok()), // TODO: smarter heuristic?
             OptOp::Funkcia => Some(0..=cmp::min(1_000_000_007 - 1, inputs[0].end().saturating_mul(*inputs[1].end()))),
             OptOp::LenSum => Some(add_range(&range_num_digits(&inputs[0]), &range_num_digits(&inputs[1]))),
             OptOp::Max => Some(inputs.iter().map(|r| *r.start()).max().unwrap()..=inputs.iter().map(|r| *r.end()).max().unwrap()),
@@ -767,9 +767,11 @@ impl ValueInfo {
     pub fn iter_assumptions<'a>(&'a self, at: InstrId, preds: &'a BTreeSet<BlockId>) -> impl Iterator<Item = &'a (Condition<ValueId>, i64, i64, InstrId)> + 'a {
         self.assumptions.iter().rev()
             .filter(move |(_, _, _, instr)|
-                instr.block_id() == BlockId(0) ||
-                instr.block_id() == at.block_id() && instr.1 < at.1 ||
-                preds.contains(&instr.block_id())
+                if instr.0 == at.0 { instr.1 < at.1 }
+                else {
+                    instr.block_id() == BlockId(0) ||
+                    preds.contains(&instr.block_id())
+                }
             )
     }
 }

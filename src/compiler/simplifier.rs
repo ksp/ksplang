@@ -867,7 +867,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         return (i.clone().with_op(OptOp::Const(1), &[], OpEffect::None), Some(1..=1));
                     }
                 }
-                continue;
             }
 
             OptOp::Median if i.inputs.len() == 2 && i.inputs[0].is_constant() => {
