@@ -16,6 +16,7 @@ pub struct JitConfig {
     pub callcache_instr_limit: u32,
 
     pub allow_pruning: bool,
+    pub allow_uphoisting: bool,
     pub verify: u8, // 0 = off, 1 = first run, 2 = full
     pub error_as_deopt: bool,
     pub allow_osmibyte_backend: bool,
@@ -89,6 +90,7 @@ fn create_config() -> JitConfig {
         callcache_instr_limit: parse_env("KSPLANGJIT_CALLCACHE_INSTR_LIMIT", 200),
 
         allow_pruning: parse_env("KSPLANGJIT_PRUNING", true),
+        allow_uphoisting: parse_env("KSPLANGJIT_ALLOW_UPHOISTING", true),
         error_as_deopt: parse_env("KSPLANGJIT_ERROR_AS_DEOPT", true),
         allow_osmibyte_backend: parse_env("KSPLANGJIT_ALLOW_OSMIBYTE_BACKEND", true),
         verify: parse_env("KSPLANGJIT_VERIFY", 1),

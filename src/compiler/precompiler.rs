@@ -1115,7 +1115,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             self.interpret_block();
 
             // try to hoist common code from successor blocks into the just-finished current block
-            if let &[incoming_jump] = &self.g.current_block_ref().incoming_jumps[..] {
+            if self.conf.allow_uphoisting &&
+                let &[incoming_jump] = &self.g.current_block_ref().incoming_jumps[..]
+            {
                 let did_hoist = hoist_up(&mut self.g, incoming_jump.0);
                 if did_hoist && self.conf.should_log(2) {
                     println!("  Hoisted code up from successors of block {}", self.g.block_(incoming_jump.0));
