@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use smallvec::SmallVec;
 
@@ -136,6 +136,29 @@ pub fn interpret_cfg(
 
                     if instr.out.is_computed() {
                         values.insert(instr.out, old_value);
+                    }
+                    continue;
+                }
+                OptOp::StackRead => {
+                    assert_eq!(instr.inputs.len(), 1);
+
+                    let idx = resolve_value(g, &values, instr.inputs[0]);
+                    if idx < 0 {
+                        error = Some((OperationError::IndexOutOfRange {
+                            stack_len: stack.len(),
+                            index: idx,
+                        }, instr.id));
+                        break 'block;
+                    }
+
+                    if idx as usize >= stack.len() {
+                        deoptimized = Some(instr.id);
+                        break 'block;
+                    }
+
+                    let value = stack[idx as usize];
+                    if instr.out.is_computed() {
+                        values.insert(instr.out, value);
                     }
                     continue;
                 }

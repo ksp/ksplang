@@ -203,6 +203,7 @@ impl<'a> OptOptPattern<'a> {
             (OptOp::MedianCursed, OptOp::MedianCursed) |
             (OptOp::DigitSum, OptOp::DigitSum) |
             (OptOp::StackSwap, OptOp::StackSwap) |
+            (OptOp::StackRead, OptOp::StackRead) |
             (OptOp::Gcd, OptOp::Gcd) => {
                 Self::match_list(info, cfg, &instr.inputs, args, comm)
             },

@@ -1,9 +1,9 @@
 use std::{cmp, collections::{HashMap, VecDeque}, ops::RangeInclusive, vec};
 
 use num_integer::Integer;
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 
-use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
+use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
 
 pub trait TraceProvider {
     // type TracePointer
@@ -195,14 +195,11 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         for iid in iids {
             let instr = &self.g.current_block_ref().instructions[&iid];
             let iid = InstrId(self.g.current_block, iid);
-            if instr.effect != OpEffect::None {
-                has_effect = true;
-            }
+            let effect = instr.effect != OpEffect::None;
             match instr.op {
                 OptOp::Push | OptOp::Pop => { has_pops = true; },
                 OptOp::StackSwap => {
                     let &[instr_ix, instr_val] = instr.inputs.as_slice() else { panic!() };
-                    let next_instr = self.g.next_instr_id();
                     let is_anti = simplify_cond(&mut self.g, Condition::Eq(instr_ix, ix), iid);
                     if is_anti == Condition::True {
                         found_anti_swap = Some(iid);
@@ -216,13 +213,36 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 }
                 _ => {}
             }
+            has_effect |= effect;
         }
 
         if let Some(anti_swap) = found_anti_swap {
             // try to optimize away the StackSwap completely if it just undoes previous one
-            'attempt_remove: {
+            {
                 if !has_effect && !has_pops && interfering_swaps.is_empty() {
-                    // TODO: Add StackRead
+                    let prev_swap = self.g.instr_mut(anti_swap).unwrap();
+                    let &[prev_ix, prev_val] = prev_swap.inputs.as_slice() else { panic!() };
+                    // rewrite previous swap to StackRead
+                    assert!(matches!(prev_swap.op, OptOp::StackSwap));
+                    prev_swap.op = OptOp::StackRead;
+                    prev_swap.inputs = smallvec![prev_ix];
+                    prev_swap.effect = OpEffect::StackRead;
+                    let prev_out = prev_swap.out;
+                    if prev_val.is_computed() {
+                        if let Some(info) = self.g.values.get_mut(&prev_val) {
+                            info.used_at.remove(&anti_swap);
+                            if info.used_at.is_empty() {
+                                self.g.stack.poped_values.push(prev_val);
+                            }
+                        }
+                    }
+                    if val == prev_out {
+                        // we are writing back the original value = no change needed
+                        return prev_val;
+                    }
+
+                    self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
+                    return prev_val;
                 }
             }
 

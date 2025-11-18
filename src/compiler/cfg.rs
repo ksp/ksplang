@@ -806,7 +806,7 @@ impl GraphBuilder {
             match &instr.op {
                 OptOp::DeoptAssert(cond) | OptOp::Assert(cond, _) =>
                      self.add_assumption_simple(instr.id, cond.clone()),
-                OptOp::StackSwap => {
+                OptOp::StackSwap | OptOp::StackRead => {
                     let c = simplify_cond(self, Condition::Leq(ValueId::C_ZERO, instr.inputs[0]), instr.id);
                     self.add_assumption_simple(instr.id, c)
                 }

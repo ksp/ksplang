@@ -222,7 +222,8 @@ pub enum OptOp<TVal: Clone + PartialEq + Eq + Display> {
     DigitSum, // a <- digit_sum(b)
     Gcd,      // a <- gcd(b, c)
 
-    StackSwap, // a <- stack[b]; stack[b] <- c; if b + d < stack_size, otherwise deopt
+    StackSwap, // a <- stack[b]; stack[b] <- c; if index out of range, deopt
+    StackRead, // a <- stack[b];                if index out of range, deopt
 
     Const(i64),
 
@@ -290,6 +291,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Jump(_, _) => OpEffect::ControlFlow,
             OptOp::DeoptAssert(_) | OptOp::Universal | OptOp::MedianCursed => OpEffect::MayDeopt,
             OptOp::StackSwap => OpEffect::StackWrite,
+            OptOp::StackRead => OpEffect::StackRead,
         }
     }
 
@@ -312,6 +314,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::MedianCursed | OptOp::Median => 1..=usize::MAX,
             OptOp::ShiftL | OptOp::ShiftR => 2..=2,
             OptOp::StackSwap => 2..=2,
+            OptOp::StackRead => 1..=1,
             OptOp::Universal => 2..=3,
         }
     }
@@ -352,6 +355,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::DigitSum => 29,
             OptOp::Gcd => 30,
             OptOp::StackSwap => 31,
+            OptOp::StackRead => 39,
             OptOp::Const(_) => 32,
             OptOp::Checkpoint => 38,
             OptOp::Jump(condition, block_id) => 33 << 48 | (condition.discriminant() as usize) << 32 | (block_id.0 as usize),
@@ -425,6 +429,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::DigitSum => Ok(digit_sum::digit_sum(inputs[0])),
             OptOp::Gcd => inputs.iter().map(|x| x.abs_diff(0)).reduce(|a, b| a.gcd(&b)).unwrap().try_into().map_err(|_| Some(OperationError::IntegerOverflow)),
             OptOp::StackSwap => Err(None),
+            OptOp::StackRead => Err(None),
             OptOp::Const(x) => Ok(*x),
             OptOp::Median => {
                 let mut vals: SmallVec<[i64; 5]> = inputs.to_smallvec();
@@ -459,7 +464,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         debug_assert!(self.arity().contains(&inputs.len()), "Invalid number of inputs for {:?}: {}", self, inputs.len());
 
         match self {
-            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_) | OptOp::StackSwap | OptOp::Universal => None,
+            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_) | OptOp::StackSwap | OptOp::StackRead | OptOp::Universal => None,
             OptOp::Const(c) => Some(*c..=*c),
             OptOp::Add => inputs.iter().cloned().reduce(|a, b| add_range(&a, &b)),
             OptOp::Mul => inputs.iter().cloned().reduce(|a, b| mul_range(&a, &b).0),

@@ -466,6 +466,7 @@ pub fn extract_effect(g: &mut GraphBuilder, current_effect: OpEffect, op: &OptOp
             }
         },
         OptOp::StackSwap => (OpEffect::MayDeopt, vec![]),
+        OptOp::StackRead => (OpEffect::MayDeopt, vec![]),
         OptOp::Jump(_, _) => (current_effect, asserts),
         OptOp::Assert(_, _) => (current_effect, asserts),
         OptOp::DeoptAssert(_) => (current_effect, asserts),
@@ -582,7 +583,7 @@ fn merge_constants(cfg: &mut GraphBuilder, i: &mut OptInstr, merge: impl FnMut(i
 
 /// Returns (changed, new instruction)
 pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Option<RangeInclusive<i64>>) {
-    if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::Const(_)) {
+    if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::StackRead | OptOp::Const(_)) {
         return (i, None);
     }
     
@@ -607,7 +608,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             flatten_variadic(cfg, &mut i, dedup, /* limit */ 32);
         }
 
-        if !matches!(i.op, OptOp::Const(_) | OptOp::StackSwap | OptOp::Pop | OptOp::Push) {
+        if !matches!(i.op, OptOp::Const(_) | OptOp::StackSwap | OptOp::StackRead | OptOp::Pop | OptOp::Push) {
             if i.iter_inputs().all(|a| a.is_constant()) {
                 let all_args: SmallVec<[i64; 8]> = i.iter_inputs().map(|a| cfg.get_constant_(a)).collect();
                 match i.op.evaluate(&all_args) {

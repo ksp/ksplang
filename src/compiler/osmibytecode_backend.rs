@@ -167,6 +167,7 @@ impl<'a> Compiler<'a> {
             Push => self.lower_push(&instr.inputs, false),
             Pop => return self.lower_pop(instrs),
             StackSwap => self.lower_stack_swap(instr, follows_checkpoint(instrs)),
+            StackRead => self.lower_stack_read(instr),
             Jump(condition, target) => self.lower_jump(instr, condition.clone(), *target),
             Assert(condition, error) => {
                 if self.g.conf.error_as_deopt {
@@ -608,6 +609,17 @@ impl<'a> Compiler<'a> {
                 self.current_deopt = None
             }
         }
+    }
+
+    fn lower_stack_read(&mut self, instr: &OptInstr) {
+        debug_assert_eq!(instr.inputs.len(), 1);
+
+        let index_reg = self.materialize_value_(instr.inputs[0]);
+        let spec = self.prepare_output(instr.out);
+        self.save_deopt().unwrap();
+        self.program.push(OsmibyteOp::StackRead(spec.target_reg(), index_reg, 0));
+        self.finalize_output(spec);
+        self.current_deopt = None;
     }
 
     fn lower_jump(&mut self, instr: &OptInstr, condition: Condition<ValueId>, target: BlockId) {
