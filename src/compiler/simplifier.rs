@@ -990,7 +990,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 }
 
                 let is_unsafe = promoted_positive && promoted_negative &&
-                    OpEffect::None != OptOp::<ValueId>::Add.effect_based_on_ranges(&new_args.iter().map(|a| cfg.val_range(*a)).collect::<Vec<_>>());
+                    OpEffect::None != OptOp::<ValueId>::Add.effect_based_on_ranges(&new_args.iter().map(|a| cfg.val_range_at(*a, i.id)).collect::<Vec<_>>());
                 if !is_unsafe {
                     i.op = OptOp::Add;
                     if constant != 0 {

@@ -1,5 +1,3 @@
-use std::{collections::BTreeSet, ops::RangeInclusive};
-
 use smallvec::{smallvec, SmallVec};
 
 use crate::compiler::{
@@ -20,10 +18,6 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
     successors.sort();
     successors.dedup();
     let successors = successors;
-    if g.conf.should_log(10) {
-        println!("Running hoisting for {predecessor}: {successors:?}");
-        println!("  Attempting hoisting into {pred_block}");
-    }
 
     if successors.len() < 2 {
         return false; // TODO: merge?
@@ -38,6 +32,11 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
         if !succ_block.is_sealed || succ_block.incoming_jumps.len() > 1 {
             return false;
         }
+    }
+
+    if g.conf.should_log(10) {
+        println!("Running hoisting for {predecessor}: {successors:?}");
+        println!("  Attempting hoisting into {pred_block}");
     }
 
     let mut hoisted_any = false;
@@ -62,10 +61,6 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                 let instr = &block.instructions[&iid.1];
                 assert_eq!(&instr.op, op);
 
-                // if instr.effect == OpEffect::StackWrite {
-                //     continue 'candidate; // TODO: why is this broken??
-                // }
-
                 if matches!(instr.op, OptOp::Jump(..)) {
                     continue 'candidate;
                 }
@@ -89,7 +84,7 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                 continue;
             };
 
-            let new_iid = g.make_instr_id_at(insert_pos);
+            let new_iid = g.make_instr_id_at(insert_pos, |_| false).unwrap();
             assert!(!g.block_(predecessor).instructions.contains_key(&new_iid.1));
 
             let new_out = if op.has_output() {
@@ -102,7 +97,7 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                         .reduce(|a, b| union_range(a, b)).unwrap();
                     let out_info = g.new_value();
                     out_info.range = range;
-                    out_info.assigned_at = Some(new_iid);
+                    out_info.set_assigned_at(new_iid, op, inputs);
                     let new_out = out_info.id;
                     g.replace_values(output_values.iter().map(|v| (*v, new_out)).collect());
                     // TODO: copy all assumes or is it invalid?
@@ -127,7 +122,11 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
 
             for iid in instr_ids.iter() {
                 let block = g.block_mut_(iid.block_id());
-                block.instructions.remove(&iid.instr_ix()).unwrap();
+                let instr = block.instructions.remove(&iid.instr_ix()).unwrap();
+                // remove from value-numbering to avoid crash on re-use
+                if let Some(vn) = g.value_index.get_mut(&(instr.op, instr.inputs)) {
+                    vn.retain(|x| x.1 != *iid);
+                }
             }
 
             if g.conf.should_log(5) {

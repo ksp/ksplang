@@ -743,6 +743,7 @@ impl fmt::Display for OptInstr {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ValueInfo {
     pub id: ValueId,
+    pub directly_derived_from: Option<ValueId>,
     pub assigned_at: Option<InstrId>,
     pub range: RangeInclusive<i64>,
     pub used_at: BTreeSet<InstrId>,
@@ -751,7 +752,7 @@ pub struct ValueInfo {
 
 impl ValueInfo {
     pub fn new(id: ValueId) -> Self {
-        Self { id, assigned_at: None, range: i64::MIN..=i64::MAX, used_at: BTreeSet::new(), assumptions: vec![] }
+        Self { id, directly_derived_from: None, assigned_at: None, range: i64::MIN..=i64::MAX, used_at: BTreeSet::new(), assumptions: vec![] }
     }
     pub fn is_constant(&self) -> bool {
         self.range.start() == self.range.end()
@@ -761,6 +762,16 @@ impl ValueInfo {
             Some(*self.range.start())
         } else {
             None
+        }
+    }
+
+    pub fn set_assigned_at(&mut self, id: InstrId, op: &OptOp<ValueId>, inputs: &[ValueId]) {
+        self.assigned_at = Some(id);
+
+        if matches!(op, OptOp::Add | OptOp::Sub | OptOp::Mul | OptOp::Div | OptOp::Mod | OptOp::ModEuclid | OptOp::Min | OptOp::Max | OptOp::Select(_) | OptOp::Median | OptOp::ShiftR) &&
+            inputs.iter().filter(|v| v.is_computed()).count() == 1
+        {   // trackable in derived ranges without exploding recursion
+            self.directly_derived_from = inputs.iter().find(|v| v.is_computed()).copied();
         }
     }
 

@@ -3,7 +3,7 @@ use std::{cmp, collections::{HashMap, VecDeque}, ops::RangeInclusive, vec};
 use num_integer::Integer;
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{get_config, JitConfig}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, range_ops::{eval_combi, range_div, range_num_digits}, simplifier, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}, osmibytecode::Condition}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, solve_quadratic_equation, OperationError, QuadraticEquationResult}};
+use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
 
 pub trait TraceProvider {
     // type TracePointer
@@ -183,6 +183,81 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         PrecompileStepResult::NevimJakChteloByToKonstantu(vec![target])
     }
 
+    pub fn push_swap(&mut self, ix: ValueId, val: ValueId) -> ValueId {
+        // try find previous anti-swap
+        let mut interfering_swaps = vec![];
+        let mut has_effect = false;
+        let mut has_pops = false;
+        let mut found_anti_swap = None;
+
+        let iids: Vec<u32> = self.g.current_block_ref().instructions.keys().rev().copied().collect();
+
+        for iid in iids {
+            let instr = &self.g.current_block_ref().instructions[&iid];
+            let iid = InstrId(self.g.current_block, iid);
+            if instr.effect != OpEffect::None {
+                has_effect = true;
+            }
+            match instr.op {
+                OptOp::Push | OptOp::Pop => { has_pops = true; },
+                OptOp::StackSwap => {
+                    let &[instr_ix, instr_val] = instr.inputs.as_slice() else { panic!() };
+                    let next_instr = self.g.next_instr_id();
+                    let is_anti = simplify_cond(&mut self.g, Condition::Eq(instr_ix, ix), iid);
+                    if is_anti == Condition::True {
+                        found_anti_swap = Some(iid);
+                        break;
+                    }
+                    if is_anti != Condition::False {
+                        interfering_swaps.push((iid, instr_ix, instr_val, is_anti));
+
+                        if interfering_swaps.len() > 4 { break; }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(anti_swap) = found_anti_swap {
+            // try to optimize away the StackSwap completely if it just undoes previous one
+            'attempt_remove: {
+                if !has_effect && !has_pops && interfering_swaps.is_empty() {
+                    // TODO: Add StackRead
+                }
+            }
+
+            // can't remove writes, but we can at least return original value
+            {
+                let next_op = self.ops.get(self.next_position());
+                if interfering_swaps.len() <= 2 && next_op != Some(&Op::Pop) {
+                    self.g.push_checkpoint();
+                    for (_instr_id, _instr_ix, _, condition) in &interfering_swaps {
+                        // let Some(deopt_id) = self.g.make_instr_id_at(
+                        //     BeforeOrAfter::Before(*instr_id),
+                        //     |iid| anti_swap == iid || interfering_swaps.iter().any(|(x, _, _, _)| *x == iid)
+                        // ) else { break 'attempt_remove };
+                        // let mut deopt = OptInstr::deopt(condition.clone());
+                        // deopt.id = deopt_id;
+                        // self.g.current_block_mut().instructions.insert(deopt_id.1, deopt);
+                        
+                        self.g.push_deopt_assert(condition.clone().neg(), false);
+                    }
+                    self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
+                    let orig_val = self.g.get_instruction_(anti_swap).inputs[1];
+                    return orig_val;
+                }
+            }
+
+
+        }
+
+        // else
+        {
+            let instr = self.g.push_instr_may_deopt(OptOp::StackSwap, &[ix, val]);
+            instr.out
+        }
+    }
+
     pub fn step(&mut self) -> PrecompileStepResult {
         use PrecompileStepResult::*;
         let op = self.ops[self.position as usize];
@@ -235,7 +310,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             crate::ops::Op::LSwap => {
                 let x = self.g.peek_stack();
                 // TODO: try finding anti-swap
-                let out = self.g.push_instr_may_deopt(OptOp::StackSwap, &[ValueId::C_ZERO, x]).out;
+                let out = self.push_swap(ValueId::C_ZERO, x);
                 self.g.pop_stack();
                 self.g.stack.push(out);
 
@@ -245,9 +320,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             crate::ops::Op::Swap => {
                 let (i, x) = self.g.peek_stack_2();
-                // let i_range = self.reg_range(i_reg); // TODO: try finding anti-swap
-
-                let out = self.g.push_instr_may_deopt(OptOp::StackSwap, &[i, x]).out;
+                let out = self.push_swap(i, x);
                 self.g.pop_stack();
                 self.g.pop_stack();
                 self.g.stack.push(out);
@@ -1102,6 +1175,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         if self.conf.allow_pruning {
             self.g.clean_poped_values();
         }
+        println!("Finalizing block. Stack: {}", self.g.fmt_stack());
         self.g.stack.check_invariants();
         self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
         self.g.current_block_mut().is_finalized = true;

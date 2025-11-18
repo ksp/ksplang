@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::{ops::RangeInclusive};
 
 use rand::{Rng, SeedableRng};
@@ -356,15 +357,15 @@ fn test_aoc24_3_1() {
     assert_eq!(res.stack, [31748124]);
 }
 
-// #[test]
-// fn test_aoc24_3_2() {
-//     const PROG: &str = include_str!("../../benches/programs/aoc24-3-2.ksplang");
-//     const IN: &str = include_str!("../../benches/programs/aoc24-3-short.in");
-//
-//     let input = parse_in_txt(IN);
-//     let res = run_with_opt(&input, PROG).unwrap();
-//     assert_eq!(res.stack, [19281440]);
-// }
+#[test]
+fn test_aoc24_3_2() {
+    const PROG: &str = include_str!("../../benches/programs/aoc24-3-2.ksplang");
+    const IN: &str = include_str!("../../benches/programs/aoc24-3-short.in");
+
+    let input = parse_in_txt(IN);
+    let res = run_with_opt(&input, PROG).unwrap();
+    assert_eq!(res.stack, [19281440]);
+}
 
 #[test]
 fn test_aoc24_4_1() {

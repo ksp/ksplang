@@ -6,8 +6,8 @@ use num_traits::{CheckedAdd, CheckedMul, CheckedSub};
 
 use crate::{compiler::utils::{SaturatingInto, abs_range, range_2_i64, u64neg, union_range}, vm};
 
-type IRange = RangeInclusive<i64>;
-type URange = RangeInclusive<u64>;
+pub type IRange = RangeInclusive<i64>;
+pub type URange = RangeInclusive<u64>;
 
 #[inline]
 pub fn range_signum(r: RangeInclusive<i64>) -> RangeInclusive<i64> {

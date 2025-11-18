@@ -84,7 +84,9 @@ pub fn union_range(a: impl Borrow<RangeInclusive<i64>>, b: impl Borrow<RangeIncl
     start..=end
 }
 
-pub fn intersect_range<T: Ord + Zero + One + Clone>(a: &RangeInclusive<T>, b: &RangeInclusive<T>) -> RangeInclusive<T> {
+pub fn intersect_range<T: Ord + Zero + One + Clone>(a: impl Borrow<RangeInclusive<T>>, b: impl Borrow<RangeInclusive<T>>) -> RangeInclusive<T> {
+    let a = a.borrow();
+    let b = b.borrow();
     let start = cmp::max(a.start(), b.start()).clone();
     let end = cmp::min(a.end(), b.end()).clone();
     if start > end {

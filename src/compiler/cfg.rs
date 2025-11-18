@@ -7,7 +7,7 @@ use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{analyzer, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
+use crate::{compiler::{analyzer, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -451,6 +451,7 @@ impl GraphBuilder {
         let info = ValueInfo {
             id,
             assigned_at: None,
+            directly_derived_from: None,
             range: i64::MIN..=i64::MAX,
             used_at: BTreeSet::new(),
             assumptions: Vec::new(),
@@ -514,6 +515,7 @@ impl GraphBuilder {
 
                 let instr = self.get_instruction_(instr_id);
 
+
                 // simplifier::simplify_instr(cfg, i) TODO
 
                 if instr.effect.allows_value_numbering() {
@@ -524,6 +526,14 @@ impl GraphBuilder {
                         }
                         // self.instr_mut(instr_id).unwrap().effect = OpEffect::None;
                         // TODO: remove this instruction if without effect?
+                    }
+                }
+                if instr.out.is_computed() {
+                    let info = self.val_info_mut(instr.out).unwrap();
+                    if let Some(from) = &mut info.directly_derived_from {
+                        if *from == old {
+                            *from = new;
+                        }
                     }
                 }
                 // TODO: merge phis to sealed blocks
@@ -779,7 +789,7 @@ impl GraphBuilder {
             } else {
                 let val = self.new_value();
                 val.range = val_range;
-                val.assigned_at = Some(instr.id);
+                val.set_assigned_at(instr.id, &instr.op, &instr.inputs);
                 out_val = val.id;
                 instr.out = val.id;
             }
@@ -924,14 +934,14 @@ impl GraphBuilder {
 
     /// Returns ID right before/after the specified instruction
     /// Moves other instructions forward if necessary
-    pub fn make_instr_id_at(&mut self, at: BeforeOrAfter<InstrId>) -> InstrId {
+    pub fn make_instr_id_at(&mut self, at: BeforeOrAfter<InstrId>, disallow_moving: impl Fn(InstrId) -> bool) -> Option<InstrId> {
         use BeforeOrAfter::*;
         let ideal_id = match at { Before(id) => InstrId(id.0, cmp::max(id.1, 1)),
                                   After(id)  => InstrId(id.0, id.1 + 1) };
         let bid = ideal_id.0;
         let b = self.block_mut_(bid);
-        if b.instructions.contains_key(&ideal_id.1) {
-            return ideal_id
+        if !b.instructions.contains_key(&ideal_id.1) {
+            return Some(ideal_id)
         }
 
         let move_from = match at { Before(id) => id.1,
@@ -939,6 +949,9 @@ impl GraphBuilder {
         let mut move_to = move_from;
         let mut shift_by = 0;
         for (&following_instr, _) in b.instructions.range(move_from..) {
+            if disallow_moving(InstrId(bid, following_instr)) {
+                return None // TODO: try moving to the other side
+            }
             let free_space = following_instr - move_to;
             if free_space >= 1 {
                 // 
@@ -951,7 +964,7 @@ impl GraphBuilder {
         for move_instr in (move_from..move_to).rev() {
             self.rename_instruction(InstrId(bid, move_instr), InstrId(bid, move_instr + shift_by));
         }
-        ideal_id
+        Some(ideal_id)
     }
 
     pub fn block(&self, id: BlockId) -> Option<&BasicBlock> {
@@ -1015,7 +1028,7 @@ impl GraphBuilder {
             }
         }
     }
-    pub fn peek_stack_n(&mut self, n: Range<usize>) -> Vec<ValueId> {
+    pub fn peek_stack_n(&mut self, n: Range<usize>) -> SmallVec<[ValueId; 6]> {
         if n.end > self.stack.stack.len() {
             let pops = n.end - self.stack.stack.len();
             let mut vals = vec![];
@@ -1154,13 +1167,21 @@ impl GraphBuilder {
             let c = self.get_constant_(v);
             return c..=c;
         }
-        let Some(info) = self.values.get(&v) else {
-            return FULL_RANGE
-        };
+        let Some(info) = self.values.get(&v) else { return FULL_RANGE };
         if at != InstrId::default() {
-            for (_condition, range_from, range_to, _from) in info.iter_assumptions(at, &self.block_(at.block_id()).predecessors) {
-                return *range_from..=*range_to
+            let from_range =
+                if let Some(derived_from) = info.directly_derived_from &&
+                    self.values.get(&derived_from).is_some_and(|v| !v.assumptions.is_empty()) &&
+                    let Some(assigned_at) = info.assigned_at.and_then(|id| self.get_instruction(id))
+            {
+                let in_ranges = assigned_at.iter_inputs().map(|v| self.val_range_at(v, at)).collect::<SmallVec<[IRange; 4]>>();
+                assigned_at.op.evaluate_range_quick(&in_ranges).unwrap_or(FULL_RANGE)
             }
+            else { FULL_RANGE };
+            for (_condition, range_from, range_to, _from) in info.iter_assumptions(at, &self.block_(at.block_id()).predecessors) {
+                return intersect_range(*range_from..=*range_to, from_range)
+            }
+            return intersect_range(&info.range, from_range)
         }
         return info.range.clone()
     }
