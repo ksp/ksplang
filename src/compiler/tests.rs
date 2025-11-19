@@ -1,9 +1,9 @@
 #![allow(dead_code)]
-use std::{ops::RangeInclusive};
+use std::{collections::btree_map::Range, ops::RangeInclusive};
 
 use rand::{Rng, SeedableRng};
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{BlockId, OptOp, ValueId}, osmibytecode::{OsmibyteOp, OsmibytecodeBlock, RegId}, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{NoStats, RunError, RunResult, VMOptions}};
+use crate::{compiler::{cfg::GraphBuilder, ops::{BlockId, OptOp, ValueId}, osmibytecode::{Condition, OsmibyteOp, OsmibytecodeBlock, RegId}, pattern::OptOptPattern, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{NoStats, RunError, RunResult, VMOptions}};
 
 const PUSH_0: &str = "CS CS lensum CS funkcia";
 const PUSH_1: &str = "CS CS lensum CS funkcia ++";
@@ -261,6 +261,130 @@ fn test_dup1_limited_ranges() {
     test_dup(VZORAKOVA_DUP, -1..=1);
     test_dup(VZORAKOVA_DUP, 1345432..=1345432);
     test_dup(VZORAKOVA_DUP, i64::MIN..=i64::MIN + 1);
+}
+
+fn assert_pattern(g: &GraphBuilder, v: ValueId, p: OptOptPattern) {
+    if p.try_match(g, &[v]).is_ok() {
+        return
+    }
+
+    panic!("assert_pattern({v}, {p}) failed:\n{g}")
+}
+
+fn assert_size(g: &GraphBuilder, bb_count_range: RangeInclusive<usize>, i_count_range: RangeInclusive<usize>) {
+    let bb_count = g.reachable_blocks().count();
+    let i_count = g.reachable_blocks().map(|b| b.instructions.len()).sum();
+    if bb_count_range.contains(&bb_count) && i_count_range.contains(&i_count) {
+        return
+    }
+
+    panic!("assert_size failed:
+        i_count: {i_count} should be in {i_count_range:?}
+        bb_count: {bb_count} should be in {bb_count_range:?}
+        CFG: {g}")
+}
+
+
+#[test]
+fn test_dec_positive() {
+    const DEC_POSITIVE: &str = "CS CS lensum CS funkcia ++ CS u";
+    let (g, [x]) = precompile(DEC_POSITIVE, None, [1..=i64::MAX]);
+    assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::Add, [ (-1).into(), x.into() ]));
+    assert_size(&g, 1..=1, 3..=3);
+    assert_eq!(1, g.stack.stack.len());
+}
+
+#[test]
+fn test_dec() {
+    let p = "CS CS lensum CS funkcia CS ++ CS qeq u";
+    let (g, [x]) = precompile(p, None, [1..=i64::MAX]);
+    assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::Add, [ (-1).into(), x.into() ]));
+    assert_size(&g, 1..=1, 3..=3);
+    assert_eq!(1, g.stack.stack.len());
+}
+
+#[test]
+fn test_zero_not_positive() {
+    let p = "CS CS lensum CS funkcia ++ CS bulkxor";
+    let (g, [x]) = precompile(p, None, [FULL_RANGE]);
+    assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::Select(Condition::Geq(0.into(), x.into())), [ 1.into(), 0.into() ]));
+    assert_size(&g, 1..=1, 3..=3);
+    assert_eq!(1, g.stack.stack.len());
+}
+
+// TODO: fucking jump
+// #[test]
+// fn test_zero_not() {
+//     let p = "CS CS lensum ++ CS lensum ++ ++ ++ u CS CS lensum CS funkcia CS ++ u CS j ++ CS bulkxor";
+//     let (g, [x]) = precompile(p, None, [FULL_RANGE]);
+//     assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::Select(Condition::Eq(0i64.into(), x.into())), [ 1.into(), 0.into() ]));
+//     assert_size(&g, 1..=1, 3..=3);
+//     assert_eq!(1, g.stack.stack.len());
+// }
+// #[test]
+// fn test_not() {
+//     let p = "CS CS lensum ++ CS lensum ++ ++ ++ u CS CS lensum CS funkcia CS ++ u CS j ++ CS bulkxor";
+//     let (g, [x]) = precompile(p, None, [FULL_RANGE]);
+//     assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::Select(Condition::Eq(0i64.into(), x.into())), [ 1.into(), 0.into() ]));
+//     assert_size(&g, 1..=1, 3..=3);
+//     assert_eq!(1, g.stack.stack.len());
+// }
+
+#[test]
+fn test_yoink_destructive() {
+    let p = "CS CS CS lensum CS funkcia ++ CS ++ lroll swap";
+    let (g, [x]) = precompile(p, None, [FULL_RANGE]);
+    assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::StackSwap, [
+        x.into(),
+        OptOptPattern::new_any()
+    ]));
+    assert_size(&g, 1..=1, 3..=6);
+    assert_eq!(1, g.stack.stack.len());
+}
+
+// #[test]
+// fn test_bitnot() {
+//     let p = "CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd ++ max CS CS % qeq CS CS CS ++ ++ qeq pop2 CS j ++ CS praise qeq qeq pop2 funkcia funkcia ++ % bitshift CS CS gcd CS ++ lroll CS u CS CS pop2 CS lensum m pop2 pop2 CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd ++ max CS CS % qeq CS CS CS ++ ++ qeq pop2 CS j ++ CS praise qeq qeq pop2 funkcia funkcia ++ % bitshift CS CS gcd CS ++ lroll CS u CS CS pop2 CS lensum m pop2 pop2 CS CS lensum ++ CS lensum ++ ++ ++ u CS CS lensum CS funkcia ++ u CS CS lensum CS funkcia ++ praise qeq pop2 pop2 funkcia ++ bitshift pop2 pop2 pop2 ++ CS CS lensum CS funkcia ++ CS CS % qeq CS CS lensum CS funkcia ++ u CS CS lensum CS funkcia ++ praise qeq qeq funkcia and pop2 pop2 CS funkcia CS CS lensum CS funkcia ++ CS ++ lroll brz pop2 CS CS lensum CS funkcia ++ praise qeq qeq rem bitshift rem pop2 CS pop j pop2 pop CS CS lensum CS funkcia ++ praise qeq pop2 pop2 funkcia ++ bitshift pop2 pop2 pop2 ++ CS CS lensum CS funkcia ++ CS CS % qeq pop2 CS CS lensum ++ CS lensum CS ++ ++ bitshift CS ++ ++ ++ pop j pop pop CS CS lensum ++ CS CS CS % qeq CS CS ++ lroll CS CS lensum CS funkcia ++ CS CS % qeq CS CS lensum CS funkcia u CS pop";
+//     let (g, [x]) = precompile(p, None, [FULL_RANGE]);
+//     assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::BinNot, [
+//         x.into(),
+//     ]));
+//     assert_size(&g, 1..=1, 3..=3);
+//     assert_eq!(1, g.stack.stack.len());
+// }
+
+#[test]
+fn test_permute_abcd_dacb() {
+    let p = "CS CS lensum CS funkcia ++ CS ++ ++ ++ lroll CS CS lensum CS funkcia ++ CS ++ lroll";
+    let (g, [a, b, c, d]) = precompile(p, None, [FULL_RANGE, FULL_RANGE, 1..=100, -102..=1002]);
+    assert_size(&g, 1..=1, 2..=2);
+    assert_eq!(g.stack.stack, [d, a, c, b]);
+}
+
+#[test]
+fn test_pop4() {
+    let p = "CS CS lensum ++ CS CS CS % qeq CS ++ ++ ++ lroll pop";
+    let (g, [_a, b, c, d]) = precompile(p, None, [FULL_RANGE, FULL_RANGE, 1..=100, -102..=1002]);
+    assert_size(&g, 1..=1, 2..=2);
+    assert_eq!(g.stack.stack, [b, c, d]);
+}
+
+#[test]
+fn test_sub() {
+    let p = "CS CS lensum CS funkcia ++ CS CS % qeq CS CS lensum CS funkcia u";
+    let (g, [a, b]) = precompile(p, None, [FULL_RANGE, i64::MIN + 1..=i64::MAX]);
+    assert_pattern(&g, g.stack.stack[0], OptOptPattern::new_op2(OptOp::Sub, a, b));
+    assert_size(&g, 1..=1, 3..=3);
+    assert_eq!(g.stack.stack.len(), 1);
+}
+
+#[test]
+fn test_sub_range_check() {
+    let p = "CS CS lensum CS funkcia ++ CS CS % qeq CS CS lensum CS funkcia u";
+    let (g, [a, b]) = precompile(p, None, [FULL_RANGE, FULL_RANGE]);
+    assert_pattern(&g, g.stack.stack[0], OptOptPattern::new_op2(OptOp::Sub, a, b));
+    assert_size(&g, 1..=1, 4..=4);
+    assert_eq!(g.stack.stack.len(), 1);
 }
 
 const PI_TEST_VALUES: [i8; 42] = [

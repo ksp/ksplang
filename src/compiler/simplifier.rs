@@ -128,11 +128,11 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                     Condition::Neq(a, b),
                 x => x
             };
-            // Min/Max comparison simplification
-            //  min(k, x) == k  -> x <= k
             if a.is_constant() {
                 let ac = *ar.start();
                 if let Some(def) = cfg.get_defined_at(b) {
+                    // Min/Max comparison simplification
+                    //  min(k, x) == k  -> x <= k
                     if matches!(def.op, OptOp::Min | OptOp::Max) && def.inputs.len() == 2 && def.inputs[0].is_constant() {
                         let k = cfg.get_constant_(def.inputs[0]);
                         let x = def.inputs[1];
@@ -214,6 +214,8 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         // 0 >= (a - b) => b >= a
                         return condition.replace_arr([def.inputs[1], def.inputs[0]].into())
                     }
+
+                    // if matches!(def.op, OptOp::AbsSub)
 
                     // if matches!(def.op, OptOp::Mul) && def.inputs.len() == 2 && def.inputs[0].is_constant() { // TODO
                     //     // A > (b * C) => (A / C) > b

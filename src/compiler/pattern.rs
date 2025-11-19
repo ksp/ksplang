@@ -1,8 +1,8 @@
-use std::{borrow::Cow, collections::{BTreeMap}, fmt, ops::{Range, RangeInclusive}, sync::Arc};
+use std::{borrow::Cow, collections::BTreeMap, fmt, ops::{Range, RangeInclusive}, sync::Arc};
 
 use smallvec::SmallVec;
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition}};
+use crate::compiler::{cfg::GraphBuilder, ops::{OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange};
 
 #[derive(Clone)]
 pub struct HackEqDebug<T, TId>(pub T, pub TId);
@@ -17,22 +17,61 @@ impl<T, TId: fmt::Debug> fmt::Debug for HackEqDebug<T, TId> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { self.1.fmt(f) }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, PartialEq, Eq, Hash, Default)]
 pub struct OptOptPattern<'a> {
     pub options_values: SmallVec<[ValueId; 4]>,
     pub options_ops: Vec<(OptOp<Box<OptOptPattern<'a>>>, Vec<OptOptPattern<'a>>)>,
     pub anything_in_range: SmallVec<[(i64, i64); 1]>,
     pub constant_in_range: SmallVec<[(i64, i64); 1]>,
-    pub custom: Option<HackEqDebug<Arc<dyn Fn(&GraphBuilder, &[ValueId], &mut MatchInfo<'a>) -> bool + 'a>, String>>,
+    pub custom: Option<HackEqDebug<Arc<dyn Fn(&GraphBuilder, &[ValueId], &mut MatchInfo<'a>) -> Option<ValueId> + 'a>, String>>,
+    pub greedy_backrefs: Vec<Cow<'a, str>>,
     pub name: Option<Cow<'a, str>>,
     pub variadic: bool,
     pub allow_empty: bool,
     pub disable_commutativity: bool,
 }
 
+impl From<ValueId> for OptOptPattern<'_> {
+    fn from(val: ValueId) -> Self { OptOptPattern::new_val(val) }
+}
+impl From<ValueId> for Box<OptOptPattern<'_>> {
+    fn from(val: ValueId) -> Self { OptOptPattern::new_val(val).boxed() }
+}
+impl From<IRange> for OptOptPattern<'_> {
+    fn from(range: IRange) -> Self { OptOptPattern::new_constant(range) }
+}
+impl From<IRange> for Box<OptOptPattern<'_>> {
+    fn from(range: IRange) -> Self { OptOptPattern::new_constant(range).boxed() }
+}
+impl From<i64> for OptOptPattern<'_> {
+    fn from(c: i64) -> Self { OptOptPattern::new_const(c) }
+}
+impl From<i64> for Box<OptOptPattern<'_>> {
+    fn from(c: i64) -> Self { OptOptPattern::new_const(c).boxed() }
+}
+
+// impl<'a, T1, T2> From<(T1, T2)> for Vec<OptOptPattern<'a>> where T1: Into<OptOptPattern<'a>>, T2: Into<OptOptPattern<'a>> {
+//     fn from((a, b): (T1, T2)) -> Self {
+//         vec![a.into(), b.into()]
+//     }
+// }
+// impl<T: Into<OptOptPattern<'_>>> From<T> for Box<OptOptPattern<'_>> {
+//     fn from(val: ValueId) -> Self { Box::new(val.into()) }
+// }
+
 impl<'a> OptOptPattern<'a> {
-    pub fn new(op: OptOp<Box<OptOptPattern<'a>>>, args: Vec<OptOptPattern<'a>>) -> Self {
-        Self::default().or_op(op, args)
+    pub fn new(op: OptOp<Box<OptOptPattern<'a>>>, args: impl Into<Vec<OptOptPattern<'a>>>) -> Self {
+        Self::default().or_op(op, args.into())
+    }
+
+    pub fn new_op0(op: OptOp<Box<OptOptPattern<'a>>>) -> Self {
+        Self::default().or_op(op, vec![])
+    }
+    pub fn new_op1(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>) -> Self {
+        Self::default().or_op(op, vec![a.into()])
+    }
+    pub fn new_op2(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>, b: impl Into<OptOptPattern<'a>>) -> Self {
+        Self::default().or_op(op, vec![a.into(), b.into()])
     }
 
     pub fn new_val(val: ValueId) -> Self {
@@ -49,6 +88,10 @@ impl<'a> OptOptPattern<'a> {
 
     pub fn new_const(x: i64) -> Self { Self::new_constant(x..=x) }
 
+    pub fn new_backref(name: impl Into<Cow<'a, str>>) -> Self {
+        Self::default().or_backref(name)
+    }
+
     pub fn new_any() -> Self { Self::new_range(i64::MIN..=i64::MAX) }
 
     pub fn or_value(mut self, val: ValueId) -> Self {
@@ -56,8 +99,8 @@ impl<'a> OptOptPattern<'a> {
         self
     }
 
-    pub fn or_op(mut self, op: OptOp<Box<OptOptPattern<'a>>>, args: Vec<OptOptPattern<'a>>) -> Self {
-        self.options_ops.push((op, args));
+    pub fn or_op(mut self, op: OptOp<Box<OptOptPattern<'a>>>, args: impl Into<Vec<OptOptPattern<'a>>>) -> Self {
+        self.options_ops.push((op, args.into()));
         self
     }
 
@@ -70,6 +113,11 @@ impl<'a> OptOptPattern<'a> {
     pub fn or_constant(mut self, range: RangeInclusive<i64>) -> Self {
         self.constant_in_range.push(range.into_inner());
         Self::consolidate_ranges(&mut self.constant_in_range);
+        self
+    }
+
+    pub fn or_backref(mut self, name: impl Into<Cow<'a, str>>) -> Self {
+        self.greedy_backrefs.push(name.into());
         self
     }
 
@@ -89,6 +137,7 @@ impl<'a> OptOptPattern<'a> {
         self
     }
 
+    pub fn boxed(self) -> Box<Self> { Box::new(self) }
 
     pub fn try_match(&'_ self, cfg: &GraphBuilder, val: &[ValueId]) -> Result<MatchInfo<'_>, ()> {
         let mut info = MatchInfo::new();
@@ -120,11 +169,13 @@ impl<'a> OptOptPattern<'a> {
     }
 
     fn match_internal(&self, cfg: &GraphBuilder, val: &[ValueId], info: &mut MatchInfo<'a>) -> Result<ValueId, ()> {
+        // println!("match_internal({val:?}, {self})");
         let v = self.match_core(cfg, val, info)?;
         info.values.push(v);
         if let Some(name) = &self.name {
             info.named.push((name.clone(), v))
         }
+        // println!("match_internal({val:?}, {self}) -> Ok({v})");
         return Ok(v)
     }
     fn match_core(&self, cfg: &GraphBuilder, val: &[ValueId], info: &mut MatchInfo<'a>) -> Result<ValueId, ()> {
@@ -161,6 +212,20 @@ impl<'a> OptOptPattern<'a> {
                         }
                     }
                 }
+            }
+        }
+        if let Some(custom) = &self.custom {
+            let f = custom.0.as_ref();
+            let sp = info.save_point();
+            if let Some(v) = f(cfg, val, info) {
+                return Ok(v)
+            } else {
+                info.revert_to(&sp);
+            }
+        }
+        for backref in &self.greedy_backrefs {
+            if let Some((_, found)) = info.named.iter().find(|(name, found)| backref.as_ref() == name.as_ref() && val.contains(found)) {
+                return Ok(*found)
             }
         }
         Err(())
@@ -210,12 +275,12 @@ impl<'a> OptOptPattern<'a> {
             (OptOp::Select(cond), OptOp::Select(pcond)) => {
                 let save = info.save_point();
                 if Self::match_condition(cfg, info, cond, pcond).is_ok() &&
-                    Self::match_list(info, cfg, &instr.inputs, args, comm.clone()) {
+                    Self::match_list(info, cfg, &instr.inputs, args, 0..0) {
                     true
                 } else {
                     info.revert_to(&save);
-                    if comm.clone().count() < 2 && Self::match_condition(cfg, info, &cond.clone().neg(), pcond).is_ok() &&
-                        Self::match_list(info, cfg, &[instr.inputs[1], instr.inputs[0]], args, comm) {
+                    if Self::match_condition(cfg, info, &cond.clone().neg(), pcond).is_ok() &&
+                        Self::match_list(info, cfg, &[instr.inputs[1], instr.inputs[0]], args, 0..0) {
                         true
                     } else {
                         info.revert_to(&save);
@@ -379,7 +444,7 @@ impl<'a> OptOptPattern<'a> {
             (Condition::Divides(a, b), Condition::Divides(pa, pb)) |
             (Condition::NotDivides(a, b), Condition::NotDivides(pa, pb)) => {
                 let save = info.save_point();
-                if pa.match_internal(cfg, &[*a], info)? == pb.match_internal(cfg, &[*b], info)? {
+                if pa.match_internal(cfg, &[*a], info).is_ok() && pb.match_internal(cfg, &[*b], info).is_ok() {
                     Ok(true)
                 } else {
                     info.revert_to(&save);
@@ -404,7 +469,9 @@ impl fmt::Display for OptOptPattern<'_> {
             parts.push(format!("Range({})", self.anything_in_range.iter().map(|r| format!("{:?}", r)).collect::<Vec<_>>().join(", ")));
         }
         if !self.constant_in_range.is_empty() {
-            parts.push(format!("Const({})", self.constant_in_range.iter().map(|r| format!("{:?}", r)).collect::<Vec<_>>().join(", ")));
+            parts.push(format!("Const({})", self.constant_in_range.iter().map(|r| 
+                if r.0 == r.1 { format!("{}", r.0) } else { format!("{}..={}", r.0, r.1) }
+            ).collect::<Vec<_>>().join(", ")));
         }
 
         let n = self.name.as_ref().map(|s| format!("\"{}\": ", s)).unwrap_or_default();
@@ -413,6 +480,10 @@ impl fmt::Display for OptOptPattern<'_> {
 
         write!(f, "P({}{}{})", n, nocomm, parts.join(" | "))
     }
+}
+
+impl fmt::Debug for OptOptPattern<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Display::fmt(self, f) }
 }
 
 
