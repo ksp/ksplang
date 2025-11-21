@@ -21,9 +21,15 @@ pub fn verify_block<'prog, 'opts>(
 ) -> (Result<BlockInterpretResult, OperationError>, State<'prog, Optimizer>) {
 
     let (optimizer, start_state) = start_state.swap_tracer(NoStats::default());
-    let mut optimized_stack = start_state.stack.clone();
-    let mut tmp_regs = RegFile::new_debug();
-    let optimized_result = OptimizingVM::interpret_block(block, &mut optimized_stack, &mut tmp_regs, vm.conf.error_as_deopt).expect("errors not used atm");
+    let (optimized_stack, optimized_result) = panic::catch_unwind(|| {
+        let mut optimized_stack = start_state.stack.clone();
+        let mut tmp_regs = RegFile::new_debug();
+        let r = OptimizingVM::interpret_block(block, &mut optimized_stack, &mut tmp_regs, vm.conf.error_as_deopt).expect("errors not used atm");
+        (optimized_stack, r)
+    }).unwrap_or_else(|err| {
+        println!("{}", format_panic_message("Optimized block", err));
+        run_shrinker(vm, options, start_state.clone(), None, None);
+    });
 
     let mut reference_state = start_state.clone();
     let mut reference_options = options.clone();
@@ -49,6 +55,22 @@ pub fn verify_block<'prog, 'opts>(
         format_stack_preview(&reference_state.stack)
     );
 
+    run_shrinker(
+        vm,
+        options,
+        start_state,
+        Some((&optimized_stack, optimized_result.next_ip)),
+        Some((&reference_state.stack, reference_state.ip)),
+    );
+}
+
+fn run_shrinker<'prog, 'opts>(
+    vm: &OptimizingVM,
+    options: &VMOptions<'opts>,
+    start_state: State<'prog, NoStats>,
+    initial_mismatch: Option<(&[i64], usize)>,
+    initial_baseline: Option<(&[i64], usize)>,
+) -> ! {
     let mut ctx = ShrinkingContext::new(vm, options.clone(), start_state);
     let (settings, outcome) = ctx.find_reproducing_settings();
     println!("Identified repro settings: {settings:?}. Now shrinking the settings.");
@@ -59,8 +81,8 @@ pub fn verify_block<'prog, 'opts>(
     ctx.panic_with_summary(
         &settings,
         &outcome,
-        (&optimized_stack, optimized_result.next_ip),
-        (&reference_state.stack, reference_state.ip),
+        initial_mismatch,
+        initial_baseline,
     );
 }
 
@@ -111,7 +133,7 @@ impl Display for ReproOutcome {
                     let mismatch_ix = (0..reference_stack.len()).rev().position(|ix| reference_stack.get(ix) != optimized_stack.get(ix)).unwrap();
                     write!(f, "Stack mismatch (at [{mismatch_ix} / {}]: {} != {})",
                               mismatch_ix as i64 - reference_stack.len() as i64,
-                              reference_stack[mismatch_ix], optimized_stack[mismatch_ix])?;
+                              reference_stack[reference_stack.len() - mismatch_ix - 1], optimized_stack[reference_stack.len() - mismatch_ix - 1])?;
                 }
             }
         }
@@ -142,17 +164,12 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
     }
 
     fn default_config(&self) -> CompileSettings {
-        let (bb_limit, instr_limit, interpret_limit) = (
-            self.vm.conf.adhoc_branch_limit as usize,
-            self.vm.conf.adhoc_instr_limit as usize,
-            self.vm.conf.adhoc_interpret_limit as usize,
-        );
         CompileSettings {
             use_trace: false,
             use_osmibyte: self.vm.conf.allow_osmibyte_backend,
-            bb_limit,
-            instr_limit,
-            interpret_limit,
+            bb_limit: self.vm.conf.adhoc_branch_limit as usize,
+            instr_limit: self.vm.conf.adhoc_instr_limit as usize,
+            interpret_limit: self.vm.conf.adhoc_interpret_limit as usize,
             soft_limits: false, // TODO Maybe try true if we hit reproducibility problems?
             override_verbosity: Some(0)
         }
@@ -290,19 +307,9 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
     }
 
     fn compile_and_reproduce(&self, settings: &CompileSettings) -> ReproOutcome {
-        fn panic_result(label: &str, err: Box<dyn std::any::Any + Send>) -> ReproOutcome {
-            let msg = if let Some(errmsg) = err.downcast_ref::<String>() {
-                format!("{label} panicked: {errmsg}")
-            } else if let Some(errmsg) = err.downcast_ref::<&str>() {
-                format!("{label} panicked: {errmsg}")
-            } else {
-                format!("{label} panicked: {err:?} ({:?})", err.type_id())
-            };
-            return ReproOutcome { executed_ksplang: 0, kind: OutcomeKind::Error(msg) }
-        }
         let block = match panic::catch_unwind(|| self.build_block(settings)) {
             Ok(block) => block,
-            Err(err) => return panic_result("Compilation", err)
+            Err(err) => return ReproOutcome { executed_ksplang: 0, kind: OutcomeKind::Error(format_panic_message("Compilation", err)) }
         };
 
         match panic::catch_unwind(|| {
@@ -337,7 +344,7 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
                 executed_ksplang: 0,
                 kind: OutcomeKind::OpError(err),
             },
-            Err(err) => panic_result("Interpreter", err),
+            Err(err) => ReproOutcome { executed_ksplang: 0, kind: OutcomeKind::Error(format_panic_message("Interpreter", err)) },
         }
     }
 
@@ -402,8 +409,8 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
         &self,
         settings: &CompileSettings,
         outcome: &ReproOutcome,
-        initial_mismatch: (&[i64], usize),
-        initial_baseline: (&[i64], usize),
+        initial_mismatch: Option<(&[i64], usize)>,
+        initial_baseline: Option<(&[i64], usize)>,
     ) -> ! {
         println!("\nRecompiling with verbosity {}...", self.vm.conf.shrinker_final_verbosity);
         let mut changed_settings = settings.clone();
@@ -444,16 +451,22 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             settings.interpret_limit
         );
         println!("  outcome: {outcome}");
-        println!(
-            "  initial optimized next_ip {} stack {}",
-            initial_mismatch.1,
-            format_stack_preview(initial_mismatch.0)
-        );
-        println!(
-            "  initial reference next_ip {} stack {}",
-            initial_baseline.1,
-            format_stack_preview(initial_baseline.0)
-        );
+        if let Some((stack, ip)) = initial_mismatch {
+            println!(
+                "  initial optimized next_ip {} stack {}",
+                ip,
+                format_stack_preview(stack)
+            );
+        } else {
+            println!("  initial optimized result: panic");
+        }
+        if let Some((stack, ip)) = initial_baseline {
+            println!(
+                "  initial reference next_ip {} stack {}",
+                ip,
+                format_stack_preview(stack)
+            );
+        }
 
         panic!("shrinker: mismatch reproduced at {}: {outcome:?}", self.start_state.ip);
     }
@@ -472,4 +485,14 @@ fn format_stack_preview(stack: &[i64]) -> String {
         tail.into_iter().rev().collect::<Vec<_>>(),
         len
     )
+}
+
+fn format_panic_message(label: &str, err: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(errmsg) = err.downcast_ref::<String>() {
+        format!("{label} panicked: {errmsg}")
+    } else if let Some(errmsg) = err.downcast_ref::<&str>() {
+        format!("{label} panicked: {errmsg}")
+    } else {
+        format!("{label} panicked: {err:?} ({:?})", err.type_id())
+    }
 }

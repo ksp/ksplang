@@ -194,6 +194,11 @@ impl<'a> Compiler<'a> {
 
         let spec = self.prepare_output(instr.out);
         let dest = spec.target_reg();
+        let tmp_inter = if instr.inputs.iter().skip(2).any(|i| self.register_allocation.location(*i) == Some(ValueLocation::Register(dest))) {
+            self.temp_regs.alloc().unwrap()
+        } else {
+            dest
+        };
 
         let mut inputs = instr.inputs.iter().copied();
         let first_val = inputs.next().unwrap();
@@ -202,23 +207,25 @@ impl<'a> Compiler<'a> {
             debug_assert!(!second_val.is_constant(), "{instr}");
             let second_reg = self.materialize_value_(second_val);
             // Check if first input is a constant (due to commutative property)
-            if let Some(const_op) = self.g.get_constant(first_val).and_then(|v| op_const(dest, second_reg, v)) {
+            if let Some(const_op) = self.g.get_constant(first_val).and_then(|v| op_const(tmp_inter, second_reg, v)) {
                 self.save_deopt_maybe(instr);
                 self.program.push(const_op);
             } else {
                 let first_reg = self.materialize_value_(first_val);
                 self.save_deopt_maybe(instr);
-                self.program.push(op(dest, first_reg, second_reg));
+                self.program.push(op(tmp_inter, first_reg, second_reg));
             }
             for value in inputs {
                 let reg = self.materialize_value_(value);
                 self.save_deopt_maybe(instr);
-                self.program.push(op(dest, dest, reg));
+                self.program.push(op(tmp_inter, tmp_inter, reg));
             }
         } else {
             let first_reg = self.materialize_value_(first_val);
             self.program.push(OsmibyteOp::AddConst(dest, first_reg, 0));
         }
+        let fixup = self.program.last().unwrap().replace_regs(|&r, w| if (r, w) == (tmp_inter, true) { dest } else { r });
+        *self.program.last_mut().unwrap() = fixup;
 
         self.finalize_output(spec);
     }

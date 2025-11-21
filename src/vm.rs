@@ -979,7 +979,7 @@ pub enum RunError {
         instruction_counter: u64,
     },
     /// The program ran for too long (this is a result of the [`Op::Sleep`] instruction).
-    #[error("The program ran for too long.")]
+    #[error("The program ran for too long (SPANEK).")]
     Timeout,
     /// Tracer interupted the run with custom data
     #[error("Tracer interrupted program execution.")]

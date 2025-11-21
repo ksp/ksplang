@@ -135,7 +135,7 @@ pub struct StackState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StackStateTracker {
     pub stack: Vec<ValueId>,
-    pub lookup: HashMap<ValueId, Vec<u32>>,
+    pub lookup: BTreeMap<ValueId, Vec<u32>>,
     pub poped_values: Vec<ValueId>, // values that were popped from the stack (will be checked if used somewhere, and maybe removed)
     pub stack_depth: u32,
     pub push_count: u32,
@@ -146,7 +146,7 @@ impl StackStateTracker {
     pub fn new() -> Self {
         Self {
             stack: Vec::new(),
-            lookup: HashMap::new(),
+            lookup: BTreeMap::new(),
             poped_values: Vec::new(),
             stack_depth: 0,
             push_count: 0,
@@ -212,6 +212,9 @@ impl StackStateTracker {
     }
 
     pub fn check_invariants(&self) {
+        if cfg!(not(debug_assertions)) {
+            return;
+        }
         let mut checked_stack = SmallVec::<[bool; 32]>::from_elem(false, self.stack.len());
         for (&val, ixs) in &self.lookup {
             assert!(ixs.len() > 0);

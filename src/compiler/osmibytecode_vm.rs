@@ -446,11 +446,11 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                     }
                     regs[out] = digit_sum::digit_sum(value);
                 },
-                OsmibyteOp::DigitSumTwice(out, a) => regs[out] = digit_sum::digit_sum_twice(regs[a]).1,
+                OsmibyteOp::DigitSumTwice(out, a) => regs[out] = digit_sum::digit_sum_twice(regs[a].unsigned_abs()).1,
                 OsmibyteOp::DigitSumDigitSumLensum(out, a) => {
-                    let a = regs[a];
+                    let a = regs[a].unsigned_abs();
                     regs[out] = if a <= 18 {
-                        2
+                        if a == 0 { 0 } else { 2 }
                     } else {
                         let (x, y) = digit_sum::digit_sum_twice(a);
                         vm::decimal_len(x) + vm::decimal_len(y)
