@@ -233,7 +233,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                             let neg_range_max = sub_a_range.start().min(&0).unsigned_abs().saturating_sub(1);
                             let pos_range_max = sub_a_range.end().max(&0).unsigned_abs().saturating_sub(1);
                             if def2.op == OptOp::Sgn && def2.inputs[0] == sub_a && (ac as u64 > neg_range_max || ac as u64 > pos_range_max) {
-                                println!("Optimizing AbsSub({sub_b}=Sgn({sub_a}), {sub_a}): ac={ac}, {sub_a} range={sub_a_range:?}");
+                                // println!("Optimizing AbsSub({sub_b}=Sgn({sub_a}), {sub_a}): ac={ac}, {sub_a} range={sub_a_range:?}");
                                 assert!((ac as u64) <= pos_range_max.max(neg_range_max), "this should have returned False earlier");
                                 let (larger_ac, negative) = if neg_range_max >= ac as u64 {
                                     (cfg.store_constant(-ac - 1), true)

@@ -182,11 +182,13 @@ impl StackStateTracker {
         if let Some(val) = self.stack.pop() {
             self.pop_count += 1;
 
-            let x = self.lookup.get_mut(&val).unwrap();
-            assert_eq!(x.pop(), Some(self.stack.len() as u32));
-            if x.is_empty() {
-                self.lookup.remove(&val);
-                self.poped_values.push(val);
+            if val.is_computed() {
+                let x = self.lookup.get_mut(&val).unwrap();
+                assert_eq!(x.pop(), Some(self.stack.len() as u32));
+                if x.is_empty() {
+                    self.lookup.remove(&val);
+                    self.poped_values.push(val);
+                }
             }
             Some(val)
         } else {
@@ -196,7 +198,9 @@ impl StackStateTracker {
 
     pub fn push(&mut self, val: ValueId) {
         self.push_count += 1;
-        self.lookup.entry(val).or_default().push(self.stack.len() as u32);
+        if val.is_computed() {
+            self.lookup.entry(val).or_default().push(self.stack.len() as u32);
+        }
         self.stack.push(val);
     }
 
@@ -215,7 +219,9 @@ impl StackStateTracker {
     pub fn rebuild_index(&mut self) {
         self.lookup.clear();
         for (ix, &val) in self.stack.iter().enumerate() {
-            self.lookup.entry(val).or_default().push(ix as u32);
+            if val.is_computed() {
+                self.lookup.entry(val).or_default().push(ix as u32);
+            }
         }
     }
 
@@ -233,7 +239,7 @@ impl StackStateTracker {
             assert!(ixs.is_sorted(), "{val} {ixs:?} {:?} {:?}", self.stack, self.lookup);
         }
         for (ix, val) in self.stack.iter().enumerate() {
-            if checked_stack[ix] { continue;}
+            if checked_stack[ix] || !val.is_computed() { continue; }
             assert!(checked_stack[ix], "FP={} {val} {ix} {:?} {:?}", self.lookup.get(val).is_some_and(|x| x.contains(&(ix as u32))), self.stack, self.lookup)
         }
     }
@@ -504,9 +510,11 @@ impl GraphBuilder {
                 for &i in &is {
                     self.stack.stack[i as usize] = new;
                 }
-                let xs = self.stack.lookup.entry(new).or_default();
-                xs.extend(&is);
-                xs.sort();
+                if new.is_computed() {
+                    let xs = self.stack.lookup.entry(new).or_default();
+                    xs.extend(&is);
+                    xs.sort();
+                }
             }
 
             let info = self.values.remove(&old).unwrap();
@@ -1056,8 +1064,10 @@ impl GraphBuilder {
                 }
             }
             for i in 0..pops {
-                assert!(!self.stack.lookup.contains_key(&vals[i]));
-                self.stack.lookup.insert(vals[i], vec![i as u32]);
+                if vals[i].is_computed() {
+                    assert!(!self.stack.lookup.contains_key(&vals[i]));
+                    self.stack.lookup.insert(vals[i], vec![i as u32]);
+                }
             }
         }
         n.into_iter().map(|i| self.stack.get(i).copied().unwrap()).collect()

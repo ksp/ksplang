@@ -1055,14 +1055,20 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             self.g.stack.check_invariants();
             self.g.set_program_position(Some(self.position));
             if self.termination_ip == Some(self.position) || self.position >= self.ops.len() {
+                if self.conf.should_log(2) {
+                    println!("end interpret_block: termination_ip={} reached", self.position);
+                }
                 break;
             }
             if self.g.stack.stack_depth as usize + 1 >= self.initial_stack_size {
+                if self.conf.should_log(2) {
+                    println!("end interpret_block: Stack depth dangerously close");
+                }
                 break;
             }
             if self.instr_interpreted_count >= self.interpretation_hard_limit() {
-                if self.conf.should_log(1) {
-                    println!("Interpretation hard limit reached");
+                if self.conf.should_log(2) {
+                    println!("end interpret_block: Interpretation hard limit reached");
                 }
                 break;
             }
@@ -1073,8 +1079,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 // ...and the instruction doesn't seem to be free stack size reduction
                 if top.start().abs_diff(*top.end()) > 1_000 &&
                     !matches!(op, Op::And | Op::Funkcia | Op::LSwap | Op::Swap | Op::TetrationItersNum | Op::TetrationNumIters | Op::Remainder | Op::Modulo | Op::Max | Op::Pop | Op::Pop2 | Op::Increment | Op::Bitshift) {
-                    if self.conf.should_log(1) {
-                        println!("Interpretation soft limit reached, terminating due to top stack value range {top:?} at {} {op:?}", self.position);
+                    if self.conf.should_log(2) {
+                        println!("end interpret_block: Interpretation soft limit reached, terminating due to top stack value range {top:?} at {} {op:?}", self.position);
                     }
                     break;
                 }
@@ -1086,13 +1092,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     self.tracer.get_results(self.position)
                         .map(|r| format!("{}:{:?}; ", r.0, r.1))
                         .collect();
+                println!("  Stack: {}", self.g.fmt_stack());
+                println!("  Current Block: {}", self.g.current_block_ref());
                 println!("Interpreting op {}: {:?}", self.position, self.ops[self.position]);
                 if trace_results_fmt.len() > 0 {
                     println!("Trace results: {}", trace_results_fmt);
                 }
 
-                println!("  Stack: {}", self.g.fmt_stack());
-                println!("  Current Block: {}", self.g.current_block_ref());
             }
 
             let stack_counts = (self.g.stack.push_count, self.g.stack.pop_count);

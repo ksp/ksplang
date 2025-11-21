@@ -52,6 +52,7 @@ struct State<'a, TTracer: Tracer> {
     pub instructions_optimized: u64,
     pub instructions_cfg_run: u64,
     pub instructions_obc_run: u64,
+    pub blocks_entered: u64,
     pub ip: usize,
     pub reversed: bool,
     pub reverse_undo_stack: Vec<(usize, usize)>,
@@ -328,6 +329,7 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             instructions_cfg_run: 0,
             instructions_optimized: 0,
             instructions_obc_run: 0,
+            blocks_entered: 0,
             ip: 0,
             reversed: false,
             reverse_undo_stack: vec![],
@@ -347,6 +349,7 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             instructions_cfg_run: self.instructions_cfg_run,
             instructions_optimized: self.instructions_optimized,
             instructions_obc_run: self.instructions_obc_run,
+            blocks_entered: self.blocks_entered,
             ip: self.ip,
             reversed: self.reversed,
             reverse_undo_stack: self.reverse_undo_stack,
@@ -1534,10 +1537,11 @@ impl OptimizingVM {
 
     fn run_internal<'a>(&mut self, mut s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
         let should_log_runtime = self.conf.should_log(10);
+        let mut last_opt_ops = 1; // avoid infinite loop if ksplang_ops == 0
         loop {
             s.tracer.has_interrupted = false;
 
-            if self.opt.get_block(s.reversed, s.ip).is_none() {
+            if last_opt_ops == 0 || self.opt.get_block(s.reversed, s.ip).is_none() {
                 if should_log_runtime {
                     println!("Running normal interpreter at {} {}", s.ip, s.reversed);
                 }
@@ -1579,7 +1583,9 @@ impl OptimizingVM {
                         s.instructions_optimized += result.executed_ksplang;
                         s.instructions_cfg_run += result.executed_cfg_ops;
                         s.instructions_obc_run += result.executed_obc_ops;
+                        s.blocks_entered += 1;
                         s.ip = result.next_ip;
+                        last_opt_ops = result.executed_ksplang;
                     }
                 }
             } else {
