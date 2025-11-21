@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{fmt::{Debug, Display}, u32};
+use std::{fmt::Debug, u32};
 use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 

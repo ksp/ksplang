@@ -177,6 +177,7 @@ impl<'a> Compiler<'a> {
                 }
             }
             DeoptAssert(condition) => self.lower_deopt(instr, condition.clone()),
+            KsplangOpsIncrement(condition) => self.lower_ops_increment(instr, condition.clone()),
             Checkpoint => self.lower_checkpoint(instr),
             Nop => { },
             MedianCursed | Universal => todo!("{instr:?}"),
@@ -782,6 +783,38 @@ impl<'a> Compiler<'a> {
         let id = self.save_deopt().unwrap();
         self.program.push(OsmibyteOp::DeoptAssert(lowered_condition, id.try_into().expect("TODO")));
     }
+
+    fn lower_ops_increment(&mut self, instr: &OptInstr, condition: Condition<ValueId>) {
+        let cond = self.lower_condition(condition);
+        for &input in &instr.inputs {
+            if let Some(c) = self.g.get_constant(input) {
+                if cond == Condition::True {
+                    if let Ok(c_u32) = c.try_into() {
+                        self.program.push(OsmibyteOp::KsplangOpsIncrement(c_u32));
+                        continue;
+                    } else {
+                        let reg = self.materialize_value_(input);
+                        self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg));
+                        continue;
+                    }
+                } else if let Ok(c_u16) = c.try_into() {
+                    self.program.push(OsmibyteOp::KsplangOpsIncrementCond(cond.clone(), c_u16));
+                    continue;
+                }
+            }
+            let reg = self.materialize_value_(input);
+            if cond == Condition::True {
+                self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg));
+            } else {
+                let tmp = self.temp_regs.alloc().unwrap();
+                self.program.push(OsmibyteOp::SelectConstReg(tmp, cond.clone().neg(), 0, reg));
+                self.program.push(OsmibyteOp::KsplangOpsIncrementVar(tmp));
+                self.temp_regs.release(tmp);
+            }
+        }
+    }
+
+
 
     fn lower_condition(
         &mut self,

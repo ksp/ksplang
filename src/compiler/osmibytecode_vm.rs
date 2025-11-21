@@ -1,4 +1,4 @@
-use std::{cmp, hint::select_unpredictable, mem::MaybeUninit, ops::{Index, IndexMut}, process::exit, u32};
+use std::{cmp, hint::select_unpredictable, ops::{Index, IndexMut}, u32};
 
 use num_integer::Integer;
 
@@ -542,7 +542,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 OsmibyteOp::KsplangOp(_op) => panic!("probably does not make sense anymore?"),
                 OsmibyteOp::KsplangOpWithArg(_op, _) => todo!("probably does not make sense anymore?"),
                 OsmibyteOp::KsplangOpsIncrement(x) => { ksplang_ops_done = ksplang_ops_done.overflowing_add(*x as u64).0 },
-                OsmibyteOp::KsplangOpsIncrementVar(x) => { ksplang_ops_done = ksplang_ops_done.overflowing_add(u64::try_from(regs[x]).unwrap()).0 },
+                OsmibyteOp::KsplangOpsIncrementVar(x) => { ksplang_ops_done = ksplang_ops_done.wrapping_add(regs[x] as u64); },
                 OsmibyteOp::KsplangOpsIncrementCond(condition, x) => {
                     if eval_cond(&regs, condition.clone()) {
                         ksplang_ops_done = ksplang_ops_done.overflowing_add(*x as u64).0

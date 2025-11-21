@@ -236,8 +236,8 @@ pub enum OptOp<TVal: Clone + PartialEq + Eq + Display> {
     // Done(u32), // instruction pointer where to continue execution
     Median,
     MedianCursed, // _ <- median(N, a, b, c, ...)
-                  // KsplangOp(crate::ops::Op),
-                  // KsplangOpWithArg(crate::ops::Op, TReg)
+
+    KsplangOpsIncrement(Condition<TVal>) // if true: CTR += a + b + c + ...
 }
 
 impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
@@ -251,6 +251,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Jump(cond, _) => Some(cond.clone()),
             OptOp::Assert(cond, _) => Some(cond.clone()),
             OptOp::DeoptAssert(cond) => Some(cond.clone()),
+            OptOp::KsplangOpsIncrement(cond) => Some(cond.clone()),
             _ => None,
         }
     }
@@ -261,6 +262,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Jump(cond, _) => Some(cond),
             OptOp::Assert(cond, _) => Some(cond),
             OptOp::DeoptAssert(cond) => Some(cond),
+            OptOp::KsplangOpsIncrement(cond) => Some(cond),
             _ => None,
         }
     }
@@ -280,7 +282,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
     pub fn worst_case_effect(&self) -> OpEffect {
         match self {
             OptOp::Push | OptOp::Pop => OpEffect::StackWrite,
-            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn | OptOp::Checkpoint => OpEffect::None,
+            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn | OptOp::Checkpoint | OptOp::KsplangOpsIncrement(_) => OpEffect::None,
 
             // overflow checks, div by zero
             OptOp::Add | OptOp::Sub | OptOp::AbsSub | OptOp::Mul | OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuclid | OptOp::Tetration | OptOp::ShiftL | OptOp::AbsFactorial =>
@@ -316,11 +318,12 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::StackSwap => 2..=2,
             OptOp::StackRead => 1..=1,
             OptOp::Universal => 2..=3,
+            OptOp::KsplangOpsIncrement(_) => 1..=usize::MAX,
         }
     }
 
     pub fn has_output(&self) -> bool {
-        !matches!(self, OptOp::Push | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_))
+        !matches!(self, OptOp::Push | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_) | OptOp::KsplangOpsIncrement(_))
     }
 
     pub fn discriminant(&self) -> usize {
@@ -363,6 +366,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::DeoptAssert(condition) => 35 << 16 | condition.discriminant(),
             OptOp::Median => 36,
             OptOp::MedianCursed => 37,
+            OptOp::KsplangOpsIncrement(condition) => 40 << 16 | condition.discriminant(),
         }
     }
 
@@ -370,7 +374,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         let cond_count = self.condition().map(|c| c.regs().len()).unwrap_or(0);
         debug_assert!(self.arity().contains(&(inputs.len() - cond_count)), "Invalid number of inputs for {:?}: {}", self, inputs.len());
         match self {
-            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint => Err(None),
+            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint | OptOp::KsplangOpsIncrement(_) => Err(None),
             OptOp::Add => inputs.iter().try_fold(0i64, |a, b| a.checked_add(*b)).ok_or(Some(OperationError::IntegerOverflow)),
             OptOp::Sub => {
                         assert_eq!(inputs.len(), 2);
@@ -464,7 +468,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         debug_assert!(self.arity().contains(&inputs.len()), "Invalid number of inputs for {:?}: {}", self, inputs.len());
 
         match self {
-            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_) | OptOp::StackSwap | OptOp::StackRead | OptOp::Universal => None,
+            OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_) | OptOp::StackSwap | OptOp::StackRead | OptOp::Universal | OptOp::KsplangOpsIncrement(_) => None,
             OptOp::Const(c) => Some(*c..=*c),
             OptOp::Add => inputs.iter().cloned().reduce(|a, b| add_range(&a, &b)),
             OptOp::Mul => inputs.iter().cloned().reduce(|a, b| mul_range(&a, &b).0),
