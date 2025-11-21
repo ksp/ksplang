@@ -90,10 +90,10 @@ impl BasicBlock {
     pub fn preceeding_blocks(&self) -> SmallVec<[BlockId; 5]> {
         self.incoming_jumps.iter().map(|j| j.block_id()).collect()
     }
-}
 
-impl fmt::Display for BasicBlock {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    pub fn richer_fmt(&self, f: &mut fmt::Formatter<'_>,
+                             mut val_range: impl FnMut(ValueId) -> IRange)
+        -> fmt::Result {
         writeln!(f, "BB {}({}) [{}...{}{}] {{",
             self.id,
             self.parameters.iter().map(|v| format!("{}", v)).collect::<Vec<_>>().join(", "),
@@ -114,12 +114,20 @@ impl fmt::Display for BasicBlock {
             writeln!(f, "    // outgoing: {}", self.outgoing_jumps.iter().map(|(j, b)| format!("i{} -> {}", j.1, b)).collect::<Vec<_>>().join(", "))?;
         }
         for instr in self.instructions.values() {
-            writeln!(f, "    {}", instr)?;
+            write!(f, "    ")?;
+            instr.richer_fmt(f, &mut val_range)?;
+            writeln!(f)?;
         }
         if !self.is_finalized {
             writeln!(f, "    ...")?;
         }
         Ok(())
+    }
+}
+
+impl fmt::Display for BasicBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.richer_fmt(f, |_| FULL_RANGE)
     }
 }
 
@@ -1318,7 +1326,7 @@ impl fmt::Display for GraphBuilder {
         }
 
         for bid in block_order {
-            writeln!(f, "{}", self.block_(bid))?;
+            self.block_(bid).richer_fmt(f, |v| self.val_range(v))?
         }
         Ok(())
     }

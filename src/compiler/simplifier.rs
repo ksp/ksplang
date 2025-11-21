@@ -998,12 +998,42 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     i.inputs = keep;
                     continue;
                 }
+                if i.inputs[0].is_constant() && i.inputs.len() == 2 &&
+                    *ranges[1].start() == 0 && ranges[0] == (1..=1) {
+                    // min(1, 0..=?) -> select(x != 0)
+                    i.op = OptOp::Select(Condition::Neq(ValueId::C_ZERO, i.inputs[1]));
+                    i.inputs = smallvec![ValueId::C_ONE, ValueId::C_ZERO];
+                    continue;
+                }
+            }
+            OptOp::Select(cond) => {
+                if i.inputs[0] > i.inputs[1] {
+                    i.op = OptOp::Select(cond.clone().neg());
+                    i.inputs = smallvec![i.inputs[1], i.inputs[0]];
+                    continue;
+                }
             }
 
             OptOp::And if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a & b); continue; }
             OptOp::Or if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a | b); continue; }
             OptOp::Xor if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a ^ b); continue; }
             OptOp::Add if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a + b); continue; }
+
+            OptOp::KsplangOpsIncrement(Condition::False) => return (i.clone().with_op(OptOp::Const(0), &[ ], OpEffect::None), None),
+            OptOp::KsplangOpsIncrement(Condition::True) if i.inputs.len() == 1 => {
+                if let Some(def) = cfg.val_info(i.inputs[0]).and_then(|v| v.assigned_at).and_then(|iid| cfg.get_instruction(iid)) {
+                    if let OptOp::Select(condition) = &def.op && def.inputs[0] == ValueId::C_ZERO {
+                        i.op = OptOp::KsplangOpsIncrement(condition.clone().neg());
+                        i.inputs = smallvec![def.inputs[1]];
+                        continue;
+                    }
+                    if let OptOp::Select(condition) = &def.op && def.inputs[1] == ValueId::C_ZERO {
+                        i.op = OptOp::KsplangOpsIncrement(condition.clone());
+                        i.inputs = smallvec![def.inputs[0]];
+                        continue;
+                    }
+                }
+            }
 
             _ => { }
         }

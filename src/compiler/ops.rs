@@ -3,7 +3,7 @@ use std::{cmp, collections::BTreeSet, fmt::{self, Debug, Display}, num::NonZeroI
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec};
 
-use crate::{compiler::{osmibytecode::Condition, range_ops::{eval_combi, range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
+use crate::{compiler::{osmibytecode::Condition, range_ops::{eval_combi, range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{FULL_RANGE, abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -671,6 +671,18 @@ impl OpEffect {
             (None, None) => None
         }
     }
+
+    pub fn char(&self) -> char {
+        match self {
+            OpEffect::None => ' ',
+            OpEffect::MayFail => '.',
+            OpEffect::MayDeopt => 'd',
+            OpEffect::ControlFlow => 'C',
+            OpEffect::StackRead => 'r',
+            OpEffect::StackWrite => 'W',
+            OpEffect::CtrIncrement => 'i',
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -730,26 +742,58 @@ impl OptInstr {
     pub fn iter_inputs(&self) -> impl Iterator<Item = ValueId> + '_ {
         self.op.condition().into_iter().flat_map(|cond| cond.regs()).chain(self.inputs.iter().copied())
     }
+
+    pub fn richer_fmt(&self, f: &mut fmt::Formatter<'_>,
+                             mut val_range: impl FnMut(ValueId) -> RangeInclusive<i64>)
+        -> fmt::Result {
+
+        write!(f, "{: >3} {: >4} | ", self.id.0.0, self.id.1)?;
+        if !self.out.is_null() {
+            let out = format!("{}", self.out);
+            write!(f, "{out:>5} <- ")?;
+        } else {
+            write!(f, "{:<9}", "")?;
+        }
+        let mut op_str = format!("{:?}", self.op);
+        for arg in &self.inputs {
+            if arg.is_constant() && arg.to_predefined_const().is_none() {
+                let r = val_range(*arg);
+                if r.start() == r.end() {
+                    op_str += &format!(" {}", r.start());
+                    continue;
+                }
+            }
+            op_str += &format!(" {}", arg);
+        }
+        write!(f, "{op_str:<40}")?;
+        write!(f, ": {}{} ",
+            if self.effect != self.op.worst_case_effect() { "*" } else { " " },
+            self.effect.char()
+        )?;
+        if self.program_position != usize::MAX {
+            write!(f, "IP={:<10} ", self.program_position)?;
+        } else {
+            write!(f, "{:<14}", "")?;
+        }
+        if self.out.is_computed() {
+            let out_range = val_range(self.out);
+            if out_range != FULL_RANGE {
+                if *out_range.start() == i64::MIN {
+                    write!(f, " ..={:x}", out_range.end())?;
+                } else if *out_range.end() == i64::MAX {
+                    write!(f, " {:x}..=", out_range.start())?;
+                } else {
+                    write!(f, " {:x}..={:x}", out_range.start(), out_range.end())?;
+                }
+            }
+        }
+        write!(f, "")
+    }
 }
 
 impl fmt::Display for OptInstr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{: >3} {: >4} | ", self.id.0.0, self.id.1)?;
-        if !self.out.is_null() {
-            write!(f, "{} <- ", self.out)?;
-        }
-        write!(f, "{:?}", self.op)?;
-        for arg in &self.inputs {
-            write!(f, " {}", arg)?;
-        }
-        write!(f, "   [ ")?;
-        if self.effect != self.op.worst_case_effect() {
-            write!(f, "{:?} ", self.effect)?;
-        }
-        if self.program_position != usize::MAX {
-            write!(f, "IP={} ", self.program_position)?;
-        }
-        write!(f, "]")
+        self.richer_fmt(f, |_| FULL_RANGE)
     }
 }
 
