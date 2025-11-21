@@ -15,12 +15,13 @@ const STACK_PREVIEW: usize = 16;
 
 pub fn verify_block<'prog, 'opts>(
     vm: &OptimizingVM,
-    block: &OptimizedBlock,
+    rev: bool, ip: usize,
     start_state: State<'prog, Optimizer>,
     options: &VMOptions<'opts>,
 ) -> (Result<BlockInterpretResult, OperationError>, State<'prog, Optimizer>) {
 
     let (optimizer, start_state) = start_state.swap_tracer(NoStats::default());
+    let block = optimizer.get_block(rev, ip).unwrap();
     let (optimized_stack, optimized_result) = panic::catch_unwind(|| {
         let mut optimized_stack = start_state.stack.clone();
         let mut tmp_regs = RegFile::new_debug();

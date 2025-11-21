@@ -1244,7 +1244,7 @@ struct Optimizer {
     has_jumped: u8,
     // should_optimize: bool,
     has_interrupted: bool,
-    trigger_count: u32
+    trigger_count: u32,
     // is_fake_state: bool,
 }
 impl Optimizer {
@@ -1261,6 +1261,12 @@ impl Optimizer {
     fn insert_block(&mut self, b: OptimizedBlock) {
         let k = if b.reversed { !b.start_ip } else { b.start_ip };
         self.optimized_blocks.insert(k, b);
+    }
+
+    #[inline]
+    fn get_visit_counter(&mut self, rev: bool, ip: usize) -> &mut VisitCounter {
+        let k = if rev { !ip } else { ip };
+        self.visit_counter.entry(k).or_default()
     }
 }
 
@@ -1305,12 +1311,12 @@ impl Tracer for Optimizer {
     fn should_continue(&mut self, reversed: bool, ip: usize, op: Op) -> bool {
         fn mark_visit(this: &mut Optimizer, reversed: bool, ip: usize, jump_quality: u8) -> bool {
             let k = if reversed { !ip } else { ip };
-            if this.optimized_blocks.contains_key(&k) {
-                return false;
-            }
+            // if this.optimized_blocks.contains_key(&k) {
+            //     return false;
+            // }
 
             let ctr = this.visit_counter.entry(k).or_default();
-            ctr.counter = ctr.counter.wrapping_add(1);
+            ctr.counter = ctr.counter.saturating_add(1);
             let trigger_count = if jump_quality >= 3 {
                 this.trigger_count
             } else if jump_quality == 2 {
@@ -1497,7 +1503,7 @@ impl OptimizingVM {
         let program_len = self.program.len();
         let mut s: State<Optimizer> = State::new(opt.max_stack_size, opt.pi_digits, self.program.to_vec(), input_stack);
         s.tracer = mem::take(&mut self.opt);
-        self.optimize_start(&s, &opt);
+        self.optimize_start(&mut s, &opt);
 
         let (s, result) = self.run_internal(s, &opt);
 
@@ -1541,7 +1547,7 @@ impl OptimizingVM {
         loop {
             s.tracer.has_interrupted = false;
 
-            if last_opt_ops == 0 || self.opt.get_block(s.reversed, s.ip).is_none() {
+            if last_opt_ops == 0 || s.tracer.get_block(s.reversed, s.ip).is_none() {
                 if should_log_runtime {
                     println!("Running normal interpreter at {} {}", s.ip, s.reversed);
                 }
@@ -1552,13 +1558,13 @@ impl OptimizingVM {
             }
 
             // add or utilize optimized block:
-            if let Some(opt_block) = self.opt.get_block(s.reversed, s.ip) {
+            if let Some(opt_block) = s.tracer.get_block(s.reversed, s.ip) {
                 if should_log_runtime {
                     println!("Running optimized block at {} {} c={}", s.ip, s.reversed, s.instructions_run);
                 }
                 let verify = self.conf.verify > 1 || (self.conf.verify == 1 && opt_block.stats.entry_count == 0);
                 let result = if verify {
-                    let (result, state_ret) = bug_shrinker::verify_block(self, &opt_block, s, options);
+                    let (result, state_ret) = bug_shrinker::verify_block(self, s.reversed, s.ip, s, options);
                     s = state_ret;
                     result
                 } else {
@@ -1573,7 +1579,7 @@ impl OptimizingVM {
                     Err(_) => todo!("Will be deopt"),
                     Ok(result) => {
                         {
-                            let block_stats = self.opt.get_block_mut(s.reversed, s.ip).unwrap();
+                            let block_stats = s.tracer.get_block_mut(s.reversed, s.ip).unwrap();
                             block_stats.stats.exit_count.entry(result.exit_point_id).and_modify(|c| *c += 1).or_insert(1);
                             block_stats.stats.ksplang_op_count += result.executed_ksplang;
                             block_stats.stats.cfg_op_count += result.executed_cfg_ops + result.executed_obc_ops;
@@ -1594,6 +1600,7 @@ impl OptimizingVM {
                 if result.is_err() {
                     return (s, result)
                 }
+                last_opt_ops = 1;
             }
         }
     }
@@ -1601,39 +1608,48 @@ impl OptimizingVM {
     fn optimize<'a>(&mut self, s: State<'a, Optimizer>, options: &VMOptions) -> (State<'a, Optimizer>, Result<(), RunError>) {
         // let limit = if s.ip == 167 { 2806 } else { 10_000 };
         let limit = self.conf.adhoc_interpret_limit as usize;
-        let (optimizer, mut st) = s.swap_tracer(ActualTracer::default());
-        st.tracer.start_block_location = st.ip;
-        st.tracer.max_count = 2_000;
-        let start_ip = st.ip;
-        let start_stack_size = st.stack.len();
-        let reversed = st.reversed;
-        if st.conf.should_log(1) {
-            println!("Starting tracing at {start_ip}");
-        }
-        let result = run_state(&mut st, options);
+        let start_ip = s.ip;
+        let start_stack_size = s.stack.len();
+        let reversed = s.reversed;
 
-        let (trace, s) = st.swap_tracer(optimizer);
+        let (trace, mut s) = if self.conf.trace_limit == 0 {
+            (ActualTracer::default(), s)
+        } else {
+            let (optimizer, mut st) = s.swap_tracer(ActualTracer::default());
+            st.tracer.start_block_location = st.ip;
+            st.tracer.max_count = self.conf.trace_limit;
+            if st.conf.should_log(1) {
+                println!("Starting tracing at {start_ip}");
+            }
+            let result = run_state(&mut st, options);
+            if result.as_ref().is_err_and(|e| !matches!(e, RunError::TracerInterrupt(_, _))) {
+                println!("Error while tracing: {:?}", result.as_ref().err().unwrap());
+                return (st.swap_tracer(optimizer).1, result);
+            }
+            if st.conf.should_log(1) {
+                println!("Collected trace {start_ip} {}..{} {}: {} IPs, {} values, {} branches", st.ops[start_ip], st.ip, st.ops[st.ip], st.tracer.ips.len(), st.tracer.values.len(), st.tracer.ip_lookup.len());
+            }
+            if st.tracer.ips.len() < 100 && st.tracer.ips.len() < self.conf.trace_limit as usize {
+                println!("ehh tracing interrupted only after {} at {}", st.tracer.ips.len(), st.ip);
+                return (st.swap_tracer(optimizer).1, Ok(()));
+            }
 
-        if result.as_ref().is_err_and(|e| matches!(e, RunError::TracerInterrupt(_, _))) {
-            return (s, result);
-        }
-
-        if trace.ips.len() < 100 {
-            println!("ehh tracing interrupted only after {} at {}", trace.ips.len(), s.ip);
-            return (s, Ok(()));
-        }
+            st.swap_tracer(optimizer)
+        };
 
         let mut p = Precompiler::new(&s.ops, start_stack_size, reversed, start_ip, limit, self.conf.soften_limits, None, GraphBuilder::new(start_ip), trace);
         p.bb_limit = self.conf.adhoc_branch_limit as usize;
         p.instr_limit = self.conf.adhoc_instr_limit as usize;
         p.interpret();
+        let g = p.g;
+        let instr_interpreted_count = p.instr_interpreted_count;
 
-        self.save_block(start_ip, reversed, p.g);
+        self.save_block(&mut s, start_ip, reversed, g, instr_interpreted_count);
 
         (s, Ok(()))
     }
 
-    fn optimize_start<'a>(&mut self, s: &State<'a, Optimizer>, _options: &VMOptions) {
+    fn optimize_start<'a>(&self, s: &mut State<'a, Optimizer>, _options: &VMOptions) {
         // try to optimistically optimize from the start
         // makes debugging easier as the VM will just try to optimize the code I give it...
         // let limit = 50_000;
@@ -1646,7 +1662,7 @@ impl OptimizingVM {
         p.instr_limit = self.conf.start_instr_limit as usize;
         p.interpret();
 
-        self.save_block(0, false, p.g);
+        self.save_block(s, 0, false, p.g, p.instr_interpreted_count);
     }
 
     fn build_block(&self, start_ip: usize, reversed: bool, cfg: GraphBuilder, osmibytecode: Option<OsmibytecodeBlock>) -> OptimizedBlock {
@@ -1661,7 +1677,16 @@ impl OptimizingVM {
         }
     }
 
-    fn save_block(&mut self, start_ip: usize, reversed: bool, cfg: GraphBuilder) {
+    fn save_block(&self, s: &mut State<'_, Optimizer>, start_ip: usize, reversed: bool, cfg: GraphBuilder, gain_from: usize) {
+        let cfg_instr_count = cfg.reachable_blocks().map(|b| b.instructions.len()).count();
+        if self.conf.min_gain_mul as usize * cfg_instr_count + (self.conf.min_gain_const as usize) > gain_from {
+            if self.conf.should_log(2) {
+                println!("Not optimized enough at {start_ip} {reversed}: From {gain_from} ksplang to {cfg_instr_count} min gain = {} + {}x", self.conf.min_gain_const, self.conf.min_gain_mul);
+            }
+            let ctr = s.tracer.get_visit_counter(reversed, start_ip);
+            ctr.supressed = true;
+            return;
+        }
         let osmibytecode =
             self.conf.allow_osmibyte_backend.then(|| OsmibytecodeBlock::from_cfg(&cfg));
 
@@ -1678,6 +1703,6 @@ impl OptimizingVM {
         }
 
         let b = self.build_block(start_ip, reversed, cfg, osmibytecode);
-        self.opt.insert_block(b);
+        s.tracer.insert_block(b);
     }
 }

@@ -22,6 +22,8 @@ pub struct JitConfig {
     pub allow_osmibyte_backend: bool,
     pub trace_limit: u32,
     pub trace_trigger_count: u32,
+    pub min_gain_const: u32,
+    pub min_gain_mul: u32,
 
     pub shrinker_final_verbosity: u8,
 }
@@ -96,6 +98,8 @@ fn create_config() -> JitConfig {
         verify: parse_env("KSPLANGJIT_VERIFY", 1),
         trace_limit: parse_env("KSPLANGJIT_TRACE_LIMIT", 1000),
         trace_trigger_count: parse_env("KSPLANGJIT_TRIGGER_COUNT", 3),
+        min_gain_const: parse_env("KSPLANGJIT_MIN_GAIN_CONST", 5),
+        min_gain_mul: parse_env("KSPLANGJIT_MIN_GAIN_MUL", 2),
 
         shrinker_final_verbosity: parse_env("KSPLANGJIT_SHRINKER_FINAL_VERBOSITY", verbosity)
     };
