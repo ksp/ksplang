@@ -814,8 +814,6 @@ impl<'a> Compiler<'a> {
         }
     }
 
-
-
     fn lower_condition(
         &mut self,
         condition: Condition<ValueId>,
@@ -1050,7 +1048,7 @@ impl<'a> Compiler<'a> {
 
     fn needs_deopt(&self, instr: &OptInstr) -> bool {
         match instr.effect {
-            OpEffect::None | OpEffect::ControlFlow => false,
+            OpEffect::None | OpEffect::ControlFlow | OpEffect::CtrIncrement => false,
             OpEffect::MayFail => self.g.conf.error_as_deopt,
             _ => true
         }
@@ -1577,7 +1575,7 @@ fn remat_cost(g: &GraphBuilder, lr: &LiveRanges, max_cost: u32) -> HashMap<Value
         } + match i.effect {
             OpEffect::MayDeopt => 6,
             OpEffect::MayFail => 4,
-            OpEffect::None => 0,
+            OpEffect::None | OpEffect::CtrIncrement => 0,
             _ => continue
         };
 
@@ -1691,7 +1689,7 @@ fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: 
             last_checkpoint = Some(i.inputs.iter().copied().filter(|c| c.is_computed()).collect());
             continue;
         }
-        let needs_checkpoint = i.effect != OpEffect::None && i.effect != OpEffect::ControlFlow && (error_will_deopt || i.effect != OpEffect::MayFail);
+        let needs_checkpoint = i.effect != OpEffect::None && i.effect != OpEffect::ControlFlow && i.effect != OpEffect::CtrIncrement && (error_will_deopt || i.effect != OpEffect::MayFail);
         if last_checkpoint.is_none() && needs_checkpoint {
             // find checkpoint in previous blocks or panic
             let mut block_id = block.id;
@@ -1965,11 +1963,10 @@ mod lowering_tests {
         let (mut g, param) = graph_with_param(-10..=10);
 
         // select(param == 0, 1, 0) -> BoolNot(param)
-        let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], false, None, None);
-        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+        let (_, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], false, None, None);
         let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [OsmibyteOp::BoolNot(_, _), OsmibyteOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::BoolNot(_, _)]),
             "{block}\n{:?}", block.program);
     }
 
@@ -1978,11 +1975,10 @@ mod lowering_tests {
         let (mut g, param) = graph_with_param(-10..=10);
 
         // select(param != 0, 0, 1) -> BoolNot(param)
-        let (out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
-        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+        let (_, _) = g.push_instr(OptOp::Select(Condition::NeqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
         let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [OsmibyteOp::BoolNot(_, _), OsmibyteOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::BoolNot(_, _)]),
             "{block}\n{:?}", block.program);
     }
 
@@ -1991,12 +1987,11 @@ mod lowering_tests {
         let (mut g, param) = graph_with_param(0..=100);
 
         // select(param == 0, 0, 1) -> Sgn(param) when param >= 0
-        let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
-        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+        let (_out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
 
         let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [OsmibyteOp::Sgn(_, _), OsmibyteOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::Sgn(_, _)]),
             "{block}\n{:?}", block.program);
     }
 
@@ -2005,12 +2000,11 @@ mod lowering_tests {
         let (mut g, param) = graph_with_param(0..=100);
 
         // select(param != 0, 1, 0) -> Sgn(param) when param >= 0
-        let (out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(param, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], false, None, None);
-        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+        let (_out, _) = g.push_instr(OptOp::Select(Condition::NeqConst(param, 0)), &[ValueId::C_ONE, ValueId::C_ZERO], false, None, None);
 
         let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [OsmibyteOp::Sgn(_, _), OsmibyteOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::Sgn(_, _)]),
             "{block}\n{:?}", block.program);
     }
 
@@ -2019,12 +2013,11 @@ mod lowering_tests {
         let (mut g, param) = graph_with_param(-10..=10);
 
         // select(param == 0, 0, 1) should NOT become Sgn when param can be negative
-        let (out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
-        g.push_instr(OptOp::Add, &[ValueId::C_ONE, out], false, None, None);
+        let (_out, _) = g.push_instr(OptOp::Select(Condition::EqConst(param, 0)), &[ValueId::C_ZERO, ValueId::C_ONE], false, None, None);
 
         let block = OsmibytecodeBlock::from_cfg(&g);
         assert!(
-            matches!(&block.program[..], [OsmibyteOp::SelectConst0(_, _, 1) | OsmibyteOp::SelectConst(_, _, 0, 1), OsmibyteOp::AddConst(_, _, 1)]),
+            matches!(&block.program[..], [OsmibyteOp::SelectConst0(_, _, 1) | OsmibyteOp::SelectConst(_, _, 0, 1)]),
             "{block}\n{:?}", block.program);
     }
 }

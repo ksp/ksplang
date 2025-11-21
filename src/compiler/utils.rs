@@ -1,6 +1,5 @@
-use std::{borrow::Borrow, cmp::{self, min}, collections::HashSet, fmt::Debug, ops::RangeInclusive};
+use std::{borrow::Borrow, cmp, collections::HashSet, fmt::Debug, ops::RangeInclusive};
 
-use num_integer::Integer;
 use num_traits::{Bounded, CheckedMul, One, SaturatingAdd, SaturatingMul, SaturatingSub, Zero};
 
 pub const EMPTY_RANGE: RangeInclusive<i64> = 1..=0;

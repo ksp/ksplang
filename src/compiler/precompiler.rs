@@ -987,6 +987,36 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             crate::ops::Op::Jump => {
                 let t = self.g.peek_stack();
+
+                let t_range = self.g.val_range_at(t, self.g.next_instr_id());
+                if t_range.start() != t_range.end() && *t_range.start() >= 0 {
+                    let n_increments = if self.reversed_direction {
+                        self.ops[..self.position].iter().rev().take_while(|&&x| x == Op::Increment).count()
+                    } else {
+                        self.ops[self.position+1..].iter().take_while(|&&x| x == Op::Increment).count()
+                    };
+
+                    if n_increments > 0 && *t_range.end() <= n_increments as i64 {
+                        // TODO: more lenient heuristic + deopts?
+                        // self.g.push_deopt_assert(Condition::GeqConst(t, 0), false);
+                        // self.g.push_deopt_assert(Condition::LeqConst(t, n_increments as i16), false);
+
+                        let n_id = self.g.store_constant(n_increments as i64);
+                        let diff = self.g.value_numbering(OptOp::Sub, &[n_id, t], None, None);
+
+                        self.g.push_instr(OptOp::KsplangOpsIncrement(Condition::True), &[diff], false, None, None);
+
+                        return PrecompileStepResult::Branching(vec![PrecompileStepResultBranch {
+                            target: self.position + 1 + n_increments,
+                            condition: Condition::True,
+                            // result of this is the number of increments
+                            stack: (1, vec![n_id]),
+                            call_ret: None,
+                            additional_instr: vec![],
+                        }]);
+                    }
+                }
+
                 return self.branching(t, true, false, Condition::True);
             }
             // BS instrukce

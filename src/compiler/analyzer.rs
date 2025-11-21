@@ -18,11 +18,11 @@ pub fn cond_implies(_cfg: &GraphBuilder, a: &Condition<ValueId>, b: &Condition<V
     None
 }
 
-struct TraceTree {
-    trace: HashMap<ValueId, InstrId>,
-    path_constraints: Vec<Condition<ValueId>>,
-    branching: Vec<TraceTree>,
-}
+// struct TraceTree {
+//     trace: HashMap<ValueId, InstrId>,
+//     path_constraints: Vec<Condition<ValueId>>,
+//     branching: Vec<TraceTree>,
+// }
 
 
 // /// Returns a list of all instruction traces that could have produced the given value, up to max_len instructions long.

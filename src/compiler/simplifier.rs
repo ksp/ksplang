@@ -234,6 +234,24 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                     //
                     //     return canonicalize_condition(cfg, condition.replace_arr(vec![a2, b2]))
                     // }
+                    if let OptOp::Select(select_cond) = &def.op {
+                        // X == select(..., X, Y)
+                        let t_range = cfg.val_range_at(def.inputs[0], at);
+                        let f_range = cfg.val_range_at(def.inputs[1], at);
+                        if !t_range.contains(&ac) && !f_range.contains(&ac) {
+                            return Condition::False
+                        }
+                        if !t_range.contains(&ac) {
+                            if f_range == (ac..=ac) {
+                                return select_cond.clone().neg()
+                            }
+                        }
+                        if !f_range.contains(&ac) {
+                            if t_range == (ac..=ac) {
+                                return select_cond.clone()
+                            }
+                        }
+                    }
                 }
             }
 
@@ -669,6 +687,37 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             //         }
             //     }
             // }
+
+            // if one variable is select(?, const1, const2), make this one also select of constants
+            if let Some(variable) = i.inputs.iter().find(|v| !v.is_constant()) &&
+                i.op.condition().is_none() &&
+                i.inputs.iter().filter(|v| !v.is_constant()).count() == 1 &&
+                let Some(var_info) = cfg.values.get(&variable) &&
+                let Some(select) = var_info.assigned_at.and_then(|iid| cfg.get_instruction(iid)) &&
+                let OptOp::Select(select_condition) = &select.op &&
+                select.inputs.iter().all(|v| v.is_constant())
+            {
+
+                let vals = [cfg.get_constant_(select.inputs[0]), cfg.get_constant_(select.inputs[1])];
+
+                let outputs = vals.map(|variable_val| i.op.evaluate(&i.inputs.iter().map(|v| cfg.get_constant(*v).unwrap_or(variable_val)).collect::<Vec<i64>>()));
+
+                match outputs {
+                    [Ok(out1), Ok(out2)] if out1 == out2 => { // amazing
+                        let c = cfg.store_constant(out1);
+                        return (i.clone().with_op(OptOp::Add, &[ c ], OpEffect::None), Some(out1..=out1));
+                    }
+                    [Ok(out1), Ok(out2)] => {
+                        i.op = OptOp::Select(select_condition.clone());
+                        let out1 = cfg.store_constant(out1);
+                        let out2 = cfg.store_constant(out2);
+                        i.inputs = smallvec![out1, out2];
+                        i.effect = OpEffect::None;
+                        continue;
+                    }
+                    _ =>  { }
+                }
+            }
         }
         let comm = i.op.is_commutative(i.inputs.len());
         if comm.end - comm.start > 1 {

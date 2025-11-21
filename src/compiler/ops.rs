@@ -282,7 +282,8 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
     pub fn worst_case_effect(&self) -> OpEffect {
         match self {
             OptOp::Push | OptOp::Pop => OpEffect::StackWrite,
-            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn | OptOp::Checkpoint | OptOp::KsplangOpsIncrement(_) => OpEffect::None,
+            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn | OptOp::Checkpoint => OpEffect::None,
+            OptOp::KsplangOpsIncrement(_) => OpEffect::CtrIncrement,
 
             // overflow checks, div by zero
             OptOp::Add | OptOp::Sub | OptOp::AbsSub | OptOp::Mul | OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuclid | OptOp::Tetration | OptOp::ShiftL | OptOp::AbsFactorial =>
@@ -634,6 +635,7 @@ pub enum OpEffect {
     /// Reads the stack without any modification (pop and push both use StackWrite)
     StackRead,
     StackWrite,
+    CtrIncrement,
 }
 
 impl OpEffect {
@@ -642,7 +644,7 @@ impl OpEffect {
     }
 
     pub fn allows_value_numbering(&self) -> bool {
-        !matches!(self, OpEffect::StackRead | OpEffect::StackWrite | OpEffect::ControlFlow)
+        !matches!(self, OpEffect::StackRead | OpEffect::StackWrite | OpEffect::ControlFlow | OpEffect::CtrIncrement)
     }
 
     pub fn better_of(a: OpEffect, b: OpEffect) -> OpEffect {
@@ -652,6 +654,7 @@ impl OpEffect {
             (MayFail, _) | (_, MayFail) => MayFail,
             (MayDeopt, _) | (_, MayDeopt) => MayDeopt,
             (ControlFlow, _) | (_, ControlFlow) => ControlFlow,
+            (CtrIncrement, _) | (_, CtrIncrement) => CtrIncrement,
             (StackRead, _) | (_, StackRead) => StackRead,
             (StackWrite, StackWrite) => StackWrite,
         }
@@ -661,6 +664,7 @@ impl OpEffect {
         match (a, b) {
             (StackWrite, _) | (_, StackWrite) => StackWrite,
             (StackRead, _) | (_, StackRead) => StackRead,
+            (CtrIncrement, _) | (_, CtrIncrement) => CtrIncrement,
             (ControlFlow, _) | (_, ControlFlow) => ControlFlow,
             (MayDeopt, _) | (_, MayDeopt) => MayDeopt,
             (MayFail, _) | (_, MayFail) => MayFail,

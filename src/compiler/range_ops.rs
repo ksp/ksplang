@@ -4,7 +4,7 @@ use arrayvec::ArrayVec;
 use num_integer::Integer;
 use num_traits::{CheckedAdd, CheckedMul, CheckedSub};
 
-use crate::{compiler::utils::{SaturatingInto, abs_range, range_2_i64, u64neg, union_range}, vm};
+use crate::{compiler::utils::{abs_range, range_2_i64, u64neg, union_range}, vm};
 
 pub type IRange = RangeInclusive<i64>;
 pub type URange = RangeInclusive<u64>;
@@ -145,25 +145,29 @@ pub fn range_num_digits(r: &RangeInclusive<i64>) -> RangeInclusive<i64> {
     vm::decimal_len(u64neg(min))..=vm::decimal_len(u64neg(max))
 }
 
-pub fn range_div(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> RangeInclusive<i64> {
+pub fn range_div(a: &IRange, b: &IRange) -> RangeInclusive<i64> {
     if b == &(0..=0) {
         return 1..=0;
     }
-    let max = if *b.start() >= 0 {
-        *a.end() / cmp::max(1, *b.start())
-    } else if *b.end() <= 0 {
-        a.start().checked_div(cmp::min(-1, *b.end())).unwrap_or(i64::MAX)
+    let (a0, a1) = a.clone().into_inner();
+    let (b0, b1) = b.clone().into_inner();
+    let max = if b0 >= 0 {
+        cmp::max(a1 / cmp::max(1, b0), a1 / b1)
+    } else if b1 <= 0 {
+        cmp::max(a0.checked_div(cmp::min(-1, b1)).unwrap_or(i64::MAX),
+                 a0.checked_div(b0).unwrap_or(i64::MAX))
     } else {
         // may divide by 1 or -1
-        cmp::max(*a.end(), a.start().saturating_neg())
+        cmp::max(a1, a0.saturating_neg())
     };
-    let min = if *b.start() >= 0 {
-        *a.start() / cmp::max(1, *b.end())
-    } else if *b.end() <= 0 {
-        a.end().checked_div(cmp::min(-1, *b.end())).unwrap_or(i64::MAX)
+    let min = if b0 >= 0 {
+        cmp::min(a0 / b1, a0 / cmp::max(1, b0))
+    } else if b1 <= 0 {
+        cmp::min(a1.checked_div(cmp::min(-1, b1)).unwrap_or(i64::MAX),
+                 a1.checked_div(b0).unwrap_or(i64::MAX))
     } else {
         // may divide by 1 or -1
-        cmp::min(a.end().saturating_neg(), *a.start())
+        cmp::min(a1.saturating_neg(), a0)
     };
     min..=max
 }
@@ -478,11 +482,14 @@ fn test_range_div() {
     assert_eq!(42..=43, range_div(&(22806..=23349), &(543..=543)));
     assert_eq!(0..=1, range_div(&(i64::MIN..=i64::MAX), &(i64::MIN..=i64::MIN)));
     assert_eq!(1..=1, range_div(&(i64::MIN..=i64::MIN), &(i64::MIN..=i64::MIN)));
+    assert_eq!(-1..=0, range_div(&(-3..=-3), &(2..=4)));
+    assert_eq!(-1..=-1, range_div(&(-3..=-3), &(2..=3)));
 }
 
 
 #[cfg(test)]
 fn test_helper_bitops(a: IRange, b: IRange) {
+    use super::utils::SaturatingInto;
     println!("Testing {a:?}  |  {b:?}");
     fn sample(a: &IRange) -> impl Iterator<Item = i64> {
         let zero = a.contains(&0).then_some(0);

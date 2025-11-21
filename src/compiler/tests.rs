@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::{collections::btree_map::Range, ops::RangeInclusive};
+use std::ops::RangeInclusive;
 
 use rand::{Rng, SeedableRng};
 
@@ -284,6 +284,15 @@ fn assert_size(g: &GraphBuilder, bb_count_range: RangeInclusive<usize>, i_count_
         CFG: {g}")
 }
 
+#[test]
+fn test_j_increment() {
+    let (g, _vals) = precompile("j ++ ++ ++ ++ ++", None, [0..=5]);
+
+    assert_size(&g, 1..=1, 1..=5);
+    assert!(g.blocks[0].instructions.values().any(|instr| matches!(&instr.op, OptOp::KsplangOpsIncrement(_))), "inc missing: {g}");
+
+    assert_eq!(&[ValueId::C_FIVE], g.stack.stack.as_slice());
+}
 
 #[test]
 fn test_dec_positive() {
@@ -312,23 +321,14 @@ fn test_zero_not_positive() {
     assert_eq!(1, g.stack.stack.len());
 }
 
-// TODO: fucking jump
-// #[test]
-// fn test_zero_not() {
-//     let p = "CS CS lensum ++ CS lensum ++ ++ ++ u CS CS lensum CS funkcia CS ++ u CS j ++ CS bulkxor";
-//     let (g, [x]) = precompile(p, None, [FULL_RANGE]);
-//     assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::Select(Condition::Eq(0i64.into(), x.into())), [ 1.into(), 0.into() ]));
-//     assert_size(&g, 1..=1, 3..=3);
-//     assert_eq!(1, g.stack.stack.len());
-// }
-// #[test]
-// fn test_not() {
-//     let p = "CS CS lensum ++ CS lensum ++ ++ ++ u CS CS lensum CS funkcia CS ++ u CS j ++ CS bulkxor";
-//     let (g, [x]) = precompile(p, None, [FULL_RANGE]);
-//     assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::Select(Condition::Eq(0i64.into(), x.into())), [ 1.into(), 0.into() ]));
-//     assert_size(&g, 1..=1, 3..=3);
-//     assert_eq!(1, g.stack.stack.len());
-// }
+#[test]
+fn test_zero_not() {
+    let p = "CS CS lensum ++ CS lensum ++ ++ ++ u CS CS lensum CS funkcia CS ++ u CS j ++ CS bulkxor";
+    let (g, [x]) = precompile(p, None, [FULL_RANGE]);
+    assert_pattern(&g, g.stack.stack[0], OptOptPattern::new(OptOp::Select(Condition::Eq(0i64.into(), x.into())), [ 1.into(), 0.into() ]));
+    assert_size(&g, 1..=1, 4..=4);
+    assert_eq!(1, g.stack.stack.len());
+}
 
 #[test]
 fn test_yoink_destructive() {
