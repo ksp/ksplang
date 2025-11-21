@@ -49,6 +49,14 @@ pub fn interpret_cfg(
 
             match op {
                 OptOp::Nop | OptOp::Checkpoint => continue,
+                OptOp::KsplangOpsIncrement(condition) => {
+                    if eval_condition(g, &values, condition) {
+                        for x in &instr.inputs {
+                            let x: u64 = resolve_value(g, &values, *x).try_into().unwrap();
+                            executed_ksplang += x;
+                        }
+                    }
+                }
                 OptOp::Jump(condition, target) => {
                     if eval_condition(g, &values, condition) {
                         let Some(target_block) = g.block(*target) else {

@@ -214,8 +214,44 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         // 0 >= (a - b) => b >= a
                         return condition.replace_arr([def.inputs[1], def.inputs[0]].into())
                     }
+                    if matches!(def.op, OptOp::AbsSub) && ac == 0 && def.inputs.len() == 2 {
+                        // same for AbsSub
+                        match condition {
+                            Condition::Eq(_, _) => return Condition::Eq(def.inputs[0], def.inputs[1]),
+                            Condition::Neq(_, _) => return Condition::Neq(def.inputs[0], def.inputs[1]),
+                            _ => { } // should not happen, it should be normalized to == / !=
+                        }
+                    }
 
-                    // if matches!(def.op, OptOp::AbsSub)
+                    if matches!(def.op, OptOp::AbsSub) && def.inputs.iter().all(|v| v.is_computed()) && ac > 0 {
+                        // abssub(a, sgn(a)) is used for i64::MIN checks (this is generalized for any boundary check just in case)
+                        let &[sub_a, sub_b] = def.inputs.as_slice() else { unreachable!() };
+                        if let Some(sub_b_info) = cfg.val_info(sub_b) &&
+                           let Some(def2) = sub_b_info.assigned_at.and_then(|iid| cfg.get_instruction(iid))
+                        {
+                            let sub_a_range = cfg.val_range_at(sub_a, at);
+                            let neg_range_max = sub_a_range.start().min(&0).unsigned_abs().saturating_sub(1);
+                            let pos_range_max = sub_a_range.end().max(&0).unsigned_abs().saturating_sub(1);
+                            if def2.op == OptOp::Sgn && def2.inputs[0] == sub_a && (ac as u64 > neg_range_max || ac as u64 > pos_range_max) {
+                                println!("Optimizing AbsSub({sub_b}=Sgn({sub_a}), {sub_a}): ac={ac}, {sub_a} range={sub_a_range:?}");
+                                assert!((ac as u64) <= pos_range_max.max(neg_range_max), "this should have returned False earlier");
+                                let (larger_ac, negative) = if neg_range_max >= ac as u64 {
+                                    (cfg.store_constant(-ac - 1), true)
+                                } else if pos_range_max >= ac as u64 {
+                                    (cfg.store_constant(ac.strict_add(1)), false)
+                                } else {
+                                    unreachable!()
+                                };
+
+                                match condition {
+                                    Condition::Eq(_, _) => return Condition::Eq(larger_ac, sub_a),
+                                    Condition::Neq(_, _) => return Condition::Neq(larger_ac, sub_a),
+                                    // Condition::Lt(_, _) => return // ac < |x - sgn(x)|    => 
+                                    _ => { todo!("{condition} {sub_a_range:?} {negative}") } // should not happen
+                                }
+                            }
+                        }
+                    }
 
                     // if matches!(def.op, OptOp::Mul) && def.inputs.len() == 2 && def.inputs[0].is_constant() { // TODO
                     //     // A > (b * C) => (A / C) > b
@@ -1268,6 +1304,10 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 else if nested.op == OptOp::Sub {
                     i.inputs = nested.inputs.clone();
                     continue;
+                }
+                else if nested.op == OptOp::Sgn && nested.inputs[0] == x {
+                    // |a - sgn(a)| will not overflow, just mark it as without effect
+                    i.effect = OpEffect::None;
                 }
             }
         }

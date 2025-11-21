@@ -259,7 +259,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         // let mut deopt = OptInstr::deopt(condition.clone());
                         // deopt.id = deopt_id;
                         // self.g.current_block_mut().instructions.insert(deopt_id.1, deopt);
-                        
+
                         self.g.push_deopt_assert(condition.clone().neg(), false);
                     }
                     self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);

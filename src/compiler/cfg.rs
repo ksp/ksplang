@@ -355,8 +355,7 @@ impl GraphBuilder {
             let jump_id = incoming[0];
             if params.is_empty() {
                 // init the stack with jump inputs
-                let jump = self.get_instruction_(jump_id);
-                for src in jump.inputs.clone() {
+                for src in self.get_instruction_(jump_id).inputs.clone() {
                     self.stack.push(src);
                 }
             } else {
@@ -367,7 +366,7 @@ impl GraphBuilder {
                 self.block_mut(block_id).unwrap().parameters.clear();
             }
 
-            self.instr_mut(jump_id).unwrap().inputs.clear();
+            self.update_instr_inuts(jump_id, |i| i.inputs.clear());
         } else {
             let jumps: Vec<&OptInstr> = incoming.iter().map(|j| self.get_instruction(*j).unwrap()).collect();
             let arg_count = jumps[0].inputs.len();
@@ -417,17 +416,17 @@ impl GraphBuilder {
                         }
                     }
                 }
-                
+
                 // filter block params
                 let new_params = keep_ix.iter().map(|&i| params[i]).collect();
                 self.block_mut(block_id).unwrap().parameters = new_params;
             }
             // filter jumps
             for &jid in &incoming {
-                if let Some(instr) = self.instr_mut(jid) {
+                self.update_instr_inuts(jid, |instr| {
                     let filtered = keep_ix.iter().map(|&i| instr.inputs[i]).collect();
                     instr.inputs = filtered;
-                }
+                })
             }
         }
 
@@ -1087,6 +1086,30 @@ impl GraphBuilder {
             panic!("Instruction {id} does not exist. Block: {}",  b);
         };
         instr
+    }
+
+    pub fn update_instr_inuts(&mut self, id: InstrId, f: impl FnOnce(&mut OptInstr) -> ()) {
+        let instr = self.instr_mut(id).unwrap();
+        let mut before: SmallVec<[ValueId; 12]> = instr.iter_inputs().filter(|v| v.is_computed()).collect();
+        before.sort();
+        before.dedup();
+
+        f(instr);
+
+        let mut after: SmallVec<[ValueId; 12]> = instr.iter_inputs().filter(|v| v.is_computed()).collect();
+        after.sort();
+        after.dedup();
+        for &val in &before {
+            if after.binary_search(&val).is_err() {
+                self.remove_used_at(val, id);
+            }
+        }
+        for &val in &after {
+            if before.binary_search(&val).is_err() {
+                let vi = self.values.get_mut(&val).unwrap();
+                vi.used_at.insert(id);
+            }
+        }
     }
 
     pub fn get_constant(&self, id: ValueId) -> Option<i64> {

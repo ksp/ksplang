@@ -18,8 +18,8 @@ pub fn u64neg(a: u64) -> i64 {
     (a as i64).wrapping_neg()
 }
 
-pub fn abs_range(r: RangeInclusive<i64>) -> RangeInclusive<u64> {
-    let (a, b) = r.into_inner();
+pub fn abs_range(r: impl Borrow<RangeInclusive<i64>>) -> RangeInclusive<u64> {
+    let (a, b) = r.borrow().clone().into_inner();
     if (a >= 0) == (b >= 0) {
         let (a, b) = sort_tuple(a.abs_diff(0), b.abs_diff(0));
         a..=b
