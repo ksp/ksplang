@@ -1195,7 +1195,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         if self.conf.allow_pruning {
             self.g.clean_poped_values();
         }
-        println!("Finalizing block. Stack: {}", self.g.fmt_stack());
+        if self.conf.should_log(3) {
+            println!("Finalizing block. Stack: {}", self.g.fmt_stack());
+        }
         self.g.stack.check_invariants();
         self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
         self.g.current_block_mut().is_finalized = true;

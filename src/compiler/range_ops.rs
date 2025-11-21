@@ -305,9 +305,11 @@ pub fn eval_combi<T1, T2, TR, F: FnMut(T1, T2) -> Option<TR>>(
                     }
                     count += 1;
                 }
-                y = y + T2::one();
+                let Some(y_) = y.checked_add(&T2::one()) else { break; };
+                y = y_;
             }
-            x = x + T1::one();
+            let Some(x_) = x.checked_add(&T1::one()) else { break; };
+            x = x_;
         }
         if count == 0 {
             return Some(TR::one()..=TR::zero());
