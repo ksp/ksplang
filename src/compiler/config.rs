@@ -1,4 +1,4 @@
-use std::{cmp, str::FromStr, sync::LazyLock};
+use std::{cmp, env, path::Path, str::FromStr, sync::LazyLock};
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +26,8 @@ pub struct JitConfig {
     pub min_gain_mul: u32,
 
     pub shrinker_final_verbosity: u8,
+
+    pub info_dump_dir: Option<String>,
 }
 
 impl JitConfig {
@@ -101,7 +103,9 @@ fn create_config() -> JitConfig {
         min_gain_const: parse_env("KSPLANGJIT_MIN_GAIN_CONST", 5),
         min_gain_mul: parse_env("KSPLANGJIT_MIN_GAIN_MUL", 2),
 
-        shrinker_final_verbosity: parse_env("KSPLANGJIT_SHRINKER_FINAL_VERBOSITY", verbosity)
+        shrinker_final_verbosity: parse_env("KSPLANGJIT_SHRINKER_FINAL_VERBOSITY", verbosity),
+
+        info_dump_dir: std::env::var("KSPLANGJIT_DUMPDIR").ok().filter(|c| !c.is_empty())
     };
 
     #[cfg(not(debug_assertions))] {
@@ -111,7 +115,6 @@ fn create_config() -> JitConfig {
     }
 
     c
-
 }
 
 static CELL: LazyLock<JitConfig> = LazyLock::new(|| create_config());

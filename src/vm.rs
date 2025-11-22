@@ -1,12 +1,12 @@
 //! Functions for executing ksplang programs.
 use core::panic;
-use std::{collections::{BTreeMap, HashMap}, mem, sync::Arc};
+use std::{collections::{BTreeMap, BTreeSet, HashMap}, fs::{File, create_dir_all}, io::{BufWriter, Write}, mem, path::Path, sync::Arc};
 
 use num_integer::{Integer, Roots};
 use smallvec::{SmallVec, ToSmallVec};
 use thiserror::Error;
 
-use crate::{compiler::{self, cfg::GraphBuilder, cfg_interpreter, config::get_config, osmibytecode::OsmibytecodeBlock, osmibytecode_vm, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::digit_sum, funkcia, ops::Op};
+use crate::{compiler::{self, cfg::GraphBuilder, cfg_interpreter, config::get_config, osmibytecode::{OsmibyteOp, OsmibytecodeBlock}, osmibytecode_vm, precompiler::{NoTrace, Precompiler, TraceProvider}}, digit_sum::digit_sum, funkcia, ops::Op};
 
 #[cfg(test)]
 mod tests;
@@ -1500,6 +1500,9 @@ impl OptimizingVM {
     }
 
     pub fn run(&mut self, input_stack: Vec<i64>, opt: VMOptions) -> Result<RunResult<NoStats>, RunError> {
+        if let Some(dump_dir) = &self.conf.info_dump_dir {
+            create_dir_all(Path::new(dump_dir)).unwrap();
+        }
         let program_len = self.program.len();
         let mut s: State<Optimizer> = State::new(opt.max_stack_size, opt.pi_digits, self.program.to_vec(), input_stack);
         s.tracer = mem::take(&mut self.opt);
@@ -1518,6 +1521,54 @@ impl OptimizingVM {
         s.ops = Arc::new(vec![]);
         s.pi_digits = &[];
         println!("final state: {:?}", s);
+
+        if let Some(dump_dir) = &self.conf.info_dump_dir {
+            let mut stats_file = BufWriter::new(File::create(Path::new(dump_dir).join("stats.csv")).unwrap());
+            writeln!(stats_file, "ip,rev,optimized,supressed,hits,cfg_bbs,cfg_ops,cfg_values,osmibyte_ops,osmibyte_jumps,osmibyte_deopts,osmibyte_regs,stat_entries,stat_opt_ops,stat_ksplang_ops,stat_exit_count,stat_exits").unwrap();
+            let ip_keys: BTreeSet<usize> = self.opt.visit_counter.keys().chain(self.opt.optimized_blocks.keys()).copied().collect();
+            for &key in &ip_keys {
+                let rev = key > (isize::MAX as usize);
+                let ip = if rev { !key } else { key };
+                let opt_block = self.opt.optimized_blocks.get(&key);
+                let visit_ctr = self.opt.visit_counter.get(&key);
+
+                write!(stats_file, "{ip},{rev},{},{},{}", opt_block.is_some(), visit_ctr.map_or(false, |x| x.supressed), visit_ctr.map_or(-1, |x| x.counter as i64)).unwrap();
+
+                if let Some(cfg) = opt_block.and_then(|b| b.cfg.as_ref()) {
+                    write!(stats_file, ",{},{},{}",
+                           cfg.reachable_blocks().count(),
+                           cfg.reachable_blocks().map(|b| b.instructions.len()).sum::<usize>(),
+                           cfg.values.len()
+                    ).unwrap();
+                } else {
+                    write!(stats_file, ",,,").unwrap();
+                }
+                if let Some(obc) = opt_block.and_then(|b| b.osmibytecode.as_ref()) {
+                    write!(stats_file, ",{},{},{},{}",
+                           obc.program.len(),
+                           obc.program.iter().filter(|p| matches!(p, OsmibyteOp::Jump(_, _))).count(),
+                           obc.deopts.len(),
+                           obc.program.iter().flat_map(|p| p.read_regs().into_iter()).collect::<BTreeSet<_>>().len()
+                    ).unwrap();
+                } else {
+                    write!(stats_file, ",,,,").unwrap();
+                }
+                if let Some(stats) = opt_block.map(|b| &b.stats) {
+                    let exits = stats.exit_count.iter().map(|(x, y)| format!("{}_{}:{}", x / u32::MAX as u64, x % u32::MAX as u64, y)).collect::<Vec<_>>();
+                    write!(stats_file, ",{},{},{},{},\"{}\"",
+                        stats.entry_count,
+                        stats.cfg_op_count,
+                        stats.ksplang_op_count,
+                        stats.exit_count.len(),
+                        exits.join(", ")
+                    ).unwrap()
+                } else {
+                    write!(stats_file, ",,,,,").unwrap()
+                }
+
+                writeln!(stats_file).unwrap();
+            }
+        }
 
         match result {
             Ok(()) => {
@@ -1689,6 +1740,16 @@ impl OptimizingVM {
         }
         let osmibytecode =
             self.conf.allow_osmibyte_backend.then(|| OsmibytecodeBlock::from_cfg(&cfg));
+
+        if let Some(dump_dir) = &self.conf.info_dump_dir {
+            use std::io::Write;
+            let mut f = BufWriter::new(File::create(Path::new(dump_dir).join(&format!("compiled-{}{}-cfg.txt", start_ip, if reversed { "-rev" } else { "" }))).unwrap());
+            writeln!(f, "Optimized at {start_ip} rev={reversed}: {cfg_instr_count} instructions, from {gain_from} ksplang").unwrap();
+            writeln!(f, "{cfg}").unwrap();
+            if let Some(obc) = &osmibytecode {
+                writeln!(f, "{obc}").unwrap();
+            }
+        }
 
         if self.conf.should_log(1) {
             println!("Optimized at {}{}:", start_ip, reversed.then_some(" reversed").unwrap_or(""));

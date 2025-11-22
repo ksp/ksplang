@@ -236,10 +236,19 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             }
                         }
                     }
+                    // remove preceeding Checkpoint, it's not needed for anything (does not work)
+                    // if let Some(prev_prev) = self.g.block_(anti_swap.0).instructions.range(0..anti_swap.1).last() &&
+                    //     prev_prev.1.op == OptOp::Checkpoint &&
+                    //     (self.g.block_(anti_swap.0).instructions.range(0..anti_swap.1).filter(|i| i.1.op == OptOp::Checkpoint).count() >= 2)
+                    // {
+                    //     let iid = prev_prev.1.id;
+                    //     self.g.remove_instruction(iid, true);
+                    // }
                     if val == prev_out {
                         // we are writing back the original value = no change needed
                         return prev_val;
                     }
+
 
                     self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
                     return prev_val;

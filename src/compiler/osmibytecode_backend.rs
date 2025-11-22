@@ -627,7 +627,6 @@ impl<'a> Compiler<'a> {
         self.save_deopt().unwrap();
         self.program.push(OsmibyteOp::StackRead(spec.target_reg(), index_reg, 0));
         self.finalize_output(spec);
-        self.current_deopt = None;
     }
 
     fn lower_jump(&mut self, instr: &OptInstr, condition: Condition<ValueId>, target: BlockId) {
