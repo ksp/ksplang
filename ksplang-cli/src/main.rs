@@ -155,7 +155,8 @@ fn print_stats(instruction_counter: u64, elapsed: Duration) {
 
 fn get_builtin_pi_digits() -> Vec<i8> {
     include_str!("../../pi-10million.txt")
-        .chars()
+        .bytes()
+        .map(|b| b as char)
         .filter(|&x| x.is_digit(10))
         .map(|x| x.to_digit(10).unwrap() as i8)
         .collect()

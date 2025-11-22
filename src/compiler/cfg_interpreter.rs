@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use rustc_hash::{FxHashMap as HashMap};
 
 use smallvec::SmallVec;
 
@@ -8,6 +8,8 @@ use crate::compiler::{
     osmibytecode::Condition,
 };
 use crate::vm::OperationError;
+
+type ValMap = HashMap<ValueId, i64>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CfgInterpretStats {
@@ -23,7 +25,7 @@ pub fn interpret_cfg(
     stack: &mut Vec<i64>,
     error_is_deopt: bool,
 ) -> Result<CfgInterpretStats, OperationError> {
-    let mut values: BTreeMap<ValueId, i64> = BTreeMap::new();
+    let mut values: ValMap = ValMap::default();
     let mut executed_cfg_ops: u64 = 0;
     let mut executed_ksplang: u64 = 0;
     let mut next_ip: usize = usize::MAX;
@@ -225,7 +227,7 @@ pub fn interpret_cfg(
 
 fn restore_deopt_state(
     g: &GraphBuilder,
-    values: &BTreeMap<ValueId, i64>,
+    values: &ValMap,
     stack: &mut Vec<i64>,
     start: InstrId,
 ) -> usize {
@@ -261,7 +263,7 @@ fn restore_deopt_state(
 
 fn revert_stack_effect(
     g: &GraphBuilder,
-    values: &BTreeMap<ValueId, i64>,
+    values: &ValMap,
     instr: &OptInstr,
     stack: &mut Vec<i64>,
 ) {
@@ -297,7 +299,7 @@ fn revert_stack_effect(
 
 fn build_stack_from_checkpoint<'a>(
     g: &'a GraphBuilder,
-    values: &'a BTreeMap<ValueId, i64>,
+    values: &'a ValMap,
     checkpoint_instr: &'a OptInstr,
 ) -> impl Iterator<Item = i64> + 'a {
     assert!(matches!(checkpoint_instr.op, OptOp::Checkpoint));
@@ -308,7 +310,7 @@ fn build_stack_from_checkpoint<'a>(
         .map(|value_id| resolve_value(g, values, *value_id))
 }
 
-fn resolve_value(g: &GraphBuilder, values: &BTreeMap<ValueId, i64>, id: ValueId) -> i64 {
+fn resolve_value(g: &GraphBuilder, values: &ValMap, id: ValueId) -> i64 {
     assert!(!id.is_null(), "Invalid CFG: null ValueId encountered during interpretation");
     if id.is_constant() {
         if let Some(value) = id.to_predefined_const() {
@@ -321,7 +323,7 @@ fn resolve_value(g: &GraphBuilder, values: &BTreeMap<ValueId, i64>, id: ValueId)
 
 fn eval_condition(
     g: &GraphBuilder,
-    values: &BTreeMap<ValueId, i64>,
+    values: &ValMap,
     condition: &Condition<ValueId>,
 ) -> bool {
     if condition == &Condition::True {

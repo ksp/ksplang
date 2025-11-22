@@ -1,4 +1,5 @@
 use smallvec::{smallvec, SmallVec};
+use rustc_hash::{FxHashMap as HashMap};
 
 use crate::compiler::{
     cfg::{BasicBlock, GraphBuilder},
@@ -161,8 +162,6 @@ fn get_common_instructions(
     g: &GraphBuilder,
     blocks: &[BlockId]
 ) -> Vec<(OptOp<ValueId>, SmallVec<[ValueId; 4]>, SmallVec<[InstrId; 4]>)> {
-    use std::collections::HashMap;
-
     assert!(!blocks.is_empty());
 
     // let mut blocks = blocks.to_vec();
@@ -177,7 +176,7 @@ fn get_common_instructions(
 
     // Initialize hashmap with instructions from the smallest block
     // Map: (op, inputs) -> SmallVec of InstrIds (one per block)
-    let mut instruction_map: HashMap<(OptOp<ValueId>, SmallVec<[ValueId; 4]>), SmallVec<[InstrId; 4]>> = HashMap::new();
+    let mut instruction_map: HashMap<(OptOp<ValueId>, SmallVec<[ValueId; 4]>), SmallVec<[InstrId; 4]>> = HashMap::default();
 
     let smallest_block = g.block_(blocks[starter_block]);
     for (_instr_idx, instr) in smallest_block.instructions.iter() {

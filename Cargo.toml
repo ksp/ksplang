@@ -15,6 +15,7 @@ num-integer = "0.1.46"
 num-traits = "0.2.19"
 smallvec = { version = "1.15.1", features = ["union", "const_generics", "const_new"] }
 arrayvec = "0.7.6"
+rustc-hash = "2.1.1"
 
 [workspace]
 members = [

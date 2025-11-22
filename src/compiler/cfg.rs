@@ -1,11 +1,19 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet, HashMap}, i32, ops::{Range, RangeInclusive}, u32
+    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet}, i32, ops::{Range, RangeInclusive}, u32
 };
+use rustc_hash::{FxHashMap as HashMap};
 
 use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
+
+#[cfg(debug_assertions)]
+use std::collections::{BTreeMap as Map, btree_map::Entry as MapEntry};
+#[cfg(not(debug_assertions))]
+use rustc_hash::{FxHashMap as Map};
+#[cfg(not(debug_assertions))]
+use std::collections::{hash_map::Entry as MapEntry};
 
 use crate::{compiler::{analyzer, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
 
@@ -52,7 +60,7 @@ impl BasicBlock {
             ksplang_start_ip: start_ip,
             ksplang_instr_count_additional: Vec::new(),
             ksplang_instr_count: 0,
-            predecessors: BTreeSet::new(),
+            predecessors: Default::default(),
             is_finalized: false,
             is_terminated: false,
             is_reachable: true,
@@ -143,7 +151,7 @@ pub struct StackState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct StackStateTracker {
     pub stack: Vec<ValueId>,
-    pub lookup: BTreeMap<ValueId, Vec<u32>>,
+    pub lookup: Map<ValueId, Vec<u32>>,
     pub poped_values: Vec<ValueId>, // values that were popped from the stack (will be checked if used somewhere, and maybe removed)
     pub stack_depth: u32,
     pub push_count: u32,
@@ -154,7 +162,7 @@ impl StackStateTracker {
     pub fn new() -> Self {
         Self {
             stack: Vec::new(),
-            lookup: BTreeMap::new(),
+            lookup: Default::default(),
             poped_values: Vec::new(),
             stack_depth: 0,
             push_count: 0,
@@ -247,14 +255,14 @@ impl StackStateTracker {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct GraphBuilder {
-    pub values: BTreeMap<ValueId, ValueInfo>,
-    pub replaced_values: BTreeMap<ValueId, ValueId>, // must keep track of this since Precompiler keeps some code fragments in branches
+    pub values: Map<ValueId, ValueInfo>,
+    pub replaced_values: Map<ValueId, ValueId>, // must keep track of this since Precompiler keeps some code fragments in branches
     pub blocks: Vec<BasicBlock>,
     pub current_block: BlockId,
     pub stack: StackStateTracker,
     pub next_val_id: i32,
     pub constants: Vec<i64>,
-    pub constant_lookup: BTreeMap<i64, ValueId>,
+    pub constant_lookup: Map<i64, ValueId>,
     pub value_index: HashMap<(OptOp<ValueId>, SmallVec<[ValueId; 4]>), Vec<(ValueId, InstrId)>>, // value numbering - common subexpression elimination
     pub assumed_program_position: Option<usize>,
     pub conf: &'static JitConfig
@@ -263,15 +271,15 @@ pub struct GraphBuilder {
 impl GraphBuilder {
     pub fn new(start_ip: usize) -> Self {
         Self {
-            values: BTreeMap::new(),
-            replaced_values: BTreeMap::new(),
+            values: Default::default(),
+            replaced_values: Default::default(),
             blocks: vec![BasicBlock::new(BlockId(0), start_ip, true, vec![])],
             current_block: BlockId(0),
             stack: StackStateTracker::new(),
             next_val_id: 1,
             constants: vec![],
-            constant_lookup: BTreeMap::new(),
-            value_index: HashMap::new(),
+            constant_lookup: Default::default(),
+            value_index: HashMap::default(),
             assumed_program_position: None,
             conf: get_config()
         }
@@ -473,7 +481,7 @@ impl GraphBuilder {
             assumptions: Vec::new(),
         };
         let entry = self.values.entry(id);
-        assert!(matches!(entry, std::collections::btree_map::Entry::Vacant(_)), "Value ID already exists: {:?}", entry);
+        assert!(matches!(entry, MapEntry::Vacant(_)), "Value ID already exists: {:?}", entry);
         entry.or_insert(info)
     }
 
@@ -1142,7 +1150,7 @@ impl GraphBuilder {
     }
 
     pub fn list_used_constants(&self) -> Vec<(ValueId, i64)> {
-        let mut used = HashMap::new();
+        let mut used = HashMap::default();
         for b in &self.blocks {
             for i in b.instructions.values() {
                 for v in i.iter_inputs() {

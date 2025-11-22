@@ -1,5 +1,6 @@
 use core::fmt;
-use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet}, mem, u32};
+use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap}, mem, u32};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use smallvec::{SmallVec, smallvec};
 
 use crate::compiler::{analyzer::dataflow, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{AssertInto, SaturatingInto}};
@@ -52,7 +53,7 @@ impl<'a> Compiler<'a> {
             large_constants: Vec::new(),
             large_constant_lookup: BTreeMap::new(),
             deopts: Vec::new(),
-            deopts_lookup: HashMap::new(),
+            deopts_lookup: HashMap::default(),
             ip2deopt: BTreeMap::new(),
             block_starts: BTreeMap::new(),
             register_allocation,
@@ -1349,7 +1350,7 @@ impl ValueSegment {
 #[derive(Clone, Debug)]
 struct ValueCandidate {
     value: ValueId,
-    segments: BTreeMap<BlockId, ValueSegment>,
+    segments: HashMap<BlockId, ValueSegment>,
     weight: u64,
     use_count: usize,
     has_phi_friends: bool,
@@ -1369,13 +1370,13 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
         println!("{lifetimes}");
     }
 
-    let mut value_segments: BTreeMap<ValueId, BTreeMap<BlockId, ValueSegment>> = BTreeMap::new();
+    let mut value_segments: HashMap<ValueId, HashMap<BlockId, ValueSegment>> = Default::default();
     let mut candidates: Vec<ValueCandidate> = lifetimes
         .ranges
         .iter()
         .filter(|(val, _)| val.is_computed())
         .filter_map(|(val, blocks)| {
-            let segments: BTreeMap<BlockId, ValueSegment> =
+            let segments: HashMap<BlockId, ValueSegment> =
                 blocks.iter().map(|(&block, &(from, to))| (block, ValueSegment::new(g.block_(block), from.1, to.1)))
                              .collect();
             if segments.is_empty() {
@@ -1394,8 +1395,8 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
     candidates.sort_by_key(|a|
         (a.weight / cmp::max(a.use_count as u64, 1), usize::MAX - a.use_count, a.value));
 
-    let mut register_segments: Vec<BTreeMap<BlockId, Vec<ValueSegment>>> = (0..reg_count).map(|_| BTreeMap::new()).collect();
-    let mut register_values: Vec<BTreeSet<ValueId>> = (0..reg_count).map(|_| BTreeSet::new()).collect();
+    let mut register_segments: Vec<HashMap<BlockId, Vec<ValueSegment>>> = (0..reg_count).map(|_| Default::default()).collect();
+    let mut register_values: Vec<HashSet<ValueId>> = (0..reg_count).map(|_| Default::default()).collect();
     let mut allocation = RegisterAllocation::default();
     let mut next_spill_slot: u32 = 0;
 
@@ -1449,7 +1450,7 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
     allocation
 }
 
-fn has_conflict(existing: &BTreeMap<BlockId, Vec<ValueSegment>>, candidate: &BTreeMap<BlockId, ValueSegment>) -> bool {
+fn has_conflict(existing: &HashMap<BlockId, Vec<ValueSegment>>, candidate: &HashMap<BlockId, ValueSegment>) -> bool {
     for (block, candidate_segment) in candidate {
         if let Some(existing_segments) = existing.get(block) {
             for present in existing_segments {
@@ -1467,11 +1468,11 @@ fn reduce_registers_with_phi_friends(
     candidate_regs: &mut BTreeSet<usize>,
     phi_friends: &BTreeMap<(ValueId, ValueId), u32>,
     allocation: &RegisterAllocation,
-    value_segments: &BTreeMap<ValueId, BTreeMap<BlockId, ValueSegment>>,
-    register_segments: &[BTreeMap<BlockId, Vec<ValueSegment>>],
+    value_segments: &HashMap<ValueId, HashMap<BlockId, ValueSegment>>,
+    register_segments: &[HashMap<BlockId, Vec<ValueSegment>>],
 ) -> SmallVec<[ValueId; 8]> {
     if candidate_regs.is_empty() { return smallvec![] }
-    let mut visited: HashSet<ValueId> = HashSet::new();
+    let mut visited: HashSet<ValueId> = HashSet::default();
     let mut queue: BinaryHeap<(u32, ValueId)> = BinaryHeap::new();
     let mut selected_friends: SmallVec<[ValueId; 8]> = SmallVec::new();
 
@@ -1558,8 +1559,8 @@ fn equivalence_preferences(g: &GraphBuilder) -> BTreeMap<(ValueId, ValueId), u32
 
 #[allow(dead_code)]
 fn remat_cost(g: &GraphBuilder, lr: &LiveRanges, max_cost: u32) -> HashMap<ValueId, HashMap<InstrId, u32>> {
-    let mut rematerializable: HashMap<ValueId, (u32, SmallVec<[ValueId; 4]>)> = HashMap::new();
-    let mut pulls_in: HashMap<(ValueId, InstrId), SmallVec<[ValueId;4]>> = HashMap::new();
+    let mut rematerializable: HashMap<ValueId, (u32, SmallVec<[ValueId; 4]>)> = HashMap::default();
+    let mut pulls_in: HashMap<(ValueId, InstrId), SmallVec<[ValueId;4]>> = HashMap::default();
     for v in g.values.values() {
         let Some(i) = v.assigned_at.and_then(|i| g.get_instruction(i)) else { continue; };
         // if i.effect != OpEffect::None && i.effect != OpEffect::MayFail { }
@@ -1610,7 +1611,7 @@ fn remat_cost(g: &GraphBuilder, lr: &LiveRanges, max_cost: u32) -> HashMap<Value
         Some(cost)
     }
 
-    let mut result: HashMap<ValueId, HashMap<InstrId, u32>> = HashMap::new();
+    let mut result: HashMap<ValueId, HashMap<InstrId, u32>> = HashMap::default();
     for val in g.values.values() {
         if !rematerializable.contains_key(&val.id) {
             continue;
@@ -1760,8 +1761,8 @@ fn analyze_value_lifetimes(g: &GraphBuilder, error_will_deopt: bool) -> LiveRang
             return required
         });
 
-    let mut ranges = HashMap::new();
-    let mut live_vars = HashMap::new();
+    let mut ranges = HashMap::default();
+    let mut live_vars = HashMap::default();
     for block in &g.blocks {
         let (defined_at, last_use) = get_value_usage_info(g, block, error_will_deopt);
 

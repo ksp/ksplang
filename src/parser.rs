@@ -22,7 +22,7 @@ pub enum ParserError {
 /// assert_eq!(op, Op::Praise);
 /// ```
 pub fn parse_word(word: &str) -> Result<Op, ParserError> {
-    assert!(!word.contains(|c: char| c.is_whitespace()));
+    debug_assert!(!word.contains(|c: char| c.is_whitespace()));
     let op = match word.to_lowercase().as_ref() {
         // Note that while Op::Nop exists, it is not a part of the language.
         "praise" => Op::Praise,

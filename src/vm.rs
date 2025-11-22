@@ -1,6 +1,7 @@
 //! Functions for executing ksplang programs.
 use core::panic;
-use std::{collections::{BTreeMap, BTreeSet, HashMap}, fs::{File, create_dir_all}, io::{BufWriter, Write}, mem, path::Path, sync::Arc};
+use std::{collections::{BTreeMap, BTreeSet}, fs::{File, create_dir_all}, io::{BufWriter, Write}, mem, path::Path, sync::Arc};
+use rustc_hash::{FxHashMap as HashMap};
 
 use num_integer::{Integer, Roots};
 use smallvec::{SmallVec, ToSmallVec};

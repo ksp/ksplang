@@ -1,4 +1,5 @@
-use std::{cmp, collections::{HashMap, VecDeque}, ops::RangeInclusive, vec};
+use std::{cmp, collections::{VecDeque}, ops::RangeInclusive, vec};
+use rustc_hash::{FxHashMap as HashMap};
 
 use num_integer::Integer;
 use smallvec::{SmallVec, smallvec};
@@ -105,7 +106,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             instr_limit: usize::MAX,
             g: initial_graph,
             termination_ip,
-            visited_ips: HashMap::new(),
+            visited_ips: HashMap::default(),
             pending_branches: VecDeque::new(),
             conf: get_config().clone(),
             tracer
