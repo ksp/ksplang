@@ -11,10 +11,6 @@ use crate::compiler::{
 pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
     let pred_block = g.block_(predecessor);
 
-    if pred_block.ksplang_instr_count_additional.len() > 0 {
-        return false;
-    }
-
     let mut successors = pred_block.following_blocks();
     successors.sort();
     successors.dedup();

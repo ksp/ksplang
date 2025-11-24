@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, cmp, ops::RangeInclusive};
+use std::{borrow::Borrow, cmp, ops::{RangeBounds, RangeInclusive}};
 
 use arrayvec::ArrayVec;
 use num_integer::Integer;
@@ -8,6 +8,23 @@ use crate::{compiler::utils::{abs_range, range_2_i64, u64neg, union_range}, vm};
 
 pub type IRange = RangeInclusive<i64>;
 pub type URange = RangeInclusive<u64>;
+
+#[inline]
+pub fn from_rangebounds(r: impl RangeBounds<i64>) -> RangeInclusive<i64> {
+    let start = match r.start_bound() {
+        std::ops::Bound::Excluded(&i64::MAX) => return 1..=0,
+        std::ops::Bound::Excluded(&x) => x + 1,
+        std::ops::Bound::Included(&x) => x,
+        std::ops::Bound::Unbounded => i64::MIN,
+    };
+    let end = match r.end_bound() {
+        std::ops::Bound::Excluded(&i64::MIN) => return 1..=0,
+        std::ops::Bound::Excluded(&x) => x - 1,
+        std::ops::Bound::Included(&x) => x,
+        std::ops::Bound::Unbounded => i64::MAX,
+    };
+    return start..=end;
+}
 
 #[inline]
 pub fn range_signum(r: RangeInclusive<i64>) -> RangeInclusive<i64> {

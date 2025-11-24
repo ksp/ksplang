@@ -1,8 +1,10 @@
-use std::{cmp, ops::RangeInclusive};
+use std::{cmp, ops::RangeInclusive, sync::LazyLock};
 
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
 use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, osmibytecode::Condition}, vm::OperationError};
+
+use super::pattern::{OptOptPattern as P};
 
 fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeInclusive<i64>> {
     let start = *a.start().max(b.start());
@@ -108,7 +110,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                 // Condition::Neq(_, _) if *ar.start() == *ar.end() && *br.start().wrapping_add(1) == *br.end() =>
                 Condition::Lt(_, _) if ar.end() < br.start() => return Condition::True,
                 Condition::Lt(_, _) if ar.start() >= br.end() => return Condition::False,
-                // Condition::Lt(_, _) if ar.end() == br.start() 
+                // Condition::Lt(_, _) if ar.end() == br.start()
                 Condition::Gt(_, _) if ar.start() > br.end() => return Condition::True,
                 Condition::Gt(_, _) if ar.end() <= br.start() => return Condition::False,
                 Condition::Leq(_, _) if ar.end() <= br.start() => return Condition::True,
@@ -246,7 +248,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                                 match condition {
                                     Condition::Eq(_, _) => return Condition::Eq(larger_ac, sub_a),
                                     Condition::Neq(_, _) => return Condition::Neq(larger_ac, sub_a),
-                                    // Condition::Lt(_, _) => return // ac < |x - sgn(x)|    => 
+                                    // Condition::Lt(_, _) => return // ac < |x - sgn(x)|    =>
                                     _ => { todo!("{condition} {sub_a_range:?} {negative}") } // should not happen
                                 }
                             }
@@ -514,7 +516,7 @@ pub fn extract_effect(g: &mut GraphBuilder, current_effect: OpEffect, op: &OptOp
         OptOp::Gcd => {
             // may overflow if all arguments are equal to i64::MIN
             let may_fail = args.iter().any(|a| *g.val_range(*a).start() != i64::MIN);
-            
+
             if may_fail {
                 (OpEffect::MayFail, vec![])
             } else {
@@ -642,7 +644,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
     if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::StackRead | OptOp::Const(_)) {
         return (i, None);
     }
-    
+
     let mut iter = 0;
     let mut change_path: Vec<(OptOp<ValueId>, SmallVec<[ValueId; 4]>, SmallVec<[RangeInclusive<i64>; 4]>)> = Vec::new();
     'main: loop {
@@ -1001,6 +1003,52 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 }
             }
 
+            OptOp::Median if i.inputs.len() >= 3 => {
+                let n = i.inputs.len();
+                // Peeling: Remove pairs of (min, max) if we know that min <= other args <= max
+                let min_idx = ranges.iter().enumerate().position(|(i, r)|
+                    ranges.iter().enumerate().all(|(j, other)| i == j || r.end() <= other.start())
+                );
+                let max_idx = ranges.iter().enumerate().position(|(i, r)|
+                    ranges.iter().enumerate().all(|(j, other)| i == j || r.start() >= other.end())
+                );
+
+                if let (Some(min), Some(max)) = (min_idx, max_idx) {
+                    assert!(min != max, "what {:?}", i);
+                    i.inputs = i.inputs.into_iter().enumerate().filter(|(ix, _)| *ix != min && *ix != max).map(|(_, v)| v).collect();
+                    continue;
+                }
+
+                // if we know (n // 2) elements are <= all others, convert to Min
+                //                                  >=                        Max
+                if n % 2 == 1 {
+                    let k = (n - 1) / 2;
+                    let mut indices: SmallVec<[usize; 8]> = (0..n).collect();
+
+                    indices.sort_by_key(|&idx| ranges[idx].end());
+                    let (small, large) = indices.split_at(k);
+
+                    if small.iter().map(|&i| ranges[i].end()).max().unwrap() <=
+                       large.iter().map(|&i| ranges[i].start()).min().unwrap()
+                    {
+                        i.op = OptOp::Min;
+                        i.inputs = large.iter().map(|&idx| i.inputs[idx]).collect();
+                        continue;
+                    }
+
+                    indices.sort_by_key(|&idx| ranges[idx].start());
+                    let (small, large) = indices.split_at(k + 1);
+
+                    if small.iter().map(|&i| ranges[i].end()).max().unwrap() <=
+                       large.iter().map(|&i| ranges[i].start()).min().unwrap()
+                    {
+                        i.op = OptOp::Max;
+                        i.inputs = small.iter().map(|&idx| i.inputs[idx]).collect();
+                        continue;
+                    }
+                }
+            }
+
             OptOp::Max => {
                 // Elide redundant arguments: in max(vs...), remove any argument 'a'
                 // for which there exists some 'b' with max(range_a) <= min(range_b),
@@ -1317,27 +1365,28 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         // OR a + ((a / 2) * -2 - 2)
         // which is equivalent to (a % 2) - 2
         if OptOp::Add == i.op && !i.inputs[0].is_constant() && i.inputs.len() == 2 && i.inputs[0] != i.inputs[1] {
-            let mul_pattern =
-                OptOptPattern::new(OptOp::Mul, vec![
-                    OptOptPattern::new_const(-2),
-                    OptOptPattern::new(OptOp::Add, vec![
-                        OptOptPattern::new_const(1),
-                        OptOptPattern::new(OptOp::Div, vec![
-                            OptOptPattern::new_any().named("v2"),
-                            OptOptPattern::new_const(2)
-                        ])
-                    ])
-                ]).or_op(OptOp::Add, vec![
-                    OptOptPattern::new_const(-2),
-                    OptOptPattern::new(OptOp::Mul, vec![
-                        OptOptPattern::new_const(-2),
-                        OptOptPattern::new(OptOp::Div, vec![
-                            OptOptPattern::new_any().named("v2"),
-                            OptOptPattern::new_const(2)
-                        ])
-                    ])
-                ]);
-            if let Ok(r) = mul_pattern.try_match(cfg, &i.inputs) {
+            const MUL_PATTERN: LazyLock<OptOptPattern> = LazyLock::new(||
+                P::op2(OptOp::Mul,
+                    -2,
+                    P::op2(OptOp::Add,
+                        1,
+                        P::op2(OptOp::Div,
+                            P::any().named("v2"),
+                            2
+                        )
+                    )
+                ).or_op(OptOp::Add, [
+                    P::const_(-2),
+                    P::op2(OptOp::Mul,
+                        -2,
+                        P::op2(OptOp::Div,
+                            P::any().named("v2"),
+                            2
+                        )
+                    )
+                ])
+            );
+            if let Ok(r) = MUL_PATTERN.try_match(cfg, &i.inputs) {
                 let a = r.get_named_single("v2").unwrap();
                 if i.inputs.contains(&a) {
                     // rewrite to (a % 2) - 2
@@ -1354,15 +1403,16 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         // (a / 2 * 2) + (a % 2) which is equivalent to a
         // TODO: do the transform whenever (a / 2 * 2) is used in additive context?
         if OptOp::Add == i.op && !i.inputs[0].is_constant() && i.inputs.len() == 2 && i.inputs[0] != i.inputs[1] {
-            let mul_pattern =
-                OptOptPattern::new(OptOp::Mul, vec![
-                    OptOptPattern::new_constant(2..=i64::MAX).named("div1"),
-                    OptOptPattern::new(OptOp::Div, vec![
-                        OptOptPattern::new_any().named("v2"),
-                        OptOptPattern::new_constant(2..=i64::MAX).named("div2")
-                    ])
-                ]);
-            if let Ok(r) = mul_pattern.try_match(cfg, &i.inputs) {
+            static MUL_PATTERN: LazyLock<OptOptPattern> = LazyLock::new(||
+                P::op2(OptOp::Mul,
+                    P::constant(2..).named("div1"),
+                    P::op2(OptOp::Div,
+                        P::any().named("v2"),
+                        P::constant(2..).named("div2")
+                    )
+                )
+            );
+            if let Ok(r) = MUL_PATTERN.try_match(cfg, &i.inputs) {
                 if r.get_named_single("div1") == r.get_named_single("div2") {
                     let a = r.get_named_single("v2").unwrap();
                     // let c = cfg.get_constant_(r.get_named_single("div1").unwrap());

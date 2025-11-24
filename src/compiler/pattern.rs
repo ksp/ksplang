@@ -1,8 +1,8 @@
-use std::{borrow::Cow, collections::BTreeMap, fmt, ops::{Range, RangeInclusive}, sync::Arc};
+use std::{borrow::Cow, collections::BTreeMap, fmt, ops::{Range, RangeBounds, RangeInclusive}, sync::Arc};
 
 use smallvec::SmallVec;
 
-use crate::compiler::{cfg::GraphBuilder, ops::{OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange};
+use crate::compiler::{cfg::GraphBuilder, ops::{OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::{IRange, from_rangebounds}};
 
 #[derive(Clone)]
 pub struct HackEqDebug<T, TId>(pub T, pub TId);
@@ -23,7 +23,7 @@ pub struct OptOptPattern<'a> {
     pub options_ops: Vec<(OptOp<Box<OptOptPattern<'a>>>, Vec<OptOptPattern<'a>>)>,
     pub anything_in_range: SmallVec<[(i64, i64); 1]>,
     pub constant_in_range: SmallVec<[(i64, i64); 1]>,
-    pub custom: Option<HackEqDebug<Arc<dyn Fn(&GraphBuilder, &[ValueId], &mut MatchInfo<'a>) -> Option<ValueId> + 'a>, String>>,
+    pub custom: Option<HackEqDebug<Arc<dyn Fn(&GraphBuilder, &[ValueId], &mut MatchInfo<'a>) -> Option<ValueId> + Sync + Send + 'a>, String>>,
     pub greedy_backrefs: Vec<Cow<'a, str>>,
     pub name: Option<Cow<'a, str>>,
     pub variadic: bool,
@@ -32,22 +32,22 @@ pub struct OptOptPattern<'a> {
 }
 
 impl From<ValueId> for OptOptPattern<'_> {
-    fn from(val: ValueId) -> Self { OptOptPattern::new_val(val) }
+    fn from(val: ValueId) -> Self { OptOptPattern::val(val) }
 }
 impl From<ValueId> for Box<OptOptPattern<'_>> {
-    fn from(val: ValueId) -> Self { OptOptPattern::new_val(val).boxed() }
+    fn from(val: ValueId) -> Self { OptOptPattern::val(val).boxed() }
 }
 impl From<IRange> for OptOptPattern<'_> {
-    fn from(range: IRange) -> Self { OptOptPattern::new_constant(range) }
+    fn from(range: IRange) -> Self { OptOptPattern::constant(range) }
 }
 impl From<IRange> for Box<OptOptPattern<'_>> {
-    fn from(range: IRange) -> Self { OptOptPattern::new_constant(range).boxed() }
+    fn from(range: IRange) -> Self { OptOptPattern::constant(range).boxed() }
 }
 impl From<i64> for OptOptPattern<'_> {
-    fn from(c: i64) -> Self { OptOptPattern::new_const(c) }
+    fn from(c: i64) -> Self { OptOptPattern::const_(c) }
 }
 impl From<i64> for Box<OptOptPattern<'_>> {
-    fn from(c: i64) -> Self { OptOptPattern::new_const(c).boxed() }
+    fn from(c: i64) -> Self { OptOptPattern::const_(c).boxed() }
 }
 
 // impl<'a, T1, T2> From<(T1, T2)> for Vec<OptOptPattern<'a>> where T1: Into<OptOptPattern<'a>>, T2: Into<OptOptPattern<'a>> {
@@ -60,39 +60,39 @@ impl From<i64> for Box<OptOptPattern<'_>> {
 // }
 
 impl<'a> OptOptPattern<'a> {
-    pub fn new(op: OptOp<Box<OptOptPattern<'a>>>, args: impl Into<Vec<OptOptPattern<'a>>>) -> Self {
+    pub fn op(op: OptOp<Box<OptOptPattern<'a>>>, args: impl Into<Vec<OptOptPattern<'a>>>) -> Self {
         Self::default().or_op(op, args.into())
     }
 
-    pub fn new_op0(op: OptOp<Box<OptOptPattern<'a>>>) -> Self {
+    pub fn op0(op: OptOp<Box<OptOptPattern<'a>>>) -> Self {
         Self::default().or_op(op, vec![])
     }
-    pub fn new_op1(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>) -> Self {
+    pub fn op1(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>) -> Self {
         Self::default().or_op(op, vec![a.into()])
     }
-    pub fn new_op2(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>, b: impl Into<OptOptPattern<'a>>) -> Self {
+    pub fn op2(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>, b: impl Into<OptOptPattern<'a>>) -> Self {
         Self::default().or_op(op, vec![a.into(), b.into()])
     }
 
-    pub fn new_val(val: ValueId) -> Self {
+    pub fn val(val: ValueId) -> Self {
         Self::default().or_value(val)
     }
 
-    pub fn new_range(range: RangeInclusive<i64>) -> Self {
+    pub fn range(range: RangeInclusive<i64>) -> Self {
         Self::default().or_in_range(range)
     }
 
-    pub fn new_constant(range: RangeInclusive<i64>) -> Self {
-        Self::default().or_constant(range)
+    pub fn constant(range: impl RangeBounds<i64>) -> Self {
+        Self::default().or_constant(from_rangebounds(range))
     }
 
-    pub fn new_const(x: i64) -> Self { Self::new_constant(x..=x) }
+    pub fn const_(x: i64) -> Self { Self::constant(x..=x) }
 
-    pub fn new_backref(name: impl Into<Cow<'a, str>>) -> Self {
+    pub fn newbackref(name: impl Into<Cow<'a, str>>) -> Self {
         Self::default().or_backref(name)
     }
 
-    pub fn new_any() -> Self { Self::new_range(i64::MIN..=i64::MAX) }
+    pub fn any() -> Self { Self::range(i64::MIN..=i64::MAX) }
 
     pub fn or_value(mut self, val: ValueId) -> Self {
         self.options_values.push(val);

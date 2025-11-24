@@ -86,9 +86,6 @@ pub fn interpret_cfg(
                         }
 
                         executed_ksplang += block.ksplang_instr_count as u64;
-                        for x in &block.ksplang_instr_count_additional {
-                            executed_ksplang += resolve_value(g, &values, *x) as u64;
-                        }
 
                         current_block = *target;
                         continue 'block;

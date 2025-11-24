@@ -1,6 +1,6 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet}, i32, ops::{Range, RangeInclusive}, u32
+    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet, VecDeque}, i32, ops::{Range, RangeInclusive}, u32
 };
 use rustc_hash::{FxHashMap as HashMap};
 
@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap as Map};
 #[cfg(not(debug_assertions))]
 use std::collections::{hash_map::Entry as MapEntry};
 
-use crate::{compiler::{analyzer, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
+use crate::{compiler::{analyzer::{self, cond_implies}, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -43,7 +43,6 @@ pub struct BasicBlock {
     pub is_reachable: bool,
     pub ksplang_start_ip: usize,
     pub ksplang_instr_count: u32,
-    pub ksplang_instr_count_additional: Vec<ValueId>,
     pub predecessors: BTreeSet<BlockId>, // all dominators
                                         // pub successors: Vec<BlockId>,
 }
@@ -102,12 +101,11 @@ impl BasicBlock {
     pub fn richer_fmt(&self, f: &mut fmt::Formatter<'_>,
                              mut val_range: impl FnMut(ValueId) -> IRange)
         -> fmt::Result {
-        writeln!(f, "BB {}({}) [{}...{}{}] {{",
+        writeln!(f, "BB {}({}) [{}...{}] {{",
             self.id,
             self.parameters.iter().map(|v| format!("{}", v)).collect::<Vec<_>>().join(", "),
             self.ksplang_start_ip,
             self.ksplang_instr_count,
-            self.ksplang_instr_count_additional.iter().map(|v| format!(" + {}", v)).collect::<String>()
         )?;
         if !self.predecessors.is_empty() {
             writeln!(f, "    // preds: {}", self.predecessors.iter().map(|b| format!("{}", b)).collect::<Vec<_>>().join(", "))?;

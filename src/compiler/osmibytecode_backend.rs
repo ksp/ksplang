@@ -84,11 +84,6 @@ impl<'a> Compiler<'a> {
                 if block.ksplang_instr_count != 0 {
                     self.program.push(OsmibyteOp::KsplangOpsIncrement(block.ksplang_instr_count));
                 }
-                for &xx in &block.ksplang_instr_count_additional {
-                    let reg = self.materialize_value_(xx);
-                    self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg));
-                    self.temp_regs.release(reg);
-                }
             }
             let consumed = self.compile_instruction(&instrs[i..]);
             assert_ne!(0, consumed);

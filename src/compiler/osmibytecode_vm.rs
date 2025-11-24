@@ -488,7 +488,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 },
                 OsmibyteOp::LoadConst(out, c) => regs[out] = *c as i64,
                 OsmibyteOp::LoadConstPow2Offset(out, pow, offset) => {
-                    let val = (1u64 << pow).overflowing_add_signed(*offset as i64).0;
+                    let val = (1u64 << pow).wrapping_add_signed(*offset as i64);
                     regs[out] = val as i64;
                 },
                 OsmibyteOp::LoadConst64(out, id) => { regs[out] = prog.large_constants[*id as usize] },
@@ -512,7 +512,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 },
                 OsmibyteOp::Done(continue_at, ctr_inc) => {
                     simply_done = Some(*continue_at as usize);
-                    ksplang_ops_done = ksplang_ops_done.overflowing_add_signed(*ctr_inc as i64).0;
+                    ksplang_ops_done = ksplang_ops_done.wrapping_add_signed(*ctr_inc as i64);
                     exit_point.get_or_insert(ExitPointId::Done(ip));
                     break 'main;
                 },
@@ -541,11 +541,11 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 }
                 OsmibyteOp::KsplangOp(_op) => panic!("probably does not make sense anymore?"),
                 OsmibyteOp::KsplangOpWithArg(_op, _) => todo!("probably does not make sense anymore?"),
-                OsmibyteOp::KsplangOpsIncrement(x) => { ksplang_ops_done = ksplang_ops_done.overflowing_add(*x as u64).0 },
+                OsmibyteOp::KsplangOpsIncrement(x) => { ksplang_ops_done = ksplang_ops_done.wrapping_add(*x as u64) },
                 OsmibyteOp::KsplangOpsIncrementVar(x) => { ksplang_ops_done = ksplang_ops_done.wrapping_add(regs[x] as u64); },
                 OsmibyteOp::KsplangOpsIncrementCond(condition, x) => {
                     if eval_cond(&regs, condition.clone()) {
-                        ksplang_ops_done = ksplang_ops_done.overflowing_add(*x as u64).0
+                        ksplang_ops_done = ksplang_ops_done.wrapping_add(*x as u64)
                     }
                 },
                 OsmibyteOp::Spill(ix, a) => {
@@ -591,7 +591,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
             // println!("DEOPT at {ip}: {deopt_id} {:?}", deopt);
             exit_point.get_or_insert(ExitPointId::Deopt(deopt_id));
             performing_deopt = Some(deopt_id);
-            ksplang_ops_done = ksplang_ops_done.overflowing_add_signed(deopt.ksplang_ops_increment as i64).0;
+            ksplang_ops_done = ksplang_ops_done.wrapping_add_signed(deopt.ksplang_ops_increment as i64);
             program = &deopt.opcodes;
             ip = 0;
         } else if let Some(deopt_id) = performing_deopt {
