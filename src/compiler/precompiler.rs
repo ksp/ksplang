@@ -1,4 +1,4 @@
-use std::{cmp, collections::{VecDeque}, ops::RangeInclusive, vec};
+use std::{cmp, collections::{BTreeSet, VecDeque}, ops::RangeInclusive, os::unix::process::CommandExt, vec};
 use rustc_hash::{FxHashMap as HashMap};
 
 use num_integer::Integer;
@@ -9,6 +9,7 @@ use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_
 pub trait TraceProvider {
     // type TracePointer
     fn get_results<'a>(&'a mut self, ip: usize) -> impl Iterator<Item = (u32, SmallVec<[i64; 2]>)> + 'a;
+    fn get_observed_stack_values<'a>(&'a mut self, ip: usize, depths: &[usize]) -> Vec<Vec<i64>>;
     fn is_lazy(&self) -> bool;
 
     fn get_branch_targets<'a>(&'a mut self, ip: usize) -> impl Iterator<Item = usize>;
@@ -19,6 +20,9 @@ pub struct NoTrace();
 impl TraceProvider for NoTrace {
     fn get_results<'a>(&'a mut self, _ip: usize) -> impl Iterator<Item = (u32, SmallVec<[i64; 2]>)> + 'a {
         std::iter::empty()
+    }
+    fn get_observed_stack_values<'a>(&'a mut self, _ip: usize, _depths: &[usize]) -> Vec<Vec<i64>> {
+        vec![]
     }
     fn is_lazy(&self) -> bool { false }
 
@@ -182,6 +186,97 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         }
 
         PrecompileStepResult::NevimJakChteloByToKonstantu(vec![target])
+    }
+
+    fn resolve_constants(&mut self, needed: &[ValueId]) -> Option<Vec<PrecompileStepResultBranch>> {
+        if needed.is_empty() { return None; }
+
+        let Some(depths): Option<Vec<usize>> = needed.iter()
+            .map(|&val| self.g.stack.stack.iter().rev().position(|&v| v == val))
+            .collect() else {
+            if self.g.conf.should_log(2) {
+                println!("Warning: resolve_constants called with a non-stack value")
+            }
+            return None;
+        };
+        let max_depth = *depths.iter().max()?;
+
+        let observed_combinations: BTreeSet<_> = self.tracer.get_observed_stack_values(self.position, &depths).into_iter().collect();
+
+        println!("Trying to resolve constants from {needed:?}: {observed_combinations:?}");
+
+        if observed_combinations.is_empty() || observed_combinations.len() > 1 {
+            return None;
+        }
+
+        let stack_len = self.g.stack.stack.len();
+        let pop_count = max_depth + 1;
+        let start_index = stack_len - pop_count;
+        let original_values_vec = self.g.stack.stack[start_index..].to_vec();
+
+        let mut branches = Vec::new();
+
+        for combination in &observed_combinations {
+            let condition_raw = if needed.len() == 1 {
+                let c = self.g.store_constant(combination[0]);
+                Condition::Eq(needed[0], c)
+            } else {
+                let mut match_val = ValueId::C_ONE;
+                for (j, &val) in needed.iter().enumerate() {
+                    let const_val = combination[j];
+                    let const_id = self.g.store_constant(const_val);
+                    let eq = self.g.value_numbering(OptOp::Select(Condition::Eq(val, const_id)), &[ValueId::C_ONE, ValueId::C_ZERO], None, None);
+                    match_val = self.g.value_numbering(OptOp::And, &[match_val, eq], None, None);
+                }
+                self.g.stack.poped_values.push(match_val);
+                Condition::Eq(ValueId::C_ONE, match_val)
+            };
+
+            let next_iid = self.g.next_instr_id();
+            let condition = simplify_cond(&mut self.g, condition_raw.clone(), next_iid);
+            let mut new_values = original_values_vec.clone();
+            for (j, _) in needed.iter().enumerate() {
+                let index_in_slice = pop_count - 1 - depths[j];
+                new_values[index_in_slice] = self.g.store_constant(combination[j]);
+            }
+
+            branches.push(PrecompileStepResultBranch {
+                target: self.position,
+                condition: condition.clone(),
+                stack: (new_values.len(), new_values),
+                call_ret: None,
+                additional_instr: vec![],
+            });
+            if condition == Condition::True {
+                // aha, perfect
+                return Some(vec![ branches.pop().unwrap() ])
+            }
+            if condition == Condition::False {
+                // well well
+                // panic!("Warning: n-gate, we can't be both right: tracer says {needed:?}={combination:?}, but compiler says no to {}\n\n{}", condition_raw, self.g);//.current_block_ref());
+                // actually, it's 100% fine, we might very well be in some branch which prohibits this
+                return None
+            }
+
+        }
+        // self.g.push_checkpoint(); prob not worth it?
+        if branches.len() == 1 {
+            self.g.push_deopt_assert(branches[0].condition.clone(), false);
+            branches[0].condition = Condition::True;
+        } else {
+            // TODO: make sure we auto-insert deopt
+            branches.push(PrecompileStepResultBranch {
+                target: self.position,
+                condition: Condition::True,
+                stack: (0, vec![]),
+                call_ret: None,
+                additional_instr: vec![
+                    (OptOp::DeoptAssert(Condition::True), vec![], ValueId(0))
+                ]
+            })
+        }
+
+        Some(branches)
     }
 
     pub fn push_swap(&mut self, ix: ValueId, val: ValueId) -> ValueId {
@@ -1113,8 +1208,19 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
             let stack_counts = (self.g.stack.push_count, self.g.stack.pop_count);
             self.visited_ips.entry(self.position).or_default().visits += 1;
-            let result = self.step();
+            let mut result = self.step();
+
+
+            if let PrecompileStepResult::NevimJakChteloByToKonstantu(ref needed) = result {
+                if let Some(branches) = self.resolve_constants(needed) {
+                    self.instr_interpreted_count -= 1;
+                    self.g.current_block_mut().ksplang_instr_count -= 1;
+                    result = PrecompileStepResult::Branching(branches);
+                }
+            }
+
             self.g.current_block_mut().ksplang_instr_count += 1;
+
             match result {
                 PrecompileStepResult::Continue => {}
                 PrecompileStepResult::NevimJak | PrecompileStepResult::NevimJakChteloByToKonstantu(_) => {

@@ -208,9 +208,9 @@ pub fn interpret_cfg(
     }
 
     if let Some(deopt_instr) = deoptimized {
-        let i = g.get_instruction_(deopt_instr);
-        executed_ksplang += i.ksp_instr_count as u64; // TODO: this seems invalid, it should be the deopt instr, right?
-        next_ip = restore_deopt_state(g, &values, stack, deopt_instr);
+        let mut ctr_inc = 0;
+        next_ip = restore_deopt_state(g, &values, stack, deopt_instr, &mut ctr_inc);
+        executed_ksplang = executed_ksplang.strict_add_signed(ctr_inc);
     }
 
     Ok(CfgInterpretStats {
@@ -227,6 +227,7 @@ fn restore_deopt_state(
     values: &ValMap,
     stack: &mut Vec<i64>,
     start: InstrId,
+    ctr: &mut i64,
 ) -> usize {
     let block_id = start.block_id();
 
@@ -235,15 +236,17 @@ fn restore_deopt_state(
     if let Some(instr) = block.instructions.get(&start.1) {
         if matches!(instr.op, OptOp::Checkpoint) {
             stack.extend(build_stack_from_checkpoint(g, values, instr));
+            *ctr += instr.ksp_instr_count as i64;
             return instr.program_position;
         }
     }
 
     for (_, instr) in block.instructions.range(..start.1).rev() {
-        revert_stack_effect(g, values, instr, stack);
+        revert_stack_effect(g, values, instr, stack, ctr);
 
         if matches!(instr.op, OptOp::Checkpoint) {
             stack.extend(build_stack_from_checkpoint(g, values, instr));
+            *ctr += instr.ksp_instr_count as i64;
             return instr.program_position;
         }
     }
@@ -255,7 +258,8 @@ fn restore_deopt_state(
     assert_eq!(block.incoming_jumps.len(), 1, "Cannot recover deopt state: block {block_id} has multiple incoming edges");
 
     let prev_instr = block.incoming_jumps[0];
-    return restore_deopt_state(g, values, stack, prev_instr);
+    *ctr -= g.block_(prev_instr.0).ksplang_instr_count as i64;
+    restore_deopt_state(g, values, stack, prev_instr, ctr)
 }
 
 fn revert_stack_effect(
@@ -263,8 +267,9 @@ fn revert_stack_effect(
     values: &ValMap,
     instr: &OptInstr,
     stack: &mut Vec<i64>,
+    ctr: &mut i64
 ) {
-    match instr.op {
+    match &instr.op {
         OptOp::Push => {
             for arg in instr.inputs.iter().rev() {
                 let expected = resolve_value(g, values, *arg);
@@ -289,6 +294,13 @@ fn revert_stack_effect(
 
             assert!(instr.out.is_computed());
             stack[idx as usize] = values[&instr.out];
+        }
+        OptOp::KsplangOpsIncrement(cond) => {
+            if eval_condition(g, values, cond) {
+                for x in &instr.inputs {
+                    *ctr -= resolve_value(g, values, *x);
+                }
+            }
         }
         _ => {}
     }

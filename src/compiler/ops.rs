@@ -787,6 +787,9 @@ impl OptInstr {
                 }
             }
         }
+        if matches!(self.op, OptOp::Checkpoint) {
+            write!(f, "  ctr = {}", self.ksp_instr_count)?;
+        }
         write!(f, "")
     }
 }

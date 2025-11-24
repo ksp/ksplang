@@ -36,7 +36,7 @@ impl Tracer for NoStats {
 /// Can also be used to track pushed and popped values.
 ///
 /// You can implement this trait to track any statistics you need.
-pub trait Tracer: Default {
+pub trait Tracer {
     fn push(&mut self, value: i64);
     fn pop(&mut self);
     fn instruction(&mut self, ip: usize, op: Op, result: &Result<Effect, OperationError>) -> Result<(), RunError>;
@@ -322,7 +322,7 @@ pub(crate) fn median(values: &mut [i64]) -> i64 {
 }
 
 impl<'a, TTracer: Tracer> State<'a, TTracer> {
-    fn new(max_stack_size: usize, pi_digits: &'a [i8], ops: Vec<Op>, stack: Vec<i64>) -> Self {
+    fn new(max_stack_size: usize, pi_digits: &'a [i8], ops: Vec<Op>, stack: Vec<i64>, tracer: TTracer) -> Self {
         State {
             max_stack_size,
             pi_digits,
@@ -336,13 +336,13 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             reverse_undo_stack: vec![],
             stack,
             ops: Arc::new(ops),
-            tracer: Default::default(),
+            tracer,
             conf: get_config()
         }
     }
 
     fn change_tracer<T2: Tracer>(self, new_tracer: impl FnOnce(TTracer) -> T2) -> State<'a, T2> {
-        State {
+         State {
             stack: self.stack,
             max_stack_size: self.max_stack_size,
             pi_digits: self.pi_digits,
@@ -360,10 +360,13 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
         }
     }
 
-    fn swap_tracer<T2: Tracer>(mut self, new_tracer: T2) -> (TTracer, State<'a, T2>) {
-        let old = mem::take(&mut self.tracer);
-        let result = self.change_tracer(move |_| { new_tracer });
-        (old, result)
+    fn swap_tracer<T2: Tracer>(self, new_tracer: T2) -> (TTracer, State<'a, T2>) {
+        let mut old = None;
+        let result = self.change_tracer(|old_| {
+            old = Some(old_);
+            new_tracer
+        });
+        (old.unwrap(), result)
     }
 
     fn clear(&mut self) {
@@ -1032,7 +1035,7 @@ impl<T: Tracer> From<State<'_, T>> for RunResult<T> {
 /// assert!(result.is_ok());
 /// assert_eq!(result.unwrap().stack, vec![2]);
 pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult<NoStats>, RunError> {
-    run_with_stats::<NoStats>(ops, options)
+    run_with_stats::<NoStats>(ops, options, NoStats::default())
 }
 
 /// Run a ksplang program with the given options and collect statistics.
@@ -1043,8 +1046,9 @@ pub fn run(ops: &[Op], options: VMOptions) -> Result<RunResult<NoStats>, RunErro
 pub fn run_with_stats<T: Tracer>(
     ops: &[Op],
     options: VMOptions,
+    tracer: T
 ) -> Result<RunResult<T>, RunError> {
-    let mut s: State<T> = State::new(options.max_stack_size, options.pi_digits, ops.to_vec(), options.initial_stack.to_vec());
+    let mut s: State<T> = State::new(options.max_stack_size, options.pi_digits, ops.to_vec(), options.initial_stack.to_vec(), tracer);
     run_state(&mut s, &options)?;
     Ok(s.into())
 }
@@ -1341,7 +1345,8 @@ impl Tracer for Optimizer {
 }
 
 #[derive(Debug, Clone, Default)]
-struct ActualTracer {
+pub struct ActualTracer {
+    pub initial_stack_sample: Box<[i64]>,
     pub values: Vec<i64>,
     pub ips: Vec<usize>,
     pub pop_push_counts: Vec<(u32, u32)>,
@@ -1351,7 +1356,6 @@ struct ActualTracer {
     pub total_pushes: u32,
     pub total_pops: u32,
     pub max_count: u32,
-    pub break_ip: usize,
     pub record_jump_location: bool,
     pub start_block_location: usize,
     pub start_block_ix: usize,
@@ -1402,7 +1406,7 @@ impl Tracer for ActualTracer {
         if matches!(op, Op::Sum | Op::Sleep | Op::Rev | Op::Deez | Op::KPi | Op::FF) {
             return false;
         }
-        if self.max_count == 0 || self.break_ip == ip || self.values.len() > i32::MAX as usize {
+        if self.max_count == 0 || self.values.len() > i32::MAX as usize {
             return false;
         }
         self.max_count -= 1;
@@ -1415,6 +1419,13 @@ impl Tracer for ActualTracer {
 }
 
 impl ActualTracer {
+    pub fn new(init_stack: &[i64], max_count: u32) -> Self {
+        Self {
+            initial_stack_sample: init_stack.into(),
+            max_count,
+            ..Default::default()
+        }
+    }
     fn find_trace_ix<'a>(&'a self, ip: usize) -> impl Iterator<Item = usize> + 'a {
         let rev = self.reversed;
         let dir = if rev { -1 } else { 1 };
@@ -1462,6 +1473,46 @@ impl TraceProvider for ActualTracer {
             self.get_pushes(ix)
         })
     }
+    fn get_observed_stack_values<'a>(&'a mut self, ip: usize, depths: &[usize]) -> Vec<Vec<i64>> {
+        let mut results = Vec::new();
+        // for trace_ix in self.find_trace_ix(ip) {
+        //     for 
+        // }
+
+        // FIXME: vibecoded garbage bruteforce solution
+        let mut stack: Vec<i64> = self.initial_stack_sample.to_vec();
+
+        for i in 0..self.ips.len() {
+            let curr_ip = self.ips[i];
+
+            if curr_ip == ip {
+                let mut combination = Vec::new();
+                let mut valid = true;
+                for &depth in depths {
+                    if depth >= stack.len() {
+                        valid = false;
+                        break;
+                    }
+                    // stack is 0..top, depth is from top (0 is top)
+                    let index = stack.len() - 1 - depth;
+                    combination.push(stack[index]);
+                }
+                if valid {
+                    results.push(combination);
+                }
+            }
+
+            let (pops, pushes) = self.get_pushes(i);
+            let pops = pops as usize;
+            if pops > stack.len() {
+                stack.clear();
+            } else {
+                stack.truncate(stack.len() - pops);
+            }
+            stack.extend(pushes);
+        }
+        results
+    }
     fn is_lazy(&self) -> bool { false }
 
     fn get_branch_targets<'a>(&'a mut self, ip: usize) -> impl Iterator<Item = usize> {
@@ -1505,7 +1556,7 @@ impl OptimizingVM {
             create_dir_all(Path::new(dump_dir)).unwrap();
         }
         let program_len = self.program.len();
-        let mut s: State<Optimizer> = State::new(opt.max_stack_size, opt.pi_digits, self.program.to_vec(), input_stack);
+        let mut s: State<Optimizer> = State::new(opt.max_stack_size, opt.pi_digits, self.program.to_vec(), input_stack, Optimizer::default());
         s.tracer = mem::take(&mut self.opt);
         self.optimize_start(&mut s, &opt);
 
@@ -1600,6 +1651,9 @@ impl OptimizingVM {
             s.tracer.has_interrupted = false;
 
             if last_opt_ops == 0 || s.tracer.get_block(s.reversed, s.ip).is_none() {
+                if last_opt_ops == 0 {
+                    s.tracer.has_jumped = 0; // hack supress breaking
+                }
                 if should_log_runtime {
                     println!("Running normal interpreter at {} {}", s.ip, s.reversed);
                 }

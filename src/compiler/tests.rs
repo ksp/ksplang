@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 
 use rand::{Rng, SeedableRng};
 
-use crate::{compiler::{cfg::GraphBuilder, ops::{BlockId, OptOp, ValueId}, osmibytecode::{Condition, OsmibyteOp, OsmibytecodeBlock, RegId}, pattern::OptOptPattern, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{NoStats, RunError, RunResult, VMOptions}};
+use crate::{compiler::{cfg::GraphBuilder, ops::{BlockId, OptOp, ValueId}, osmibytecode::{Condition, OsmibyteOp, OsmibytecodeBlock, RegId}, pattern::OptOptPattern, precompiler::{NoTrace, Precompiler}, utils::FULL_RANGE}, parser, vm::{ActualTracer, NoStats, RunError, RunResult, VMOptions, run_with_stats}};
 
 const PUSH_0: &str = "CS CS lensum CS funkcia";
 const PUSH_1: &str = "CS CS lensum CS funkcia ++";
@@ -388,15 +388,39 @@ fn test_sub_range_check() {
     assert_eq!(g.stack.stack.len(), 1);
 }
 
-// #[test]
-// fn test_min2() {
-//     let p = "CS CS lensum CS funkcia ++ praise qeq pop2 pop2 funkcia ++ bitshift pop2 pop2 pop2 CS CS lensum CS funkcia ++ praise qeq pop2 pop2 funkcia ++ bitshift pop2 pop2 pop2 CS CS lensum ++ CS lensum ++ ++ ++ m CS CS lensum ++ CS lensum ++ ++ max % CS CS CS ++ gcd ++ ++ ++ u j j ++ ++ pop2 pop2 pop2 m pop2 CS ++ CS pop2 CS pop2 CS % ++ ++ ++ ++ ++ ++ ++ j pop ++ m pop2 pop2 pop2 CS pop pop2 pop2";
-//
-//     let (g, [a, b]) = precompile(p, None, [FULL_RANGE, FULL_RANGE]);
-//     assert_pattern(&g, g.stack.stack[0], OptOptPattern::op2(OptOp::Min, a, b));
-//     assert_size(&g, 1..=1, 4..=4);
-//     assert_eq!(g.stack.stack.len(), 1);
-// }
+#[test]
+fn test_min2() {
+    let p = "CS CS lensum CS funkcia ++ praise qeq pop2 pop2 funkcia ++ bitshift pop2 pop2 pop2 CS CS lensum CS funkcia ++ praise qeq pop2 pop2 funkcia ++ bitshift pop2 pop2 pop2 CS CS lensum ++ CS lensum ++ ++ ++ m CS CS lensum ++ CS lensum ++ ++ max % CS CS CS ++ gcd ++ ++ ++ u j j ++ ++ pop2 pop2 pop2 m pop2 CS ++ CS pop2 CS pop2 CS % ++ ++ ++ ++ ++ ++ ++ j pop ++ m pop2 pop2 pop2 CS pop pop2 pop2";
+
+    // Collect trace
+    let parsed = parser::parse_program(p).unwrap();
+    let initial_stack = vec![1000, 2000];
+    let options = VMOptions::new(&initial_stack, 1000, &[], 10000, 10000);
+    let run_result = run_with_stats::<ActualTracer>(&parsed, options, ActualTracer::new(&initial_stack, 10000)).unwrap();
+    let trace = run_result.tracer;
+
+    println!("trace: {:?}", trace);
+
+    // Precompile with trace
+    let mut g = GraphBuilder::new(0);
+    let a = g.new_value().id;
+    g.values.get_mut(&a).unwrap().range = FULL_RANGE;
+    let b = g.new_value().id;
+    g.values.get_mut(&b).unwrap().range = FULL_RANGE;
+
+    g.stack.push(a);
+    g.stack.push(b);
+    g.block_mut_(BlockId(0)).parameters.push(a);
+    g.block_mut_(BlockId(0)).parameters.push(b);
+
+    let mut precompiler = Precompiler::new(&parsed, 1000, false, 0, 100_000, true, None, g, trace);
+    precompiler.interpret();
+    let g = precompiler.g;
+
+    assert_pattern(&g, g.stack.stack[0], OptOptPattern::op2(OptOp::Min, a, b));
+    assert_size(&g, 1..=1, 4..=4);
+    assert_eq!(g.stack.stack.len(), 1);
+}
 
 // #[test]
 // fn test_ismin() {

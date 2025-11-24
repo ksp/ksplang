@@ -57,7 +57,6 @@ impl BasicBlock {
             outgoing_jumps: Vec::new(),
             next_instr_id: INSTR_ID_STEP,
             ksplang_start_ip: start_ip,
-            ksplang_instr_count_additional: Vec::new(),
             ksplang_instr_count: 0,
             predecessors: Default::default(),
             is_finalized: false,

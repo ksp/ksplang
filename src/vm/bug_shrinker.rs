@@ -452,22 +452,26 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             settings.interpret_limit
         );
         println!("  outcome: {outcome}");
-        if let Some((stack, ip)) = initial_mismatch {
-            println!(
-                "  initial optimized next_ip {} stack {}",
-                ip,
-                format_stack_preview(stack)
-            );
-        } else {
-            println!("  initial optimized result: panic");
+        if let OutcomeKind::Mismatch { optimized_stack, optimized_ip, reference_stack, reference_ip } = &outcome.kind {
+            println!("  interpreted result: IP={reference_ip} {}", format_stack_preview(reference_stack));
+            println!("  compiled    result: IP={optimized_ip}: {}", format_stack_preview(optimized_stack));
         }
-        if let Some((stack, ip)) = initial_baseline {
-            println!(
-                "  initial reference next_ip {} stack {}",
-                ip,
-                format_stack_preview(stack)
-            );
-        }
+        // if let Some((stack, ip)) = initial_mismatch {
+        //     println!(
+        //         "  initial optimized next_ip {} stack {}",
+        //         ip,
+        //         format_stack_preview(stack)
+        //     );
+        // } else {
+        //     println!("  initial optimized result: panic");
+        // }
+        // if let Some((stack, ip)) = initial_baseline {
+        //     println!(
+        //         "  initial reference next_ip {} stack {}",
+        //         ip,
+        //         format_stack_preview(stack)
+        //     );
+        // }
 
         panic!("shrinker: mismatch reproduced at {}: {outcome:?}", self.start_state.ip);
     }

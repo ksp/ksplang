@@ -83,6 +83,9 @@ impl<'a> Compiler<'a> {
 
                 if block.ksplang_instr_count != 0 {
                     self.program.push(OsmibyteOp::KsplangOpsIncrement(block.ksplang_instr_count));
+                    if let Some(deopt) = &mut self.current_deopt {
+                        deopt.ksplang_ops_increment -= block.ksplang_instr_count as i64;
+                    }
                 }
             }
             let consumed = self.compile_instruction(&instrs[i..]);
@@ -268,9 +271,8 @@ impl<'a> Compiler<'a> {
 
     fn lower_max(&mut self, instrs: &[&OptInstr]) -> usize {
         let max = instrs[0];
-        assert_eq!(2, max.inputs.len());
 
-        if let Some(lo_const) = self.g.get_constant(max.inputs[0]) {
+        if let Some(lo_const) = self.g.get_constant(max.inputs[0]) && max.inputs.len() == 2 {
             if let Some(&min) = instrs.get(1) {
                 // min(hi_const, max(lo_const, x)) -> clamp(x, lo_const, hi_const)
                 if min.op == OptOp::Min && min.inputs.len() == 2 && min.inputs[1] == max.out &&
@@ -578,7 +580,9 @@ impl<'a> Compiler<'a> {
                 .chain([OsmibyteOp::create_push(&out_regs)])
                 .chain(deopt.opcodes.iter().cloned())
                 .collect();
+            println!("Modified deopt {deopt:?} to include push {out_regs:?}");
             deopt.opcodes = new_code;
+            println!("{deopt:?}");
         }
         pops.len()
     }
@@ -1102,63 +1106,81 @@ impl<'a> Compiler<'a> {
         }
 
         self.with_clean_program(move |this| {
-            let incoming = b.incoming_jumps[0].0;
-            // let mut ops = vec![];
-            let mut stack_push = vec![];
-            let mut stack_pop = 0;
-            let mut result = None;
-            for (_iid, i) in this.g.block_(incoming).instructions.iter().rev() {
-                match &i.op {
-                    OptOp::Pop => {
-                        if !i.out.is_computed() {
-                            return None
-                        }
-                        stack_push.push(i.out);
-                    }
-                    OptOp::Push => {
-                        for _ in &i.inputs {
-                            if stack_push.len() > 0 {
-                                stack_push.pop().unwrap();
-                            } else {
-                                stack_pop += 1;
-                            }
-                        }
-                    }
-                    OptOp::StackSwap => {
-                        if !i.out.is_computed() {
-                            return None
-                        }
-                        let val = this.materialize_value_(i.out);
-                        let ix = this.materialize_value_(i.inputs[0]);
-                        this.program.push(OsmibyteOp::StackWrite(ix, val, 0));
-                        this.temp_regs.release(val);
-                        this.temp_regs.release(ix);
-                    }
-                    // TODO: ksplang counter increment revert
-                    OptOp::Checkpoint => {
-                        result = Some((i.program_position, i.ksp_instr_count, i.inputs[1..].to_vec()))
-                    }
-                    _ => { }
-                }
-            }
-
-            if let Some((ip, ksplang_count, mut stack)) = result {
-                let ksplang_count = ksplang_count as i64 - this.g.block_(incoming).ksplang_instr_count as i64;
-                stack.splice(0..stack_pop, stack_push);
-                let stack = this.materialize_deopt_stack(&stack);
-                Some(DeoptInfo::new(ip, &stack, ksplang_count, &this.program))
-            } else {
-                this.lower_push(&stack_push, false);
-
-                if let Some(mut deopt) = this.prepare_block_deopt(incoming) {
-                    deopt.stack_reconstruction.drain(0..stack_pop);
-                    Some(deopt)
-                } else {
-                    return None;
-                }
-            }
-
+            this.prepare_block_deopt_core(bid)
         })
+    }
+
+    fn prepare_block_deopt_core(&mut self, bid: BlockId) -> Option<DeoptInfo> {
+        let b = self.g.block_(bid);
+        if b.is_entry() {
+            return Some(DeoptInfo::new(b.ksplang_start_ip, &[], 0, &self.program))
+        }
+        if b.incoming_jumps.len() != 1 {
+            return None
+        }
+        let incoming = b.incoming_jumps[0].0;
+        let incoming_ctr_inc = self.g.block_(incoming).ksplang_instr_count as i64;
+        // let mut ops = vec![];
+        let mut stack_push = vec![];
+        let mut stack_pop = 0;
+        let mut result = None;
+        for (_iid, i) in self.g.block_(incoming).instructions.iter().rev() {
+            match &i.op {
+                OptOp::Pop => {
+                    if !i.out.is_computed() {
+                        return None
+                    }
+                    stack_push.push(i.out);
+                }
+                OptOp::Push => {
+                    for _ in &i.inputs {
+                        if stack_push.len() > 0 {
+                            stack_push.pop().unwrap();
+                        } else {
+                            stack_pop += 1;
+                        }
+                    }
+                }
+                OptOp::StackSwap => {
+                    if !i.out.is_computed() {
+                        return None
+                    }
+                    let val = self.materialize_value_(i.out);
+                    let ix = self.materialize_value_(i.inputs[0]);
+                    self.program.push(OsmibyteOp::StackWrite(ix, val, 0));
+                    self.temp_regs.release(val);
+                    self.temp_regs.release(ix);
+                }
+                // TODO: ksplang counter increment revert
+                OptOp::Checkpoint => {
+                    result = Some((i.program_position, i.ksp_instr_count, i.inputs[1..].to_vec()));
+                    break;
+                }
+                _ => { }
+            }
+        }
+        println!("Prepared deopt of {bid} with incoming {incoming}");
+        println!(" Stack: -{stack_pop}  + {stack_push:?}");
+
+        if let Some((ip, ksplang_count, mut stack)) = result {
+            let ksplang_count = ksplang_count as i64 - incoming_ctr_inc;
+            stack.splice(0..stack_pop, stack_push);
+            let stack = self.materialize_deopt_stack(&stack);
+            println!("  {ip} {stack:?} {ksplang_count:?} {:?}", self.program);
+            Some(DeoptInfo::new(ip, &stack, ksplang_count, &self.program))
+        } else {
+            self.lower_push(&stack_push, false);
+
+            if let Some(mut deopt) = self.prepare_block_deopt_core(incoming) {
+                println!(" bleh {deopt:?}");
+                assert_eq!(0, stack_pop);
+                deopt.stack_reconstruction.drain(0..stack_pop);
+                deopt.ksplang_ops_increment -= incoming_ctr_inc;
+                Some(deopt)
+            } else {
+                return None;
+            }
+        }
     }
 
     fn materialize_deopt_stack(&mut self, stack: &[ValueId]) -> Vec<RegId> {
