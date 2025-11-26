@@ -1159,20 +1159,18 @@ impl<'a> Compiler<'a> {
                 _ => { }
             }
         }
-        println!("Prepared deopt of {bid} with incoming {incoming}");
-        println!(" Stack: -{stack_pop}  + {stack_push:?}");
+        // println!("Prepared deopt of {bid} with incoming {incoming}");
+        // println!(" Stack: -{stack_pop}  + {stack_push:?}");
 
         if let Some((ip, ksplang_count, mut stack)) = result {
             let ksplang_count = ksplang_count as i64 - incoming_ctr_inc;
             stack.splice(0..stack_pop, stack_push);
             let stack = self.materialize_deopt_stack(&stack);
-            println!("  {ip} {stack:?} {ksplang_count:?} {:?}", self.program);
             Some(DeoptInfo::new(ip, &stack, ksplang_count, &self.program))
         } else {
             self.lower_push(&stack_push, false);
 
             if let Some(mut deopt) = self.prepare_block_deopt_core(incoming) {
-                println!(" bleh {deopt:?}");
                 assert_eq!(0, stack_pop);
                 deopt.stack_reconstruction.drain(0..stack_pop);
                 deopt.ksplang_ops_increment -= incoming_ctr_inc;

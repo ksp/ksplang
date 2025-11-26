@@ -56,6 +56,46 @@ pub fn range_mod(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> 
     return min..=max;
 }
 
+/// Returns input-range -> output-range pairs, inside the range the mod is a fixed offset
+pub fn mod_split_ranges(x_range: IRange, m: i64, euclid: bool) -> Vec<(IRange, IRange)> {
+    let (x_start, x_end) = x_range.into_inner();
+    let (k_start, k_end) = if true   { (x_start.div_euclid(m), x_end.div_euclid(m)) }
+                           else      { (x_start / m, x_end / m) };
+
+    let mut result: Vec<(IRange, IRange)> = vec![];
+    for k in k_start..=k_end {
+        let (chunk_start, chunk_end) = if euclid || k >= 0 {
+            (k * m, k * m + m - 1)
+        } else {
+            // non-euclidean for m=10 will be split as:
+            // -19..-10, -9..-1, 0..9, 10..19
+            (k * m + 1, cmp::min(-1, k * m + m))
+        };
+
+        let chunk_start = chunk_start.max(x_start);
+        let chunk_end = chunk_end.min(x_end);
+
+        let (result_start, result_end) = if euclid {
+            (chunk_start.rem_euclid(m), chunk_end.rem_euclid(m))
+        } else {
+            (chunk_start % m, chunk_end % m)
+        };
+        println!("{chunk_start} {chunk_end} {result_start} {result_end}");
+        assert_eq!(chunk_start - chunk_end, result_start - result_end);
+
+        if let Some(last) = result.last_mut() &&
+            *last.1.end() + 1 == result_start
+        {
+            assert_eq!(chunk_start - 1, *last.0.end());
+            *last = (*last.0.start()..=chunk_end, *last.1.start()..=result_end);
+        }
+        else {
+            result.push((chunk_start..=chunk_end, result_start..=result_end));
+        }
+    }
+    result
+}
+
 pub fn range_mod_euclid(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> RangeInclusive<i64> {
     let b_abs = abs_range(b_range.clone());
 
@@ -552,4 +592,13 @@ fn test_range_bitops() {
             }
         }
     }
+}
+
+#[test]
+fn test_mod_split_range() {
+    assert_eq!(mod_split_ranges(-15..=15, i64::MAX, true).as_slice(), [(-15..=-1, 9223372036854775792..=9223372036854775806), (0..=15, 0..=15)]);
+    assert_eq!(mod_split_ranges(-15..=15, i64::MAX, false).as_slice(), [(-15..=15, -15..=15)]);
+    assert_eq!(mod_split_ranges(-15..=15, 7, false).as_slice(), [(-15..=-14, -1..=0), (-13..=-7, -6..=0), (-6..=6, -6..=6), (7..=13, 0..=6), (14..=15, 0..=1)]);
+    assert_eq!(mod_split_ranges(-15..=15, 7, true).as_slice(), [(-15..=-15, 6..=6), (-14..=-8, 0..=6), (-7..=-1, 0..=6), (0..=6, 0..=6), (7..=13, 0..=6), (14..=15, 0..=1)]);
+    assert_eq!(mod_split_ranges(-1..=15, 7, false).as_slice(), [(-1..=6, -1..=6), (7..=13, 0..=6), (14..=15, 0..=1)]);
 }

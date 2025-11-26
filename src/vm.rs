@@ -1228,9 +1228,11 @@ struct OptimizedBlock {
     start_ip: usize,
     reversed: bool,
 
-    cfg: Option<Box<GraphBuilder>>,
-    osmibytecode: Option<OsmibytecodeBlock>,
     stats: BlockStats,
+
+    osmibytecode: Option<OsmibytecodeBlock>,
+    cfg: Option<Box<GraphBuilder>>,
+    original_tracer: Option<Box<ActualTracer>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1749,8 +1751,9 @@ impl OptimizingVM {
         p.interpret();
         let g = p.g;
         let instr_interpreted_count = p.instr_interpreted_count;
+        let t = p.tracer;
 
-        self.save_block(&mut s, start_ip, reversed, g, instr_interpreted_count);
+        self.save_block(&mut s, start_ip, reversed, g, instr_interpreted_count, Some(t));
 
         (s, Ok(()))
     }
@@ -1768,7 +1771,7 @@ impl OptimizingVM {
         p.instr_limit = self.conf.start_instr_limit as usize;
         p.interpret();
 
-        self.save_block(s, 0, false, p.g, p.instr_interpreted_count);
+        self.save_block(s, 0, false, p.g, p.instr_interpreted_count, None);
     }
 
     fn build_block(&self, start_ip: usize, reversed: bool, cfg: GraphBuilder, osmibytecode: Option<OsmibytecodeBlock>) -> OptimizedBlock {
@@ -1777,13 +1780,14 @@ impl OptimizingVM {
         OptimizedBlock {
             cfg,
             osmibytecode,
+            original_tracer: None,
             reversed,
             start_ip,
             stats: BlockStats::default(),
         }
     }
 
-    fn save_block(&self, s: &mut State<'_, Optimizer>, start_ip: usize, reversed: bool, cfg: GraphBuilder, gain_from: usize) {
+    fn save_block(&self, s: &mut State<'_, Optimizer>, start_ip: usize, reversed: bool, cfg: GraphBuilder, gain_from: usize, tracer: Option<ActualTracer>) {
         let cfg_instr_count = cfg.reachable_blocks().map(|b| b.instructions.len()).count();
         if self.conf.min_gain_mul as usize * cfg_instr_count + (self.conf.min_gain_const as usize) > gain_from {
             if self.conf.should_log(2) {
@@ -1818,7 +1822,14 @@ impl OptimizingVM {
             println!("===================================================================");
         }
 
-        let b = self.build_block(start_ip, reversed, cfg, osmibytecode);
+        let b = OptimizedBlock {
+            cfg: (osmibytecode.is_none() || self.conf.verify > 0).then(|| Box::new(cfg)),
+            osmibytecode: osmibytecode,
+            original_tracer: (self.conf.verify >= 3 && tracer.is_some()).then(|| Box::new(tracer.unwrap())),
+            reversed: reversed,
+            start_ip: start_ip,
+            stats: BlockStats::default(),
+        };
         s.tracer.insert_block(b);
     }
 }

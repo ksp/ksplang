@@ -1,4 +1,4 @@
-use std::{cmp, fmt::Display, mem, panic};
+use std::{cmp, fmt::Display, mem, panic, sync::Arc};
 
 use super::{
     run_state, ActualTracer, BlockInterpretResult, NoStats, OperationError, Optimizer, OptimizedBlock,
@@ -29,8 +29,10 @@ pub fn verify_block<'prog, 'opts>(
         (optimized_stack, r)
     }).unwrap_or_else(|err| {
         println!("{}", format_panic_message("Optimized block", err));
-        run_shrinker(vm, options, start_state.clone(), None, None);
+        run_shrinker(vm, options, start_state.clone(), None, None, block.original_tracer.as_ref().map(|t| t.as_ref().clone()));
     });
+
+    let original_tracer = block.original_tracer.as_ref().map(|t| t.as_ref().clone());
 
     let mut reference_state = start_state.clone();
     let mut reference_options = options.clone();
@@ -62,6 +64,7 @@ pub fn verify_block<'prog, 'opts>(
         start_state,
         Some((&optimized_stack, optimized_result.next_ip)),
         Some((&reference_state.stack, reference_state.ip)),
+        original_tracer
     );
 }
 
@@ -71,9 +74,10 @@ fn run_shrinker<'prog, 'opts>(
     start_state: State<'prog, NoStats>,
     initial_mismatch: Option<(&[i64], usize)>,
     initial_baseline: Option<(&[i64], usize)>,
+    original_tracer: Option<ActualTracer>,
 ) -> ! {
     let mut ctx = ShrinkingContext::new(vm, options.clone(), start_state);
-    let (settings, outcome) = ctx.find_reproducing_settings();
+    let (settings, outcome) = ctx.find_reproducing_settings(original_tracer);
     println!("Identified repro settings: {settings:?}. Now shrinking the settings.");
     // TODO: write repro with settings to file
     let (settings, outcome) = ctx.shrink_settings(settings, outcome);
@@ -96,6 +100,7 @@ struct CompileSettings {
     instr_limit: usize,
     interpret_limit: usize,
     override_verbosity: Option<u8>,
+    set_tracer: Option<Arc<ActualTracer>>
 }
 
 struct ShrinkingContext<'vm, 'prog, 'opts> {
@@ -172,11 +177,12 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             instr_limit: self.vm.conf.adhoc_instr_limit as usize,
             interpret_limit: self.vm.conf.adhoc_interpret_limit as usize,
             soft_limits: false, // TODO Maybe try true if we hit reproducibility problems?
-            override_verbosity: Some(0)
+            override_verbosity: Some(0),
+            set_tracer: None
         }
     }
 
-    fn find_reproducing_settings(&mut self) -> (CompileSettings, ReproOutcome) {
+    fn find_reproducing_settings(&mut self, original_tracer: Option<ActualTracer>) -> (CompileSettings, ReproOutcome) {
         let base = self.default_config();
         let osmibyte_options: &[bool] = if base.use_osmibyte { &[false, true] } else { &[false] };
         for &use_osmibyte in osmibyte_options {
@@ -184,6 +190,21 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
                 let mut settings = base.clone();
                 settings.use_trace = use_trace;
                 settings.use_osmibyte = use_osmibyte;
+                let outcome = self.compile_and_reproduce(&settings);
+                if outcome.kind != OutcomeKind::Works {
+                    return (settings, outcome);
+                }
+            }
+        }
+
+        if let Some(tracer) = original_tracer {
+            let tracer = Arc::new(tracer);
+            for &use_osmibyte in osmibyte_options {
+                println!("Trying original tracer with osmibyte={use_osmibyte}");
+                let mut settings = base.clone();
+                settings.use_trace = true;
+                settings.use_osmibyte = use_osmibyte;
+                settings.set_tracer = Some(tracer.clone());
                 let outcome = self.compile_and_reproduce(&settings);
                 if outcome.kind != OutcomeKind::Works {
                     return (settings, outcome);
@@ -254,6 +275,10 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
     }
 
     fn shrink_from_front(&mut self, settings: &CompileSettings, executed_ksplang: u64) -> Option<ReproOutcome> {
+        if settings.use_trace && settings.set_tracer.is_some() {
+            return None
+        }
+
         let candidates = self.collect_candidate_positions(executed_ksplang);
 
         println!("front-shrinking: {} candidates...", candidates.len());
@@ -266,7 +291,7 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             let mut forward_state = self.start_state.clone();
             let mut forward_options = self.options.clone();
             forward_options.stop_after = self.start_state.instructions_run + trace_index as u64;
-            
+
             if run_state(&mut forward_state, &forward_options).is_err() || forward_state.ip != candidate_ip {
                 println!("Failed to execute to position {} (trace index {})", candidate_ip, trace_index);
                 continue;
@@ -351,7 +376,10 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
 
     fn build_block(&self, settings: &CompileSettings) -> OptimizedBlock {
         if settings.use_trace {
-            let trace = self.collect_trace(settings.interpret_limit);
+            let trace = match &settings.set_tracer {
+                None => self.collect_trace(settings.interpret_limit),
+                Some(t) => t.as_ref().clone()
+            };
             self.compile_with_tracer(trace, settings)
         } else {
             self.compile_with_tracer(NoTrace(), settings)
@@ -382,7 +410,14 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
         pre.interpret();
         let osmibytecode = (settings.use_osmibyte && self.vm.conf.allow_osmibyte_backend)
             .then(|| OsmibytecodeBlock::from_cfg(&pre.g));
-        self.vm.build_block(self.start_state.ip, self.start_state.reversed, pre.g, osmibytecode)
+        OptimizedBlock {
+            cfg: Some(Box::new(pre.g)),
+            osmibytecode: osmibytecode,
+            original_tracer: None,
+            reversed: self.start_state.reversed,
+            start_ip: self.start_state.ip,
+            stats: super::BlockStats::default(),
+        }
     }
 
     fn collect_trace(&self, interpret_limit: usize) -> ActualTracer {
@@ -444,8 +479,9 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             self.start_state.stack.len()
         );
         println!(
-            "  recompiled with trace={} use_osmibyte={} limits={{bb: {}, instr: {}, interpret: {}}}",
+            "  recompiled with trace={} original_trace={} use_osmibyte={} limits={{bb: {}, instr: {}, interpret: {}}}",
             settings.use_trace,
+            settings.set_tracer.is_some(),
             settings.use_osmibyte,
             settings.bb_limit,
             settings.instr_limit,

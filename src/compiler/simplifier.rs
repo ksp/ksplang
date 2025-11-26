@@ -1,8 +1,9 @@
 use std::{cmp, ops::RangeInclusive, sync::LazyLock};
 
+use arrayvec::ArrayVec;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, pattern::OptOptPattern, range_ops::range_signum, utils::{abs_range, range_is_signless, union_range}, osmibytecode::Condition}, vm::OperationError};
+use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::Condition, pattern::OptOptPattern, range_ops::{IRange, mod_split_ranges, range_signum}, utils::{abs_range, intersect_range, range_is_signless, union_range}}, vm::{self, OperationError}};
 
 use super::pattern::{OptOptPattern as P};
 
@@ -52,6 +53,49 @@ pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: 
     cond_mut
 }
 
+
+fn condition_to_range(condition: &Condition<ValueId>, ac: i64) -> Option<(IRange, bool)> {
+    debug_assert!(condition.regs()[0].is_constant());
+    match condition {
+        Condition::Eq(_, _) => Some((ac..=ac, false)),
+        Condition::Neq(_, _) => Some((ac..=ac, true)),
+        Condition::Lt(_, _) => Some((ac.strict_add(1)..=i64::MAX, false)),
+        Condition::Leq(_, _) => Some((ac..=i64::MAX, false)),
+        Condition::Gt(_, _) => Some((i64::MIN..=ac.strict_sub(1), false)),
+        Condition::Geq(_, _) => Some((i64::MIN..=ac, false)),
+        _ => None
+    }
+}
+
+fn condition_overlaps_range(condition: &Condition<ValueId>, ac: i64, r: &IRange) -> bool {
+    match condition {
+        Condition::Eq(_, _) => r.contains(&ac),
+        Condition::Neq(_, _) => r != &(ac..=ac),
+        Condition::Lt(_, _) => ac < *r.end(), // ac < x
+        Condition::Leq(_, _) => ac <= *r.end(),
+        Condition::Gt(_, _) => ac > *r.start(),
+        Condition::Geq(_, _) => ac >= *r.start(),
+        _ => true
+    }
+}
+
+fn create_range_constraint_condition(cfg: &mut GraphBuilder, v: ValueId, range0: &IRange, range: &IRange) -> ArrayVec<Condition<ValueId>, 2> {
+    let mut res = ArrayVec::new();
+    if range.start() == range.end() {
+        let c = cfg.store_constant(*range.start());
+        res.push(Condition::Eq(c, v));
+        return res
+    }
+    if range0.end() != range.end() {
+        let end = cfg.store_constant(*range.end());
+        res.push(Condition::Geq(end, v));
+    }
+    if range0.start() != range.start() {
+        let start = cfg.store_constant(*range.start());
+        res.push(Condition::Leq(start, v));
+    }
+    return res;
+}
 
 fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at: InstrId) -> Condition<ValueId> {
     match condition.clone() {
@@ -197,7 +241,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         let b2 = def.inputs[1];
                         let a2 = cfg.store_constant(ac.strict_sub(shift));
 
-                        return condition.replace_arr([a2, b2].into())
+                        return condition.replace_arr([a2, b2])
                     }
 
                     if matches!(def.op, OptOp::Sub) && def.inputs.len() == 2 && def.inputs[0].is_constant() {
@@ -208,13 +252,13 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         let b2 = def.inputs[1];
                         let a2 = cfg.store_constant(c.strict_sub(ac));
 
-                        return condition.replace_arr([b2, a2].into())
+                        return condition.replace_arr([b2, a2])
                     }
 
                     if matches!(def.op, OptOp::Sub) && ac == 0 && def.inputs.len() == 2 {
                         // 0 == (a - b) => a == b
                         // 0 >= (a - b) => b >= a
-                        return condition.replace_arr([def.inputs[1], def.inputs[0]].into())
+                        return condition.replace_arr([def.inputs[1], def.inputs[0]])
                     }
                     if matches!(def.op, OptOp::AbsSub) && ac == 0 && def.inputs.len() == 2 {
                         // same for AbsSub
@@ -287,6 +331,82 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         if !f_range.contains(&ac) {
                             if t_range == (ac..=ac) {
                                 return select_cond.clone()
+                            }
+                        }
+                    }
+                    if let OptOp::AbsFactorial = &def.op {
+                        let fac_input = def.inputs[0]; // TODO: generalize for all monotonous functions (tetr, lensum)
+                        match vm::FACTORIAL_TABLE.binary_search(&ac) {
+                            _ if ac == 1 => {
+                                // special: two values (0 and 1) map to 1
+                                let range = cfg.val_range_at(fac_input, at);
+                                match condition {
+                                    Condition::Eq(_, _) if *range.start() >= -1 =>
+                                        return Condition::Geq(ValueId::C_ONE, fac_input), // 1 == |a|! -> 1 >= a
+                                    Condition::Eq(_, _) if *range.end() <= 1 =>
+                                        return Condition::Leq(ValueId::C_NEG_ONE, fac_input), // 1 == |a|! -> -1 <= a
+                                    Condition::Neq(_, _) if *range.start() >= -1 =>
+                                        return Condition::Lt(ValueId::C_ONE, fac_input), // 1 != |a|! -> 1 < a
+                                    Condition::Neq(_, _) if *range.end() <= 1 =>
+                                        return Condition::Gt(ValueId::C_NEG_ONE, fac_input), // 1 != |a|! -> -1 > a
+                                    _ => unreachable!("This should have been range-optimized: {condition}")
+                                }
+                            }
+                            Err(next_higher) => match condition {
+                                Condition::Eq(_, _) => return Condition::True,
+                                Condition::Neq(_, _) => return Condition::False,
+                                Condition::Gt(_, _) | Condition::Geq(_, _) => // 200 > |v|!   -> 6 > v
+                                    return Condition::Gt(ValueId::from_predefined_const(next_higher as i64).unwrap(), fac_input),
+                                Condition::Lt(_, _) | Condition::Leq(_, _) => // 200 < |v|!   -> 6 <= v
+                                    return Condition::Leq(ValueId::from_predefined_const(next_higher as i64).unwrap(), fac_input),
+                                _ => {}
+                            }
+                            Ok(reversed_factorial) => {
+                                let new_const = ValueId::from_predefined_const(reversed_factorial as i64).unwrap();
+                                return condition.replace_arr([new_const, fac_input])
+                            }
+                        }
+                    }
+
+                    if let OptOp::Mod | OptOp::ModEuclid = &def.op {
+                        if ac == 0 { // a % b == 0  -> Divides(a, b)
+                            match &condition {
+                                Condition::Eq(_, _) => return Condition::Divides(def.inputs[0], def.inputs[1]),
+                                Condition::Neq(_, _) => return Condition::NotDivides(def.inputs[0], def.inputs[1]),
+                                _ => { }
+                            }
+                        }
+
+                        // simplify a <??> (x % Const2) by splitting the ranges
+                        if def.inputs.len() == 2 && def.inputs[1].is_constant() {
+                            let (condition, is_negated) = if let Condition::Neq(_, _) = &condition { (condition.clone().neg(), true) }
+                                                          else                                     { (condition.clone(), false) };
+                            let mod_c = cfg.get_constant_(def.inputs[1]);
+                            let mod_x = def.inputs[0];
+                            let (x_start, x_end) = cfg.val_range_at(mod_x, at).into_inner();
+
+                            if mod_c > 0 && x_end.saturating_sub(x_start) <= mod_c {
+                                let chunks = mod_split_ranges(x_start..=x_end, mod_c, matches!(def.op, OptOp::ModEuclid));
+
+                                let valid_ranges: Vec<_> =
+                                    chunks.iter().filter(|(_input_range, rem_range)| {
+                                        condition_overlaps_range(&condition, ac, rem_range)
+                                    }).cloned().collect();
+                                if valid_ranges.is_empty() {
+                                    return Condition::False
+                                }
+
+                                if let [(input_range, rem_range)] = valid_ranges.as_slice() &&
+                                    let Some((cond_range, false)) = condition_to_range(&condition, ac) &&
+                                    let Some(offset) = input_range.start().checked_sub(*rem_range.start())
+                                {
+                                    // condition overlaps only in one range -> we can re-map there
+                                    let new_r = intersect_range(input_range, cond_range.start().saturating_add(offset)..=cond_range.end().saturating_add(offset));
+                                    let rc = create_range_constraint_condition(cfg, mod_x, rem_range, &new_r);
+                                    if rc.len() == 1 {
+                                        return rc[0].clone();
+                                    }
+                                }
                             }
                         }
                     }

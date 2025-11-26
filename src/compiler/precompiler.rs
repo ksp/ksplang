@@ -203,7 +203,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
         let observed_combinations: BTreeSet<_> = self.tracer.get_observed_stack_values(self.position, &depths).into_iter().collect();
 
-        println!("Trying to resolve constants from {needed:?}: {observed_combinations:?}");
+        if self.conf.should_log(4) {
+            println!("Trying to resolve constants from {needed:?} via deopts: {observed_combinations:?}");
+        }
 
         if observed_combinations.is_empty() || observed_combinations.len() > 1 {
             return None;
@@ -259,7 +261,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
 
         }
-        // self.g.push_checkpoint(); prob not worth it?
+        // self.g.push_checkpoint(); // prob not worth it?
         if branches.len() == 1 {
             self.g.push_deopt_assert(branches[0].condition.clone(), false);
             branches[0].condition = Condition::True;
@@ -440,7 +442,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.stack.push(out);
 
                 let next_pos = self.next_position();
-                self.g.push_checkpoint().program_position = next_pos;
+                let d = self.g.push_checkpoint();
+                d.program_position = next_pos;
+                d.ksp_instr_count += 1;
                 Continue
             }
             crate::ops::Op::Swap => {
@@ -451,7 +455,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.stack.push(out);
 
                 let next_pos = self.next_position();
-                self.g.push_checkpoint().program_position = next_pos;
+                let d = self.g.push_checkpoint();
+                d.program_position = next_pos;
+                d.ksp_instr_count += 1;
                 Continue
             }
             crate::ops::Op::Roll => {
@@ -1198,7 +1204,15 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         .map(|r| format!("{}:{:?}; ", r.0, r.1))
                         .collect();
                 println!("  Stack: {}", self.g.fmt_stack());
-                println!("  Current Block: {}", self.g.current_block_ref());
+                print!("  Current Block: ");
+                // TODO: wtf
+                struct DisplayBlockWithRanges<'a>(&'a crate::compiler::cfg::BasicBlock, &'a GraphBuilder);
+                impl<'a> std::fmt::Display for DisplayBlockWithRanges<'a> {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        self.0.richer_fmt(f, |v| self.1.val_range(v))
+                    }
+                }
+                println!("{}", DisplayBlockWithRanges(self.g.current_block_ref(), &self.g));
                 println!("Interpreting op {}: {:?}", self.position, self.ops[self.position]);
                 if trace_results_fmt.len() > 0 {
                     println!("Trace results: {}", trace_results_fmt);
@@ -1416,6 +1430,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 block_mut.predecessors = preds;
             }
             self.position = pb.target;
+            self.g.assumed_program_position = Some(pb.target);
             // stack will be created by seal_block from auto-created parameters
             self.g.switch_to_block(bid, pb.stack_snapshot[0].depth, vec![]);
             assert_eq!(self.g.stack.stack, []);
