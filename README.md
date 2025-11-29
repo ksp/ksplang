@@ -1,88 +1,63 @@
 <p align="center">
-    <a href="https://ksp.mff.cuni.cz/h/ulohy/36/ksplang/">
-    <img src="./.github/ksplang.png" width="400">
-    </a>
+    <img src="./ksplangjit-logo.png" width="500">
 </p>
 <p align="center">
-  <i align="center">A stack-based programming language with 33 instructions, independently designed
+  A faster runtime for the <i align="center">stack-based programming language with 33 instructions, independently designed
 by 33 people.</i>
 </p>
 
 <div align="center">
 
-[![Tests](https://github.com/ksp/ksplang/actions/workflows/test.yml/badge.svg)](https://github.com/ksp/ksplang/actions/workflows/test.yml)
-[![Crates.io](https://img.shields.io/crates/v/ksplang.svg)](https://crates.io/crates/ksplang)
-![AUR Version](https://img.shields.io/aur/version/ksplang)
-
 </div>
 
-## Introduction
-This is an implementation of [ksplang](ksplang_en.md), the best programming language (as proven by the logic of a Czech children's story).
+## KsplangJIT
 
-The famous Czech children's story [*Jak si pejsek s kočičkou dělali k svátku
-dort*](https://cs.wikisource.org/wiki/Pov%C3%ADd%C3%A1n%C3%AD_o_pejskovi_a_ko%C4%8Di%C4%8Dce/Jak_si_pejsek_s_ko%C4%8Di%C4%8Dkou_d%C4%9Blali_k_sv%C3%A1tku_dort)
-([English translation](https://easystoriesinenglish.com/cake/)) by Josef Čapek
-teaches that you can bake the best cake by adding many good things into it.
-Yes, that is *definitely* the correct interpretation. We have decided to prove
-this experimentally, with a programming language.
+This is a faster and less stable runtime for [ksplang](ksplang_en.md), the best programming language (as proven by the logic of a Czech children's story).
 
-We have done this within [KSP](https://ksp.mff.cuni.cz/), a Czech programming
-competition for high-school students. Within the first series of tasks of the 36th year, we have asked
-each competitor for a single original instruction for a stack-based language.
-The result is [ksplang](ksplang_en.md), and you are currently looking at its
-reference implementation in Rust.
+See the reference implementation for more information: [github.com/ksp/ksplang](https://github.com/ksp/ksplang).
 
-## The ksplang interpreter
-This repository includes a `ksplang` executable which can be used to run ksplang programs.
-Input is given on the standard input as whitespace-separated numbers (or [text](#text-mode)).
+## Usage
+
+Add `--optimize` flag to start the interpreter with the JIT enabled.
 
 ### Example usage
 ```sh
-./ksplang program.ksplang < input.txt > output.txt
+./ksplang --optimize program.ksplang < input.txt > output.txt
 ```
 
-**program.ksplang** – the ksplang program:
-```ksplang
-pop ++
-```
+All options from the reference interpreter are supported, for example `--text-input`, `--text-output`, `--stats`, `--max-stack-size`.
 
-**input.txt** – the input stack:
-```
-41 12
-```
+## JIT options
 
-**output.txt** – the result:
-```
-42
-```
+For now, the optimizer is configured using env variables.
+Exhaustive list is in the ./src/compiler/config.rs source file.
 
-### Text mode
-
-The interpreter can also be used in text mode, which translates input from text to numbers and output from numbers to text (as Unicode code points).
-You can also do this only for input or output with `--text-input` and `--text-output`, respectively.
-
-```sh
-echo -n "aaa" | ./ksplang -t program.ksplang
-# prints "ab"
-```
-
-### More options
-- `--stats` (`-s`) - print statistics on stderr
-- `--max-stack-size` (`-m`) - set the maximum stack size
+* `KSPLANGJIT_VERBOSITY` = 0 (should be no logging) .. 255 (highest)
+* `KSPLANGJIT_TRIGGER_COUNT` = 1 ..
+  - after how many executions of an instruction consider starting compiling
+  - this may have very significant impact on performance
+  - try increasing the number if you hit bugs (after reporting them of course)
+* `KSPLANGJIT_TRACE_LIMIT` = 0 ..
+  - how long the trace should be
+  - set to 0 to disable tracing and only compile statically (this might also workaround some bugs)
+* `KSPLANGJIT_VERIFY`
+  - 0
+  - 1: after compiling, run the compiled program and the reference interpreter and compare the results
+  - 2: compare the results after every single run of a compiled block
+    - this finds almost all bugs, but is very slow (much slower than normal interpreter)
+    - it will also try to reproduce the bug with a smaller compiled program
+  - 3: same, but might be more successful with the program shrinking
+* `KSPLANGJIT_ADHOC_INTERPRET_LIMIT` = 0 ..
+  - limits the numbers of ksplang instructions ingested into the compilation
+* `KSPLANGJIT_DUMPDIR` = /filesystem/directory/
+  - dumps some data into the directory
+    - it will be all compiled CFGs
+    - and `stats.csv` with some stats (how many times was a given compiled CFG executed, etc)
 
 ## Building from source
 1. Clone the repository: `git clone https://github.com/ksp/ksplang.git`
 2. Within the `ksplang` directory, run `cargo build -p ksplang-cli --release`
 3. You can now run `target/release/ksplang-cli`
-
-## Online interpreter
-An online version of the interpreter with a simple stepping debugger lives [on the KSP webpage](https://ksp.mff.cuni.cz/h/ulohy/36/ksplang/sim.html).
-
-## Contributing
-If you have improvements to the reference implementation, the tooling,
-or the descriptions, feel free to create an issue or a pull request.
-
-No changes to the language are allowed as the language is perfect.
 
 ## License
 This code is available under the MIT License. See the [LICENSE](LICENSE) file for details.
