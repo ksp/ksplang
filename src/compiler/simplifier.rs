@@ -418,8 +418,8 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
 
         Condition::Divides(a, b) => {
             let (ar, br) = (cfg.val_range_at(a, at), cfg.val_range_at(b, at));
-            let ara = abs_range(ar.clone());
-            let bra = abs_range(br.clone());
+            let ara = abs_range(&ar);
+            let bra = abs_range(&br);
             if *ara.end() < *bra.start() || *bra.end() == 0 {
                 return if *ara.start() == 0 {
                     Condition::Eq(b, ValueId::C_ZERO)
@@ -453,6 +453,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
 
             if range_is_signless(&br) && range_is_signless(&ar) && !(ara.contains(&1) && ara.contains(&cmp::max(2, *bra.start()))) {
                 // Try to reduce 3 % x == 0 into 3 == x
+                // we need the lowest divisor of a constant `a`
                 let mindiv = if *ar.start() == *ar.end() {
                     let ac = *ar.start();
                     if ac == 1 || ac == -1 {
@@ -460,11 +461,13 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                     }
                     try_get_lowest_divisor(ac.unsigned_abs()).unwrap_or(*SOME_PRIMES.last().unwrap() as u64)
                 } else {
-                    2 // assume it can be divided by 2
+                    2 // any non-trivial range can be divided by 2
                 };
 
-                let min_divided = *bra.start() / mindiv;
-                if *bra.start() > min_divided {
+                let min_divided = bra.start().div_ceil(mindiv);
+                let max_divided = bra.end() / mindiv;
+                // TODO: this probably needs a rewrite as it's probably still broken
+                if min_divided == max_divided && a.is_constant() {
                     // so, condition is only true if |b| == |a|
                     // we just need to go though some hoops to express that...
                     if (*br.start() >= 0) == (*ar.start() >= 0) {
