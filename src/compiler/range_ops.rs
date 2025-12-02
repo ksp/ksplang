@@ -107,7 +107,7 @@ pub fn range_mod_euclid(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i6
 
     if a_range.contains(&-1) && a_range.contains(&0) {
         // positive and negative? -> can always produce 0 and b_hi
-        return 0..=(*b_abs.end() as i64 - 1);
+        return 0..=(*b_abs.end() - 1) as i64;
     }
 
     let (a_lo, a_hi) = a_range.clone().into_inner();
