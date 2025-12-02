@@ -580,9 +580,7 @@ impl<'a> Compiler<'a> {
                 .chain([OsmibyteOp::create_push(&out_regs)])
                 .chain(deopt.opcodes.iter().cloned())
                 .collect();
-            println!("Modified deopt {deopt:?} to include push {out_regs:?}");
             deopt.opcodes = new_code;
-            println!("{deopt:?}");
         }
         pops.len()
     }

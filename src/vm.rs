@@ -1726,7 +1726,7 @@ impl OptimizingVM {
             let (optimizer, mut st) = s.swap_tracer(ActualTracer::default());
             st.tracer.start_block_location = st.ip;
             st.tracer.max_count = self.conf.trace_limit;
-            if st.conf.should_log(1) {
+            if st.conf.should_log(2) {
                 println!("Starting tracing at {start_ip}");
             }
             let result = run_state(&mut st, options);
@@ -1734,7 +1734,7 @@ impl OptimizingVM {
                 println!("Error while tracing: {:?}", result.as_ref().err().unwrap());
                 return (st.swap_tracer(optimizer).1, result);
             }
-            if st.conf.should_log(1) {
+            if st.conf.should_log(2) {
                 println!("Collected trace {start_ip} {}..{} {}: {} IPs, {} values, {} branches", st.ops[start_ip], st.ip, st.ops[st.ip], st.tracer.ips.len(), st.tracer.values.len(), st.tracer.ip_lookup.len());
             }
             if st.tracer.ips.len() < 100 && st.tracer.ips.len() < self.conf.trace_limit as usize {
@@ -1810,7 +1810,7 @@ impl OptimizingVM {
             }
         }
 
-        if self.conf.should_log(1) {
+        if self.conf.should_log(2) {
             println!("Optimized at {}{}:", start_ip, reversed.then_some(" reversed").unwrap_or(""));
             println!("{}", cfg);
             println!("");

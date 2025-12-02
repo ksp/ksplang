@@ -79,7 +79,7 @@ where
 }
 
 fn create_config() -> JitConfig {
-    let verbosity = parse_env("KSPLANGJIT_VERBOSITY", if cfg!(debug_assertions) { 10 } else { 1 });
+    let verbosity = parse_env("KSPLANGJIT_VERBOSITY", 1);
     let c = JitConfig {
         verbosity,
         soften_limits: parse_env("KSPLANGJIT_SOFTEN_LIMITS", true),

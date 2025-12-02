@@ -683,11 +683,15 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     if *a_range.start() >= 1 && *a_range.start() < 10 && *a_range.end() <= 11 && *b_range.start() >= 1 && *b_range.start() < 10 && *b_range.end() <= 11 {
                         // this is likely creating a constnant which we could not infer, so let's add a deopt and call it a day
                         if *a_range.end() >= 10 {
-                            println!("DEBUG LenSumDeoptHack {a_range:?} {b_range:?} {a}* {b}");
+                            if self.g.conf.should_log(2) {
+                                println!("DEBUG LenSumDeoptHack {a_range:?} {b_range:?} {a}* {b}");
+                            }
                             self.g.push_deopt_assert(Condition::LtConst(a, 10), false);
                         }
                         if *b_range.end() >= 10 {
-                            println!("DEBUG LenSumDeoptHack {a_range:?} {b_range:?} {a} {b}*");
+                            if self.g.conf.should_log(2){
+                                println!("DEBUG LenSumDeoptHack {a_range:?} {b_range:?} {a} {b}*");
+                            }
                             self.g.push_deopt_assert(Condition::LtConst(b, 10), false);
                         }
                         ValueId::C_TWO

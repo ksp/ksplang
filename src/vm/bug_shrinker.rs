@@ -48,15 +48,17 @@ pub fn verify_block<'prog, 'opts>(
 
     // TODO: write full repro to a file
 
-    println!("exectution result mismatch detected at ip {} {}", start_state.ip, start_state.reversed);
-    println!("  optimized next_ip={} stack={}",
-        optimized_result.next_ip,
-        format_stack_preview(&optimized_stack)
-    );
-    println!("  reference next_ip={} stack={}",
-        reference_state.ip,
-        format_stack_preview(&reference_state.stack)
-    );
+    if vm.conf.should_log(1) {
+        println!("exectution result mismatch detected at ip {} {}", start_state.ip, start_state.reversed);
+        println!("  optimized next_ip={} stack={}",
+            optimized_result.next_ip,
+            format_stack_preview(&optimized_stack)
+        );
+        println!("  reference next_ip={} stack={}",
+            reference_state.ip,
+            format_stack_preview(&reference_state.stack)
+        );
+    }
 
     run_shrinker(
         vm,
@@ -78,7 +80,9 @@ fn run_shrinker<'prog, 'opts>(
 ) -> ! {
     let mut ctx = ShrinkingContext::new(vm, options.clone(), start_state);
     let (settings, outcome) = ctx.find_reproducing_settings(original_tracer);
-    println!("Identified repro settings: {settings:?}. Now shrinking the settings.");
+    if vm.conf.should_log(1) {
+        println!("shrinker: Identified repro settings: {settings:?}. Now shrinking the settings.");
+    }
     // TODO: write repro with settings to file
     let (settings, outcome) = ctx.shrink_settings(settings, outcome);
     ctx.shrink_from_front(&settings, cmp::max(outcome.executed_ksplang, settings.interpret_limit as u64));
@@ -117,7 +121,7 @@ struct ReproOutcome {
 
 impl Display for ReproOutcome {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: ", self.executed_ksplang)?;
+        write!(f, "{} ops: ", self.executed_ksplang)?;
          match &self.kind {
             OutcomeKind::Works => write!(f, "works")?,
             OutcomeKind::Error(err) => {
@@ -261,7 +265,9 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
                 break;
             }
             let new_outcome = self.compile_and_reproduce(settings);
-            println!("Tried {label}={mid}: {new_outcome}");
+            if self.vm.conf.should_log(1) {
+                println!("shrinker: Tried {label}={mid}: {new_outcome}");
+            }
             if new_outcome.kind != OutcomeKind::Works {
                 *outcome = new_outcome;
                 min_broken = mid;
@@ -281,7 +287,9 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
 
         let candidates = self.collect_candidate_positions(executed_ksplang);
 
-        println!("front-shrinking: {} candidates...", candidates.len());
+        if self.vm.conf.should_log(1) {
+            println!("front-shrinking: {} candidates...", candidates.len());
+        }
 
         for &(candidate_ip, trace_index) in candidates.iter().rev() {
             if candidate_ip == self.start_state.ip {
@@ -300,14 +308,18 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
             let old_start_state = mem::replace(&mut self.start_state, forward_state);
             let new_outcome = self.compile_and_reproduce(settings);
 
-            println!("front-shrinking: tried position {}: {}", candidate_ip, new_outcome);
+            if self.vm.conf.should_log(1) {
+                println!("front-shrinking: tried IP={} – {}", candidate_ip, new_outcome);
+            }
 
             match new_outcome.kind {
                 OutcomeKind::Works => {
                     self.start_state = old_start_state;
                 }
                 _ => {
-                    println!("front-shrinking: success {} -> {}", executed_ksplang, new_outcome.executed_ksplang);
+                    if self.vm.conf.should_log(1) {
+                        println!("front-shrinking: found shrinked repro {} -> {}", executed_ksplang, new_outcome.executed_ksplang);
+                    }
                     return Some(new_outcome);
                 }
             }
@@ -319,7 +331,9 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
     fn collect_candidate_positions(&self, expected_runtime: u64) -> Vec<(usize, usize)> {
         let mut candidates = Vec::new();
         let trace = self.collect_trace(expected_runtime as usize);
-        println!("Collected trace with {} ops, expected {}", trace.ips.len(), expected_runtime);
+        if self.vm.conf.should_log(1) {
+            println!("shrinker: Collected trace with {} ops, expected {}", trace.ips.len(), expected_runtime);
+        }
 
         for i in 0..trace.ips.len().saturating_sub(1) {
             if let (Some(&op), Some(&next_op)) = (self.start_state.ops.get(trace.ips[i]), self.start_state.ops.get(trace.ips[i + 1])) {
@@ -448,7 +462,9 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
         initial_mismatch: Option<(&[i64], usize)>,
         initial_baseline: Option<(&[i64], usize)>,
     ) -> ! {
-        println!("\nRecompiling with verbosity {}...", self.vm.conf.shrinker_final_verbosity);
+        if self.vm.conf.verbosity > 0 || self.vm.conf.shrinker_final_verbosity > 0 {
+            println!("\nRecompiling with verbosity {}...", self.vm.conf.shrinker_final_verbosity);
+        }
         let mut changed_settings = settings.clone();
         changed_settings.override_verbosity = Some(self.vm.conf.shrinker_final_verbosity);
         let block = self.build_block(&changed_settings);
