@@ -796,7 +796,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     Ok(v) => return (i.with_op(OptOp::Const(v), &[], OpEffect::None), Some(v..=v)),
                     Err(Some(error)) => {
                         // will always fail
-                        return (i.with_op(OptOp::Assert(Condition::False, error), &[], OpEffect::None), None);
+                        return (i.with_op(OptOp::Assert(Condition::False, error), &[], OpEffect::MayFail), None);
                     },
                     Err(None) => {
                         // cannot be evaluated
@@ -983,7 +983,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
             OptOp::Mod | OptOp::ModEuclid | OptOp::Div | OptOp::CursedDiv if ranges[1] == (0..=0) =>
                 // a % 0 or a / 0 -> always error
-                return (i.with_op(OptOp::Assert(Condition::False, OperationError::DivisionByZero), &[], OpEffect::None), None),
+                return (i.with_op(OptOp::Assert(Condition::False, OperationError::DivisionByZero), &[], OpEffect::MayFail), None),
 
             OptOp::Mod | OptOp::ModEuclid if i.inputs[0] == i.inputs[1] => {
                 // a % a -> 0
@@ -1256,20 +1256,20 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             let add_or_const = defines.iter().copied().filter(|c| c.is_err() || c.unwrap().is_some_and(|i| i.op == OptOp::Add && i.inputs.iter().any(|v| v.is_constant()))).collect::<Vec<_>>();
 
             if add_or_const.len() >= 2 {
-                let mut constant = 0;
+                let mut constant = 0i128;
                 let mut promoted_positive = false;
                 let mut promoted_negative = false;
                 let mut new_args = SmallVec::new();
                 for (def, arg) in defines.iter().zip(&i.inputs) {
                     match def {
-                        Err(c) => constant += c,
+                        Err(c) => constant += *c as i128,
                         Ok(None) => new_args.push(*arg),
                         Ok(Some(i)) => {
                             if i.op == OptOp::Add && i.inputs.len() == 2 && i.inputs[0].is_constant() {
                                 let c =  cfg.get_constant_(i.inputs[0]);
                                 if c > 0 { promoted_positive = true; }
                                 else if c < 0 { promoted_negative = true; }
-                                constant += c;
+                                constant += c as i128;
                                 new_args.extend_from_slice(&i.inputs[1..]);
                             } else {
                                 new_args.push(*arg)
@@ -1278,12 +1278,16 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     }
                 }
 
+
                 let is_unsafe = promoted_positive && promoted_negative &&
                     OpEffect::None != OptOp::<ValueId>::Add.effect_based_on_ranges(&new_args.iter().map(|a| cfg.val_range_at(*a, i.id)).collect::<Vec<_>>());
                 if !is_unsafe {
+                    let Some(constant_i64) = constant.try_into().ok() else {
+                        return (i.with_op(OptOp::Assert(Condition::False, OperationError::IntegerOverflow), &[], OpEffect::MayFail), None);
+                    };
                     i.op = OptOp::Add;
                     if constant != 0 {
-                        new_args.push(cfg.store_constant(constant));
+                        new_args.push(cfg.store_constant(constant_i64));
                     }
                     new_args.sort();
                     i.inputs = new_args;

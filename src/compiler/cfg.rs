@@ -220,6 +220,10 @@ impl StackStateTracker {
         self.stack_depth = state.depth;
         self.rebuild_index();
     }
+    pub fn clear(&mut self) {
+        self.stack.clear();
+        self.lookup.clear();
+    }
 
     pub fn rebuild_index(&mut self) {
         self.lookup.clear();
@@ -755,17 +759,18 @@ impl GraphBuilder {
         };
         let value_numbering = value_numbering && effect2.allows_value_numbering();
 
-        let has_output = op.has_output();
-
         let instr = OptInstr {
             id: InstrId(self.current_block, u32::MAX),
             op: op.clone(),
             inputs: args.into(),
-            out: if has_output { ValueId(i32::MAX) } else { ValueId(0) },
+            out: if op.has_output() { ValueId(i32::MAX) } else { ValueId(0) },
             ksp_instr_count: self.current_block_ref().ksplang_instr_count,
             program_position: self.assumed_program_position.unwrap_or(usize::MAX),
             effect: effect2
         };
+        if self.conf.should_log(30) {
+            println!("Maybe pushing {instr}")
+        }
         instr.validate();
         for v in instr.iter_inputs() {
             self.validate_val(v, instr.id);
@@ -773,8 +778,12 @@ impl GraphBuilder {
 
         let (mut instr, simplifier_range) = simplifier::simplify_instr(self, instr);
         instr.id = InstrId(self.current_block, self.current_block_ref().next_instr_id);
+        if instr.op.is_terminal() {
+            assert_ne!(effect2, OpEffect::None);
+            instr.out = ValueId(0);
+        }
         instr.validate();
-        assert_eq!(has_output, instr.op.has_output());
+        assert_eq!(instr.out.is_computed(), instr.op.has_output(), "{instr} (from {op:?} {args:?} vn={value_numbering} out_range={out_range:?} effect={effect:?})");
 
         if instr.op == OptOp::Nop && !explicit_nop {
             return (ValueId(0), None);
@@ -796,7 +805,7 @@ impl GraphBuilder {
         }
 
         let mut out_val = ValueId(0);
-        if has_output {
+        if instr.out.is_computed() {
             let (inferred_range, inferred_effect) = self.infer_op_range_effect(&instr.op, &instr.inputs, instr.id);
             instr.effect = OpEffect::better_of(instr.effect, inferred_effect);
             let val_range =
@@ -820,6 +829,10 @@ impl GraphBuilder {
 
         if instr.out == ValueId(0) && instr.effect == OpEffect::None && !explicit_nop && !matches!(instr.op, OptOp::Checkpoint) {
             return (out_val, None)
+        }
+
+        if self.conf.should_log(30) {
+            println!("Actually pushing {instr}")
         }
 
         assert!(self.current_block_ref().is_finalized == false, "Cannot add instruction to finalized block: {:?}", self.current_block_ref());

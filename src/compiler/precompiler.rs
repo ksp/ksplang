@@ -626,7 +626,6 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 }
 
                 if *n_range.end() > 64 {
-                    println!("Median range too crazy: {n} {n_range:?}");
                     return if *n_range.start() <= 60 {
                         NevimJakChteloByToKonstantu(vec![n])
                     } else {
@@ -910,7 +909,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                     if bruteforced_div_range.as_ref().is_some_and(|r| r.is_empty()) {
                         self.g.pop_stack_n(3);
-                        self.g.push_assert(Condition::False, OperationError::IntegerOverflow, None);
+                        // just a pop-3, the division will never yield a resul
                         return Continue
                     }
                     let div_range = bruteforced_div_range.clone().unwrap_or_else(|| {
@@ -1169,6 +1168,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         loop {
             self.g.stack.check_invariants();
             self.g.set_program_position(Some(self.position));
+            if self.g.current_block_ref().is_terminated {
+                if self.conf.should_log(2) {
+                    println!("end interpret_block: BB is terminated");
+                }
+                break;
+            }
             if self.termination_ip == Some(self.position) || self.position >= self.ops.len() {
                 if self.conf.should_log(2) {
                     println!("end interpret_block: termination_ip={} reached", self.position);
@@ -1181,13 +1186,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 }
                 break;
             }
-            if self.instr_interpreted_count >= self.interpretation_hard_limit() {
+            if self.instr_interpreted_count >= self.interpretation_hard_limit() || self.g.stack.stack.len() > 250 {
                 if self.conf.should_log(2) {
                     println!("end interpret_block: Interpretation hard limit reached");
                 }
                 break;
             }
-            if self.instr_interpreted_count >= self.interpretation_soft_limit() {
+            if self.instr_interpreted_count >= self.interpretation_soft_limit() || self.g.stack.stack.len() > 200 {
                 let top = self.g.val_range_at(self.g.stack.peek().unwrap_or(ValueId(0)), self.g.next_instr_id());
                 let op = &self.ops[self.position];
                 // terminate if we don't seem to be building a constants
@@ -1369,8 +1374,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             println!("Finalizing block. Stack: {}", self.g.fmt_stack());
         }
         self.g.stack.check_invariants();
-        self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
-        self.g.current_block_mut().is_finalized = true;
+        if self.g.current_block_mut().is_terminated {
+            self.g.stack.clear();
+        } else {
+            self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
+            self.g.current_block_mut().is_finalized = true;
+        }
     }
 
 

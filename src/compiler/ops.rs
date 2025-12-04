@@ -714,6 +714,16 @@ impl OptInstr {
         assert!(!self.inputs.contains(&ValueId(0)), "Cannot use null ValueId: {}", self);
         assert!(self.op.arity().contains(&self.inputs.len()), "Invalid op artity: {} {:?} {}", self, self.op.arity(), self.inputs.len());
         assert_ne!(0, self.id.1, "0 is reserved for block head");
+
+        match &self.op {
+            OptOp::Assert(_, _) => assert!(matches!(self.effect, OpEffect::MayFail | OpEffect::MayDeopt), "BS effect: {self}"),
+            OptOp::DeoptAssert(_) => assert_eq!(self.effect, OpEffect::MayDeopt, "BS effect: {self}"),
+            OptOp::StackSwap => assert_eq!(self.effect, OpEffect::StackWrite, "BS effect: {self}"),
+            OptOp::StackRead => assert_eq!(self.effect, OpEffect::StackRead, "BS effect: {self}"),
+            OptOp::KsplangOpsIncrement(_) => assert_eq!(self.effect, OpEffect::CtrIncrement, "BS effect: {self}"),
+            OptOp::Jump(_, _) => assert_eq!(self.effect, OpEffect::ControlFlow, "BS effect: {self}"),
+            _ => {}
+        }
     }
     pub fn assert(condition: Condition<ValueId>, error: OperationError, value: Option<ValueId>) -> Self {
         Self::new(InstrId::UNDEFINED, OptOp::Assert(condition, error), value.as_slice(), ValueId::from(0))
