@@ -501,7 +501,7 @@ impl<'a> Compiler<'a> {
                 let [a, b, c, d] = xs.as_slice() else { unreachable!("{xs:?} {instr}") };
                 self.program.push(OsmibyteOp::MedianCursed5(spec.target_reg(), *a, *b, *c, *d));
             }
-            _ => todo!()
+            _ => todo!("Median {instr}")
         }
     }
 

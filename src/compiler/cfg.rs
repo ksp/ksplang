@@ -1260,7 +1260,7 @@ impl GraphBuilder {
                     self.values.get(&derived_from).is_some_and(|v| !v.assumptions.is_empty()) &&
                     let Some(assigned_at) = info.assigned_at.and_then(|id| self.get_instruction(id))
             {
-                let in_ranges = assigned_at.iter_inputs().map(|v| self.val_range_at(v, at)).collect::<SmallVec<[IRange; 4]>>();
+                let in_ranges = assigned_at.inputs.iter().map(|v| self.val_range_at(*v, at)).collect::<SmallVec<[IRange; 4]>>();
                 assigned_at.op.evaluate_range_quick(&in_ranges).unwrap_or(FULL_RANGE)
             }
             else { FULL_RANGE };

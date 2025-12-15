@@ -1289,25 +1289,25 @@ impl Tracer for Optimizer {
     #[inline]
     fn instruction(&mut self, ip: usize, _op: Op, result: &Result<Effect, OperationError>) -> Result<(), RunError> {
         if !matches!(result, Ok(Effect::None)) {
-            match result.as_ref().unwrap() {
+            match &result {
                 // short jumps (you can't really do anything useful with 20 instructions)
-                Effect::AddInstructionPointer(x) if x.abs() < 20 => {
+                Ok(Effect::AddInstructionPointer(x)) if x.abs() < 20 => {
                     self.has_jumped = 1;
                 }
-                Effect::SetInstructionPointer(ip2) | Effect::SaveAndSetInstructionPointer(ip2) if ip2.abs_diff(ip) < 20 => {
+                Ok(Effect::SetInstructionPointer(ip2)) | Ok(Effect::SaveAndSetInstructionPointer(ip2)) if ip2.abs_diff(ip) < 20 => {
                     self.has_jumped = 1;
                 }
-                Effect::TemporaryReverse(_) => {
+                Ok(Effect::TemporaryReverse(_)) => {
                     self.has_jumped = 1;
                 }
                 // back jumps (probably loops)
-                Effect::AddInstructionPointer(x) if *x < 0 => {
+                Ok(Effect::AddInstructionPointer(x)) if *x < 0 => {
                     self.has_jumped = 3;
                 }
-                Effect::SetInstructionPointer(ip2) | Effect::SaveAndSetInstructionPointer(ip2) if *ip2 < ip => {
+                Ok(Effect::SetInstructionPointer(ip2)) | Ok(Effect::SaveAndSetInstructionPointer(ip2)) if *ip2 < ip => {
                     self.has_jumped = 3;
                 }
-                Effect::AddInstructionPointer(_) | Effect::SetInstructionPointer(_) | Effect::SaveAndSetInstructionPointer(_) => {
+                Ok(Effect::AddInstructionPointer(_)) | Ok(Effect::SetInstructionPointer(_)) | Ok(Effect::SaveAndSetInstructionPointer(_)) => {
                     self.has_jumped = 2;
                 }
                 _ => { self.has_jumped = 0; }

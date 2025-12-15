@@ -73,7 +73,25 @@ fn fuzz_tetration_which_always_fails() {
 
 
 #[test]
-fn fuzz_repro() {
+fn fuzz_funkcia_simplification_bug() {
     let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, And, Funkcia ];
     verify_repro(ops, vec![2, 1, 0]);
+}
+
+#[test]
+fn fuzz_select_ranges_arity() {
+    let ops = vec![ DigitSum, DigitSum, Gcd2, DigitSum, DigitSum, DigitSum, Modulo, And, Funkcia, ];
+    verify_repro(ops, vec![-280485640011906, -1099327092737, 0]);
+}
+
+#[test]
+fn fuzz_select_ranges_arity2() {
+    let ops = vec![ DigitSum, DigitSum, Gcd2, DigitSum, DigitSum, DigitSum, Modulo, And, Funkcia, Max, And, ];
+    verify_repro(ops, vec![1843385120036290559, 68100994365206283, 4294967295]);
+}
+
+#[test]
+fn fuzz_median4() {
+    let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, Increment, Increment, Increment, Increment, Median, ];
+    verify_repro(ops, vec![6462577159401615359, 3411951361811483263, 0]);
 }
