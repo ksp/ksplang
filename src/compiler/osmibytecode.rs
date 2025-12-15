@@ -102,6 +102,7 @@ pub enum OsmibyteOp<TReg: Debug + Clone> {
     Jump(Condition<TReg>, u16), // if true: jump to instruction (in this precompiled block)
 
     Assert(Condition<TReg>, u16, TReg), // error code + argument (optional)
+    DebugAssert(Condition<TReg>), // if false: panic (debug only)
     DeoptAssert(Condition<TReg>, u16), // if false: abort block execution, deopt info number
     Done(u32, i16), // target instruction pointer + CTR increment (if it can't fit into u32/i16, then we'll standard deopt)
     Median2(TReg, TReg, TReg), // a <- median(b, c)
@@ -224,6 +225,7 @@ impl<TReg: Debug + Clone> OsmibyteOp<TReg> {
             OsmibyteOp::Jump(condition, ip) => OsmibyteOp::Jump(condition.replace_regs(|r| f(r, false)), *ip),
 
             OsmibyteOp::Assert(condition, code, arg) => OsmibyteOp::Assert(condition.replace_regs(|r| f(r, false)), *code, f(arg, false)),
+            OsmibyteOp::DebugAssert(condition) => OsmibyteOp::DebugAssert(condition.replace_regs(|r| f(r, false))),
             OsmibyteOp::DeoptAssert(condition, id) => OsmibyteOp::DeoptAssert(condition.replace_regs(|r| f(r, false)), *id),
             OsmibyteOp::Done(ip, ctr) => OsmibyteOp::Done(*ip, *ctr),
 

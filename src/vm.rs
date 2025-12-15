@@ -109,6 +109,8 @@ pub enum OperationError {
     ArgumentBMustBeNonNegative { value: i64 },
     #[error("Argument `c` must be non-negative, it was {value}")]
     ArgumentCMustBeNonNegative { value: i64 },
+    #[error("Internal error in the runtime")]
+    Unreachable
 }
 
 impl OperationError {

@@ -805,17 +805,33 @@ impl GraphBuilder {
         }
 
         let mut out_val = ValueId(0);
+        let mut always_fails = false;
         if instr.out.is_computed() {
             let (inferred_range, inferred_effect) = self.infer_op_range_effect(&instr.op, &instr.inputs, instr.id);
             instr.effect = OpEffect::better_of(instr.effect, inferred_effect);
-            let val_range =
-                simplifier_range.iter().chain(&out_range).chain(&inferred_range)
-                    .cloned()
-                    .reduce(|a, b| intersect_range(&a, &b))
-                    .unwrap_or(i64::MIN..=i64::MAX);
-            assert!(!val_range.is_empty() || instr.op.is_terminal(), "Empty output range for instr {}: {:?} <- {:?}{:?} (specified range={out_range:?}, simplifier range={out_range:?}, inferred range={inferred_range:?})", instr.id, instr.out, instr.op, instr.inputs);
 
-            if *val_range.start() == *val_range.end() {
+            let val_range =
+                [&simplifier_range, &out_range, &inferred_range].iter().cloned().flatten().cloned()
+                .reduce(|a, b| intersect_range(&a, &b))
+                .unwrap_or(FULL_RANGE);
+
+            if !instr.op.is_terminal() && val_range.is_empty() {
+                assert!(
+                    inferred_range.as_ref().is_some_and(|c| c.is_empty()) || simplifier_range.as_ref().is_some_and(|c| c.is_empty()) || out_range.as_ref().is_some_and(|c| c.is_empty()),
+                    "Conflicting output ranges for instr {}: {:?} <- {:?}{:?} (specified range={out_range:?}, simplifier range={simplifier_range:?}, inferred range={inferred_range:?})", instr.id, instr.out, instr.op, instr.inputs
+                );
+                // Guaranteed to fail (somehow). We emit the original Op and then unreachability assert
+                assert!(!matches!(instr.effect, OpEffect::None | OpEffect::CtrIncrement | OpEffect::ControlFlow), "invalid effect {:?} of {instr}", instr.effect);
+                if self.conf.should_log(10) {
+                    println!("Instruction {} proved to be unreachable/failing (empty range), replacing with DeoptAssert(False)", instr.id);
+                }
+                always_fails = true;
+            }
+
+            if val_range.is_empty() {
+                out_val = ValueId(0);
+                instr.out = ValueId(0);
+            } else if *val_range.start() == *val_range.end() {
                 out_val = self.store_constant(*val_range.start());
                 instr.out = ValueId(0);
             } else {
@@ -858,8 +874,14 @@ impl GraphBuilder {
             self.mark_used_at(arg, instr.id);
         }
 
-        let instr = self.current_block_mut().add_instruction(instr);
-        (out_val, Some(instr))
+        if always_fails {
+            self.current_block_mut().add_instruction(instr);
+            let assert_false = self.push_assert(Condition::False, OperationError::Unreachable, None);
+            (out_val, assert_false)
+        } else {
+            let instr_ref = self.current_block_mut().add_instruction(instr);
+            (out_val, Some(instr_ref))
+        }
     }
 
     pub fn push_checkpoint(&mut self) -> &mut OptInstr {
@@ -893,12 +915,12 @@ impl GraphBuilder {
         self.push_instr(op, args, false, None, None).1.unwrap()
     }
 
-    pub fn push_assert(&mut self, c: Condition<ValueId>, error: OperationError, val: Option<ValueId>) {
+    pub fn push_assert(&mut self, c: Condition<ValueId>, error: OperationError, val: Option<ValueId>) -> Option<&mut OptInstr> {
         let mut args: ArrayVec<ValueId, 1> = ArrayVec::new();
         if let Some(val) = val {
             args.push(val);
         }
-        self.push_instr(OptOp::Assert(c, error), &args, false, None, None);
+        self.push_instr(OptOp::Assert(c, error), &args, false, None, None).1
     }
 
     pub fn push_deopt_assert(&mut self, c: Condition<ValueId>, precise_deoptinfo: bool) {

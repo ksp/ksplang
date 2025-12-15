@@ -738,9 +738,14 @@ impl<'a> Compiler<'a> {
     }
 
     fn lower_assert(&mut self, instr: &OptInstr, condition: Condition<ValueId>, error: OperationError) {
-        let code = Self::encode_error(&error);
-
         let lowered_condition = self.lower_condition(condition);
+
+        if matches!(error, OperationError::Unreachable) {
+            self.program.push(OsmibyteOp::DebugAssert(lowered_condition));
+            return;
+        }
+
+        let code = Self::encode_error(&error);
 
         let arg_reg = if instr.inputs.len() > 0 {
             let id = instr.inputs[0];

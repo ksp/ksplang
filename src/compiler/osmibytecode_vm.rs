@@ -504,6 +504,11 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                         deopt_or_error!(error_from_code(*err, regs[arg]))
                     }
                 },
+                OsmibyteOp::DebugAssert(condition) => {
+                    if !eval_cond(&regs, condition.clone()) {
+                        panic!("Debug assertion failed: {condition:?} at {ip}:\n\n{prog}");
+                    }
+                },
                 OsmibyteOp::DeoptAssert(condition, di) => {
                     if !eval_cond(&regs, condition.clone()) {
                         maybe_cold();
