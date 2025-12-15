@@ -903,7 +903,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     let can_overflow = c_start == i64::MIN && b_start <= 1 && b_end >= 1;
                     let mut must_assert_divisibility = false;
                     let bruteforced_div_range = eval_combi(c_start..=c_end, b_start..=b_end, 256, |c, b| {
-                            if c % b == 0 { Some(c / b) }
+                            if b != 0 && c % b == 0 { Some(c / b) }
                             else { must_assert_divisibility = true; None }
                     });
 
