@@ -67,15 +67,13 @@ fn fuzz_bulkxor_ordering() {
 
 #[test]
 fn fuzz_tetration_which_always_fails() {
-    let ops = vec![
-        DigitSum,
-        Increment,
-        DigitSum,
-        LenSum,
-        Increment,
-        DigitSum,
-        Increment,
-        TetrationNumIters,
-    ];
+    let ops = vec![ DigitSum, Increment, DigitSum, LenSum, Increment, DigitSum, Increment, TetrationNumIters, ];
     verify_repro(ops, vec![9163700435218548299, 5424162628174564166, 0]);
+}
+
+
+#[test]
+fn fuzz_repro() {
+    let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, And, Funkcia ];
+    verify_repro(ops, vec![2, 1, 0]);
 }

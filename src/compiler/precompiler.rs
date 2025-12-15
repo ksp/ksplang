@@ -771,13 +771,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 }
 
                 if a == ValueId::C_ONE || a == ValueId::C_ZERO {
-                    if b_end < 1_000_000_007 {
-                        self.g.stack.push(b);
-                        return Continue;
-                    }
-
-                    let mod_c = self.g.store_constant(1_000_000_007);
-                    let out = self.g.value_numbering(OptOp::Mod, &[b, mod_c], None, None);
+                    let mod_out = if b_end < 1_000_000_007 {
+                        b
+                    } else {
+                        let mod_c = self.g.store_constant(1_000_000_007);
+                        self.g.value_numbering(OptOp::Mod, &[b, mod_c], None, None)
+                    };
+                    let out = self.g.push_instr(OptOp::Select(Condition::LeqConst(b, 1)), &[ValueId::C_ZERO, mod_out], true, None, None).0;
                     self.g.stack.push(out);
                     return Continue;
                 }
