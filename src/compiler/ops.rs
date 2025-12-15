@@ -522,11 +522,18 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             },
             OptOp::DigitSum => Some(digit_sum::digit_sum_range(inputs[0].clone())),
             OptOp::Gcd => {
-                let ranges = inputs.iter().map(|v| abs_range(v.clone()));
-                let min_end = ranges.clone().map(|r| *r.end()).min().unwrap();
-                let all_zeros = ranges.clone().all(|r| *r.start() == 0);
+                let ranges: Vec<_> = inputs.iter().map(|v| abs_range(v.clone())).collect();
+                // output max is at most the highest non-zero value
+                let max_end = ranges.iter().map(|r| *r.end()).max().unwrap();
+                let min_nonzero_end = ranges.iter()
+                    .filter(|r| *r.start() > 0)
+                    .map(|r| *r.end())
+                    .min();
 
-                Some(range_2_i64(if all_zeros { 0 } else { 1 }..=min_end))
+                let upper_bound = min_nonzero_end.unwrap_or(max_end);
+                let all_zeros = ranges.iter().all(|r| *r.start() == 0);
+
+                Some(range_2_i64(if all_zeros { 0 } else { 1 }..=upper_bound))
             },
             OptOp::Median => {
                 let mut starts: Vec<i64> = inputs.iter().map(|r| *r.start()).collect();

@@ -412,6 +412,24 @@ impl<TReg> Condition<TReg> {
             Condition::False => Condition::True,
         }
     }
+
+    pub fn neg_if(self, condition: bool) -> Condition<TReg> {
+        if condition {
+            self.neg()
+        } else {
+            self
+        }
+    }
+}
+
+impl<T> From<bool> for Condition<T> {
+    fn from(value: bool) -> Self {
+        if value {
+            Condition::True
+        } else {
+            Condition::False
+        }
+    }
 }
 
 impl<T: fmt::Debug> fmt::Display for Condition<T> {

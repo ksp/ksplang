@@ -12,6 +12,7 @@ pub mod range_ops;
 pub mod precompiler;
 pub mod cfg_interpreter;
 pub mod opt_hoisting;
+pub mod test_utils;
 #[cfg(test)]
 pub mod tests;
 

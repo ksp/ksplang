@@ -1774,19 +1774,6 @@ impl OptimizingVM {
         self.save_block(s, 0, false, p.g, p.instr_interpreted_count, None);
     }
 
-    fn build_block(&self, start_ip: usize, reversed: bool, cfg: GraphBuilder, osmibytecode: Option<OsmibytecodeBlock>) -> OptimizedBlock {
-        let cfg = (osmibytecode.is_none() || self.conf.verify > 0).then(|| Box::new(cfg));
-
-        OptimizedBlock {
-            cfg,
-            osmibytecode,
-            original_tracer: None,
-            reversed,
-            start_ip,
-            stats: BlockStats::default(),
-        }
-    }
-
     fn save_block(&self, s: &mut State<'_, Optimizer>, start_ip: usize, reversed: bool, cfg: GraphBuilder, gain_from: usize, tracer: Option<ActualTracer>) {
         let cfg_instr_count = cfg.reachable_blocks().map(|b| b.instructions.len()).count();
         if self.conf.min_gain_mul as usize * cfg_instr_count + (self.conf.min_gain_const as usize) > gain_from {

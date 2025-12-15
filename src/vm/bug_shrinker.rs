@@ -459,8 +459,8 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
         &self,
         settings: &CompileSettings,
         outcome: &ReproOutcome,
-        initial_mismatch: Option<(&[i64], usize)>,
-        initial_baseline: Option<(&[i64], usize)>,
+        _initial_mismatch: Option<(&[i64], usize)>,
+        _initial_baseline: Option<(&[i64], usize)>,
     ) -> ! {
         if self.vm.conf.verbosity > 0 || self.vm.conf.shrinker_final_verbosity > 0 {
             println!("\nRecompiling with verbosity {}...", self.vm.conf.shrinker_final_verbosity);

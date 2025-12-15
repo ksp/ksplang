@@ -1,6 +1,6 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet, VecDeque}, i32, ops::{Range, RangeInclusive}, u32
+    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet}, i32, ops::{Range, RangeInclusive}, u32
 };
 use rustc_hash::{FxHashMap as HashMap};
 
@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap as Map};
 #[cfg(not(debug_assertions))]
 use std::collections::{hash_map::Entry as MapEntry};
 
-use crate::{compiler::{analyzer::{self, cond_implies}, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
+use crate::{compiler::{analyzer::{self}, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -1058,9 +1058,11 @@ impl GraphBuilder {
         match self.stack.peek() {
             Some(reg) => reg,
             None => {
-                let reg = self.pop_stack();
-                self.stack.push(reg);
-                reg
+                self.stack.record_real_pop();
+                let pop = self.push_instr(OptOp::Pop, &[], false, None, None).0;
+                self.stack.push(pop);
+                self.stack.push_count -= 1;
+                pop
             }
         }
     }

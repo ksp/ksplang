@@ -73,6 +73,9 @@ impl<'a> OptOptPattern<'a> {
     pub fn op2(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>, b: impl Into<OptOptPattern<'a>>) -> Self {
         Self::default().or_op(op, vec![a.into(), b.into()])
     }
+    pub fn op3(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>, b: impl Into<OptOptPattern<'a>>, c: impl Into<OptOptPattern<'a>>) -> Self {
+        Self::default().or_op(op, vec![a.into(), b.into(), c.into()])
+    }
 
     pub fn val(val: ValueId) -> Self {
         Self::default().or_value(val)

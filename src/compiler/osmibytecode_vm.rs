@@ -440,9 +440,10 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 OsmibyteOp::DigitSumSmall(out, a) => {
                     let value = regs[a];
                     if value.unsigned_abs() > 10_000 {
-                        maybe_cold();
-                        deopt_auto = true;
-                        break;
+                        panic!("DigitSumSmall called with arg {value}");
+                        // maybe_cold();
+                        // deopt_auto = true;
+                        // break;
                     }
                     regs[out] = digit_sum::digit_sum(value);
                 },
@@ -578,7 +579,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
             assert!(performing_deopt.is_none(), "auto-deopt is not supported when in a deopt (IP is ambiguous). Deopt instructions must not fail");
             // println!("deopt_auto at {ip}");
             match prog.ip2deopt.binary_search_by_key(&ip, |x| x.0) {
-                Err(ix) => panic!("Operation {ip} auto-deopts, but corresponding deopt is not recorded? (closest is {ix} {:?}", prog.ip2deopt[ix]),
+                Err(ix) => panic!("Operation {ip} auto-deopts, but corresponding deopt is not recorded? (next deopt is {ix} {:?}", prog.ip2deopt.get(ix)),
                 Ok(ix) => deopt_info = Some(prog.ip2deopt[ix].1)
             }
         }

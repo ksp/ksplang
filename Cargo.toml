@@ -17,10 +17,17 @@ smallvec = { version = "1.15.1", features = ["union", "const_generics", "const_n
 arrayvec = "0.7.6"
 rustc-hash = "2.1.1"
 
+# [profile.release]
+# debug = 1
+#
+# [build]
+# rustflags = ["-C", "force-frame-pointers=yes"]
+
 [workspace]
 members = [
 	"ksplang-cli",
-	"."
+	"fuzz",
+	".",
 ]
 
 [lib]

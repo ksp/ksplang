@@ -1,4 +1,4 @@
-use std::{cmp, collections::{BTreeSet, VecDeque}, ops::RangeInclusive, os::unix::process::CommandExt, vec};
+use std::{cmp, collections::{BTreeSet, VecDeque}, ops::RangeInclusive, vec};
 use rustc_hash::{FxHashMap as HashMap};
 
 use num_integer::Integer;
@@ -1040,7 +1040,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         xors.push(Ok(ValueId::C_ZERO))
                     } else if *ar.start() > 0 && *br.end() <= 0 {
                         xors.push(Ok(ValueId::C_ONE))
-                    } else if *ar.end() <= 0 && *br.end() > 0 {
+                    } else if *ar.end() <= 0 && *br.start() > 0 {
                         xors.push(Ok(ValueId::C_ONE))
                     } else if *ar.end() <= 0 && *br.end() <= 0 {
                         xors.push(Ok(ValueId::C_ZERO))
@@ -1055,7 +1055,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
                 self.g.pop_stack_n(n as usize * 2 + 1);
 
-                for x in xors {
+                for x in xors.into_iter().rev() {
                     match x {
                         Ok(c) => self.g.stack.push(c),
                         Err((a, ar, b, br)) => {

@@ -393,7 +393,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                                         condition_overlaps_range(&condition, ac, rem_range)
                                     }).cloned().collect();
                                 if valid_ranges.is_empty() {
-                                    return Condition::False
+                                    return Condition::from(is_negated)
                                 }
 
                                 if let [(input_range, rem_range)] = valid_ranges.as_slice() &&
@@ -404,7 +404,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                                     let new_r = intersect_range(input_range, cond_range.start().saturating_add(offset)..=cond_range.end().saturating_add(offset));
                                     let rc = create_range_constraint_condition(cfg, mod_x, rem_range, &new_r);
                                     if rc.len() == 1 {
-                                        return rc[0].clone();
+                                        return rc[0].clone().neg_if(is_negated);
                                     }
                                 }
                             }
