@@ -482,9 +482,6 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 if let Some(x) = self.g.get_constant(x) {
                     self.g.pop_stack_n(2);
                     let rotate_by = x.rem_euclid(n);
-                    if rotate_by == 0 {
-                        return Continue
-                    }
                     let mut vals = self.g.pop_stack_n(n as usize);
                     if self.conf.should_log(20) {
                         println!("Roll({n}, {rotate_by}) {vals:?}");
