@@ -300,23 +300,35 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         }
                     }
 
-                    // if matches!(def.op, OptOp::Mul) && def.inputs.len() == 2 && def.inputs[0].is_constant() { // TODO
-                    //     // A > (b * C) => (A / C) > b
-                    //     let mul = cfg.get_constant_(def.inputs[0]);
-                    //     let b2 = def.inputs[1];
-                    //     let ac2 = if ac % mul == 0 {
-                    //         ac / mul
-                    //     } else {
-                    //         match &condition {
-                    //             Condition::Eq(_, _) => return Condition::False,
-                    //             Condition::Neq(_, _) => return Condition::True,
-                    //             _ => todo!()
-                    //         }
-                    //     };
-                    //     let a2 = cfg.store_constant(ac2 / mul);
-                    //
-                    //     return canonicalize_condition(cfg, condition.replace_arr(vec![a2, b2]))
-                    // }
+                    if matches!(def.op, OptOp::Mul) && def.inputs.len() == 2 && def.inputs[0].is_constant() {
+                        // A > (b * C) => (A / C) > b
+                        let mul = cfg.get_constant_(def.inputs[0]);
+                        let b2 = def.inputs[1];
+                        assert_ne!(0, mul);
+
+                        // let (ac2, exact) = (ac / mul, ac % mul == 0);
+                        let ac_floor = ac.div_floor(&mul);
+                        let ac_ceil = ac.div_ceil(&mul);
+                        let exact = ac_floor == ac_ceil;
+
+                        match &condition {
+                            Condition::Eq(_, _) => if exact {
+                                return Condition::Eq(cfg.store_constant(ac_floor), b2)
+                            } else {
+                                return Condition::False
+                            },
+                            Condition::Neq(_, _) => if exact {
+                                return Condition::Neq(cfg.store_constant(ac_floor), b2)
+                            } else {
+                                return Condition::True
+                            },
+                            Condition::Lt(_a, _b) => return Condition::Lt(cfg.store_constant(ac_floor), b2),
+                            Condition::Leq(_a, _b) => return Condition::Leq(cfg.store_constant(ac_ceil), b2),
+                            Condition::Gt(_a, _b) => return Condition::Gt(cfg.store_constant(ac_ceil), b2),
+                            Condition::Geq(_a, _b) => return Condition::Geq(cfg.store_constant(ac_floor), b2),
+                            _ => unreachable!()
+                        }
+                    }
                     if let OptOp::Select(select_cond) = &def.op {
                         // X == select(..., X, Y)
                         let t_range = cfg.val_range_at(def.inputs[0], at);
@@ -1117,6 +1129,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 let mut c = cfg.get_constant_(i.inputs[0]);
                 let ar = &ranges[1];
                 let a = if c % 2 == 1 {
+                    todo!("should not happen, right?");
                     // we could optimize to (a + c) / 2, but we'll rather try (a + 1) / 2 + c / 2 and (a - 1) / 2 + c / 2
                     if *ar.start() != i64::MIN {
                         c += 1;
@@ -1128,7 +1141,17 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         break 'main;
                     }
                 } else {
-                    i.inputs[1]
+                    // for 2: -1 will get rounded differently in (a + 2) / 2 than in a / 2 + 1
+                    // we prefer the second form, so we need to make sure -1 cannot be an input
+                    // for N (divisible by 2), problem value is -N + sgn(N)
+                    let rounding_bug_value = -(c - c.signum());
+                    debug_assert!(c != 2 || rounding_bug_value == -1);
+                    let is_safe = simplify_cond(cfg, Condition::NeqConst(i.inputs[1], -1), i.id);
+                    if is_safe == Condition::True {
+                        i.inputs[1]
+                    } else {
+                        break 'main;
+                    }
                 };
                 let div_2 = cfg.value_numbering(OptOp::Div, &[a, ValueId::C_TWO], None, Some(OpEffect::None));
                 let const_c = cfg.store_constant(c / 2);
@@ -1576,6 +1599,29 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     // let c = cfg.get_constant_(r.get_named_single("div1").unwrap());
                     return (i.with_op(OptOp::Add, &[a], OpEffect::None), None)
                 }
+            }
+        }
+
+        // used in duplication:
+        // a - 2*median(2, a)
+        //   => (a + 2) % 2 - 2
+        if OptOp::Add == i.op && i.inputs.len() == 2 && i.inputs[0].is_computed() && i.inputs[1].is_computed() {
+            static PATTERN: LazyLock<OptOptPattern> = LazyLock::new(||
+                P::op2(OptOp::Mul, -2, P::op2(OptOp::Median, 2, P::any().named("a")))
+            );
+            println!("DBG {i}");
+            if let Ok(r) = dbg!(PATTERN.try_match(cfg, &i.inputs)) &&
+                let Some(a) = r.get_named_single("a") &&
+                i.inputs.contains(&a)
+            {
+                // let add1 = cfg.value_numbering(OptOp::Add, &[a, ValueId::C_TWO], None, None);
+                // let mod1 = cfg.value_numbering(OptOp::Mod, &[add1, ValueId::C_TWO], None, None);
+                // i.op = OptOp::Add;
+                // i.inputs = smallvec![ValueId::C_NEG_TWO, mod1]
+                let select1 = cfg.value_numbering(OptOp::Select(Condition::Leq(ValueId::C_NEG_TWO, a)), &[ ValueId::C_NEG_ONE, ValueId::C_NEG_THREE ], None, None);
+                i.op = OptOp::Select(Condition::Divides(a, ValueId::C_TWO));
+                i.inputs = smallvec![ValueId::C_NEG_TWO, select1];
+                continue;
             }
         }
 

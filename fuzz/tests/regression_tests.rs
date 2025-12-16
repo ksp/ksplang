@@ -108,11 +108,11 @@ fn fuzz_gpc_multiple_constants() {
     verify_repro(ops, vec![-1, -1, 0]);
 }
 
-// #[test]
-// fn fuzz_median2_rounding() {
-//     let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, And, Increment, Increment, Median, ];
-//     verify_repro(ops, vec![42, -1, 0]);
-// }
+#[test]
+fn fuzz_median2_rounding() {
+    let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, And, Increment, Increment, Median, ];
+    verify_repro(ops, vec![42, -1, 0]);
+}
 
 #[test]
 fn fuzz_roll_zero() {
@@ -120,15 +120,14 @@ fn fuzz_roll_zero() {
     verify_repro(ops, vec![0, 0, 0]);
 }
 
-// #[test]
-// fn fuzz_repro_large() {
-//    let ops = vec![ DigitSum, DigitSum, DigitSum, Remainder, DigitSum, DigitSum, DigitSum, Max, DigitSum, Modulo, Remainder, Increment, BulkXor, Remainder, Remainder, Increment, And, ];
-//    verify_repro(ops, vec![-14694063110410753, -50722894626733825, -3032071681, 8857255856174097162, 562945977220957]);
-// }
-
+#[test]
+fn fuzz_select_simplificaiton_large() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, Remainder, DigitSum, DigitSum, DigitSum, Max, DigitSum, Modulo, Remainder, Increment, BulkXor, Remainder, Remainder, Increment, And, ];
+   verify_repro(ops, vec![-14694063110410753, -50722894626733825, -3032071681, 8857255856174097162, 562945977220957]);
+}
 
 #[test]
-fn fuzz_repro() {
+fn fuzz_select_simplification() {
     let ops = vec![ DigitSum, DigitSum, Remainder, DigitSum, DigitSum, Remainder, Increment, BulkXor, ];
     verify_repro(ops, vec![42, 43, 67]);
 }

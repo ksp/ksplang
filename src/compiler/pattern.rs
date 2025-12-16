@@ -347,17 +347,21 @@ impl<'a> OptOptPattern<'a> {
 
             let mut used = vec![0; patterns.len()];
             let mut final_map = vec![];
-            for (v, matched) in matches {
+            let mut matches = matches.into_iter().collect::<Vec<_>>();
+            matches.sort_by_key(|k| k.1.len());
+            for (v, matched) in &matches {
                 let free_maps = matched.iter().filter(|i| used[**i as usize] == 0 || patterns[**i as usize].variadic).collect::<Vec<_>>();
                 if free_maps.is_empty() {
                     return false;
                 }
                 if free_maps.len() == 1 {
                     used[*free_maps[0] as usize] += 1;
-                    final_map.push((v, *free_maps[0]));
+                    final_map.push((*v, *free_maps[0]));
+                } else {
+                    println!("Will not work, ambiguous match: {v} {matched:?}")
                 }
             }
-            if !final_map.len() != vals.len() { todo!() }
+            if final_map.len() != vals.len() { todo!("{final_map:?} {vals:?} {used:?} {matches:?}") }
             info.assert_is_at(&save1);
             for (v, p) in final_map {
                 assert!(patterns[p as usize].match_internal(cfg, &[v], info).is_ok());

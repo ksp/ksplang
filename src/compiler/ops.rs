@@ -12,6 +12,7 @@ impl ValueId {
     pub const PREDEF_RANGE: i32 = 4096;
     pub const C_NEG_ONE: ValueId = Self::from_predefined_const(-1).unwrap();
     pub const C_NEG_TWO: ValueId = Self::from_predefined_const(-2).unwrap();
+    pub const C_NEG_THREE: ValueId = Self::from_predefined_const(-3).unwrap();
     pub const C_ZERO: ValueId = Self::from_predefined_const(0).unwrap();
     pub const C_ONE: ValueId = Self::from_predefined_const(1).unwrap();
     pub const C_TWO: ValueId = Self::from_predefined_const(2).unwrap();
