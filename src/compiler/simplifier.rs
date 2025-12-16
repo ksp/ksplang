@@ -321,18 +321,38 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         // X == select(..., X, Y)
                         let t_range = cfg.val_range_at(def.inputs[0], at);
                         let f_range = cfg.val_range_at(def.inputs[1], at);
-                        if !t_range.contains(&ac) && !f_range.contains(&ac) {
-                            return Condition::False
-                        }
-                        if !t_range.contains(&ac) {
-                            if f_range == (ac..=ac) {
-                                return select_cond.clone().neg()
+                        match condition { // TODO: this should probably be smarter and handle stuff like `a == select(..., a, 0)`, or `a == select(..., a + 1, a)`
+                            Condition::Eq(_, _) => {
+                                if !t_range.contains(&ac) && !f_range.contains(&ac) {
+                                    return Condition::False
+                                }
+                                if !t_range.contains(&ac) {
+                                    if f_range == (ac..=ac) {
+                                        return select_cond.clone().neg()
+                                    }
+                                }
+                                if !f_range.contains(&ac) {
+                                    if t_range == (ac..=ac) {
+                                        return select_cond.clone()
+                                    }
+                                }
                             }
-                        }
-                        if !f_range.contains(&ac) {
-                            if t_range == (ac..=ac) {
-                                return select_cond.clone()
+                            Condition::Neq(_, _) => {
+                                if !t_range.contains(&ac) && !f_range.contains(&ac) {
+                                    return Condition::True
+                                }
+                                if !t_range.contains(&ac) {
+                                    if f_range == (ac..=ac) {
+                                        return select_cond.clone()
+                                    }
+                                }
+                                if !f_range.contains(&ac) {
+                                    if t_range == (ac..=ac) {
+                                        return select_cond.clone().neg()
+                                    }
+                                }
                             }
+                            _ => {}
                         }
                     }
                     if let OptOp::AbsFactorial = &def.op {
