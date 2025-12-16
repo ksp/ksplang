@@ -637,6 +637,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 assert_eq!(n, vals[0]);
 
                 if n_range.start() == n_range.end() {
+                    if self.g.conf.allow_osmibyte_backend {
+                        if !matches!(vals.len(), 0 | 1 | 2 | 3 | 5) { return NevimJak } // TODO: median hack
+                    }
                     let out = self.g.value_numbering(OptOp::Median, &vals, None, None);
                     self.g.stack.push(out);
                 } else {

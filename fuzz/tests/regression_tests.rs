@@ -95,3 +95,9 @@ fn fuzz_median4() {
     let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, Increment, Increment, Increment, Increment, Median, ];
     verify_repro(ops, vec![6462577159401615359, 3411951361811483263, 0]);
 }
+
+#[test]
+fn fuzz_median2_rounding() {
+    let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, And, Increment, Increment, Median, ];
+    verify_repro(ops, vec![42, -1, 0]);
+}

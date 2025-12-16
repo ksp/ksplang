@@ -485,7 +485,17 @@ impl<'a> Compiler<'a> {
             } }
         }
         match instr.inputs.len() {
-            0 | 1 | 2 => unreachable!("wtf {instr}"),
+            0 | 1 => unreachable!("wtf {instr}"),
+            2 if instr.inputs.contains(&ValueId::C_TWO) => {
+                let xs = vals_without!(ValueId::C_TWO);
+                let [a] = xs.as_slice() else { unreachable!() };
+                self.program.push(OsmibyteOp::MedianCursed2(spec.target_reg(), *a));
+            }
+            2 => {
+                let xs = self.materialize_values(instr.inputs.iter().copied());
+                let [a, b] = xs.as_slice() else { unreachable!() };
+                self.program.push(OsmibyteOp::Median2(spec.target_reg(), *a, *b));
+            }
             3 if instr.inputs.contains(&ValueId::C_THREE) => {
                 let xs = vals_without!(ValueId::C_THREE);
                 let [a, b] = xs.as_slice() else { unreachable!() };
@@ -501,7 +511,7 @@ impl<'a> Compiler<'a> {
                 let [a, b, c, d] = xs.as_slice() else { unreachable!("{xs:?} {instr}") };
                 self.program.push(OsmibyteOp::MedianCursed5(spec.target_reg(), *a, *b, *c, *d));
             }
-            _ => todo!("Median {instr}")
+            _ => todo!("Median {instr}\n\n{}", self.g)
         }
     }
 

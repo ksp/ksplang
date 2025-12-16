@@ -525,10 +525,10 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 OsmibyteOp::Median2(out, a, b) => {
                     let a = regs[a];
                     let b = regs[b];
-                    regs[out] = a / 2 + b / 2 + a % 2 + b % 2;
+                    regs[out] = ((a as i128 + b as i128) / 2) as i64;
                 },
                 OsmibyteOp::MedianCursed2(out, a) => {
-                    regs[out] = regs[a] / 2 + 1
+                    regs[out] = ((regs[a] as i128 + 2) / 2) as i64;
                 },
                 OsmibyteOp::Median3(out, a, b, c) => {
                     let mut arr = [regs[a], regs[b], regs[c]];
