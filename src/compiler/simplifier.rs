@@ -1,6 +1,7 @@
 use std::{cmp, ops::RangeInclusive, sync::LazyLock};
 
 use arrayvec::ArrayVec;
+use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
 use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::Condition, pattern::OptOptPattern, range_ops::{IRange, mod_split_ranges, range_signum}, utils::{abs_range, intersect_range, range_is_signless, union_range}}, vm::{self, OperationError}};
@@ -464,7 +465,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                     2 // any non-trivial range can be divided by 2
                 };
 
-                let min_divided = bra.start().div_ceil(mindiv);
+                let min_divided = bra.start().div_ceil(&mindiv);
                 let max_divided = bra.end() / mindiv;
                 // TODO: this probably needs a rewrite as it's probably still broken
                 if min_divided == max_divided && a.is_constant() {
@@ -1069,6 +1070,16 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Gcd if i.inputs.len() == 1 => {
                 i.op = OptOp::AbsSub;
                 i.inputs = smallvec![ValueId::C_ZERO, i.inputs[0]];
+                continue;
+            }
+
+            OptOp::Gcd if i.inputs[1].is_constant() => {
+                assert!(i.inputs[0].is_constant());
+                let constants = i.inputs.iter().copied().filter_map(|i| cfg.get_constant(i));
+                let constant = constants.map(|a| a.unsigned_abs()).reduce(|a, b| a.gcd(&b)).unwrap();
+                let mut new_inputs = smallvec![cfg.store_constant(constant as i64)];
+                new_inputs.extend(i.inputs.iter().copied().filter(|a| !a.is_constant()));
+                i.inputs = new_inputs;
                 continue;
             }
 
