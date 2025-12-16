@@ -547,11 +547,11 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 }
                 OsmibyteOp::KsplangOp(_op) => panic!("probably does not make sense anymore?"),
                 OsmibyteOp::KsplangOpWithArg(_op, _) => todo!("probably does not make sense anymore?"),
-                OsmibyteOp::KsplangOpsIncrement(x) => { ksplang_ops_done = ksplang_ops_done.wrapping_add(*x as u64) },
-                OsmibyteOp::KsplangOpsIncrementVar(x) => { ksplang_ops_done = ksplang_ops_done.wrapping_add(regs[x] as u64); },
+                OsmibyteOp::KsplangOpsIncrement(x) => { ksplang_ops_done = ksplang_ops_done.wrapping_add_signed(*x as i64) },
+                OsmibyteOp::KsplangOpsIncrementVar(x, mult) => { ksplang_ops_done = ksplang_ops_done.wrapping_add_signed(regs[x] * *mult as i64); },
                 OsmibyteOp::KsplangOpsIncrementCond(condition, x) => {
                     if eval_cond(&regs, condition.clone()) {
-                        ksplang_ops_done = ksplang_ops_done.wrapping_add(*x as u64)
+                        ksplang_ops_done = ksplang_ops_done.wrapping_add_signed(*x as i64)
                     }
                 },
                 OsmibyteOp::Spill(ix, a) => {

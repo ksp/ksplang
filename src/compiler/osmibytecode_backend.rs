@@ -82,7 +82,7 @@ impl<'a> Compiler<'a> {
                 added_increment = true;
 
                 if block.ksplang_instr_count != 0 {
-                    self.program.push(OsmibyteOp::KsplangOpsIncrement(block.ksplang_instr_count));
+                    self.program.push(OsmibyteOp::KsplangOpsIncrement(block.ksplang_instr_count as i32));
                     if let Some(deopt) = &mut self.current_deopt {
                         deopt.ksplang_ops_increment -= block.ksplang_instr_count as i64;
                     }
@@ -798,31 +798,45 @@ impl<'a> Compiler<'a> {
 
     fn lower_ops_increment(&mut self, instr: &OptInstr, condition: Condition<ValueId>) {
         let cond = self.lower_condition(condition);
-        for &input in &instr.inputs {
-            if let Some(c) = self.g.get_constant(input) {
+        let mut deopt: Vec<OsmibyteOp<RegId>> = vec![];
+        let mut deopt_const: i64 = 0;
+        for &value in &instr.inputs {
+            if let Some(c) = self.g.get_constant(value) {
                 if cond == Condition::True {
-                    if let Ok(c_u32) = c.try_into() {
-                        self.program.push(OsmibyteOp::KsplangOpsIncrement(c_u32));
+                    deopt_const -= c;
+                    if let Ok(c_i32) = c.try_into() {
+                        self.program.push(OsmibyteOp::KsplangOpsIncrement(c_i32));
                         continue;
                     } else {
-                        let reg = self.materialize_value_(input);
-                        self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg));
+                        let reg = self.materialize_value_(value);
+                        self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg, 1));
                         continue;
                     }
-                } else if let Ok(c_u16) = c.try_into() {
-                    self.program.push(OsmibyteOp::KsplangOpsIncrementCond(cond.clone(), c_u16));
+                } else if let Ok(c_i16) = c.try_into() {
+                    self.program.push(OsmibyteOp::KsplangOpsIncrementCond(cond.clone(), c_i16));
+                    deopt.push(OsmibyteOp::KsplangOpsIncrementCond(cond.clone(), -c_i16));
                     continue;
                 }
             }
-            let reg = self.materialize_value_(input);
+            let reg = self.materialize_value_(value);
+            deopt.extend(self.mk_materialization(value, reg));
             if cond == Condition::True {
-                self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg));
+                self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg, 1));
+                deopt.push(OsmibyteOp::KsplangOpsIncrementVar(reg, -1));
             } else {
                 let tmp = self.temp_regs.alloc().unwrap();
                 self.program.push(OsmibyteOp::SelectConstReg(tmp, cond.clone().neg(), 0, reg));
-                self.program.push(OsmibyteOp::KsplangOpsIncrementVar(tmp));
+                self.program.push(OsmibyteOp::KsplangOpsIncrementVar(tmp, 1));
+                deopt.push(OsmibyteOp::SelectConstReg(tmp, cond.clone().neg(), 0, reg));
+                deopt.push(OsmibyteOp::KsplangOpsIncrementVar(tmp, -1));
                 self.temp_regs.release(tmp);
             }
+        }
+
+        if let Some(deopt_mut) = self.current_deopt.as_mut() {
+            deopt.extend_from_slice(&deopt_mut.opcodes[..]);
+            deopt_mut.opcodes = deopt.into_boxed_slice();
+            deopt_mut.ksplang_ops_increment += deopt_const;
         }
     }
 

@@ -113,9 +113,9 @@ pub enum OsmibyteOp<TReg: Debug + Clone> {
     KsplangOp(crate::ops::Op),
     KsplangOpWithArg(crate::ops::Op, TReg),
 
-    KsplangOpsIncrement(u32), // ksplang_interpreted += c
-    KsplangOpsIncrementVar(TReg), // ksplang_interpreted += a
-    KsplangOpsIncrementCond(Condition<TReg>, u16), // ksplang_interpreted += c if condition
+    KsplangOpsIncrement(i32), // ksplang_interpreted += c
+    KsplangOpsIncrementVar(TReg, i8), // ksplang_interpreted += a * b
+    KsplangOpsIncrementCond(Condition<TReg>, i16), // ksplang_interpreted += c if condition
 
     Spill(u32, TReg), // somewhere[ix] <- a move to a larger register file, should not really happen but easier to implement this than a proper register allocator...
     Unspill(TReg, u32), // a <- somewhere[ix]
@@ -239,7 +239,7 @@ impl<TReg: Debug + Clone> OsmibyteOp<TReg> {
             OsmibyteOp::KsplangOpWithArg(op, a) => OsmibyteOp::KsplangOpWithArg(*op, f(a, false)),
 
             OsmibyteOp::KsplangOpsIncrement(inc) => OsmibyteOp::KsplangOpsIncrement(*inc),
-            OsmibyteOp::KsplangOpsIncrementVar(inc) => OsmibyteOp::KsplangOpsIncrementVar(f(inc, false)),
+            OsmibyteOp::KsplangOpsIncrementVar(inc, mult) => OsmibyteOp::KsplangOpsIncrementVar(f(inc, false), *mult),
             OsmibyteOp::KsplangOpsIncrementCond(cond, inc) => OsmibyteOp::KsplangOpsIncrementCond(cond.replace_regs(|r| f(r, false)), *inc),
 
             OsmibyteOp::Spill(value, a) => OsmibyteOp::Spill(*value, f(a, false)),
