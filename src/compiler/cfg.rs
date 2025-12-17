@@ -716,9 +716,13 @@ impl GraphBuilder {
                 (false, pure_range.start().div_ceil(&c) * c ..= pure_range.end().div_floor(&c) * c)
             }
             Condition::Divides(other, a) if *a == val => {
-                // other % a == 0 implies that |a| is at most |other|
-                let (_, other_max) = abs_range(self.val_range_at(*other, at)).into_inner();
-                (false, 0i64.saturating_sub_unsigned(other_max) ..= 0i64.saturating_add_unsigned(other_max))
+                // other % a == 0 implies that |a| is at most |other| (except if other can be 0)
+                let (other_min, other_max) = abs_range(self.val_range_at(*other, at)).into_inner();
+                if other_min == 0 {
+                    (false, FULL_RANGE)
+                } else {
+                    (false, 0i64.saturating_sub_unsigned(other_max) ..= 0i64.saturating_add_unsigned(other_max))
+                }
             }
             Condition::NotDivides(a, other) if *a == val && other.is_constant() => {
                 // just move boundary by one if it's divisible
@@ -769,7 +773,7 @@ impl GraphBuilder {
             effect: effect2
         };
         if self.conf.should_log(30) {
-            println!("Maybe pushing {instr}")
+            println!("Maybe pushing {instr} (vn={value_numbering}, {out_range:?}, {effect:?})")
         }
         instr.validate();
         for v in instr.iter_inputs() {
@@ -779,7 +783,7 @@ impl GraphBuilder {
         let (mut instr, simplifier_range) = simplifier::simplify_instr(self, instr);
         instr.id = InstrId(self.current_block, self.current_block_ref().next_instr_id);
         if instr.op.is_terminal() {
-            assert_ne!(effect2, OpEffect::None);
+            assert_ne!(effect2, OpEffect::None, "Effect inferrence is broken {op:?} {args:?} -> {instr}");
             instr.out = ValueId(0);
         }
         instr.validate();
@@ -1264,6 +1268,7 @@ impl GraphBuilder {
                 assigned_at.op.evaluate_range_quick(&in_ranges).unwrap_or(FULL_RANGE)
             }
             else { FULL_RANGE };
+            // println!("DBG val_range_at({v}, {at}) assumptions: {:?}", info.iter_assumptions(at, &self.block_(at.block_id()).predecessors).collect::<Vec<_>>());
             for (_condition, range_from, range_to, _from) in info.iter_assumptions(at, &self.block_(at.block_id()).predecessors) {
                 return intersect_range(*range_from..=*range_to, from_range)
             }

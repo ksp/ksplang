@@ -139,7 +139,43 @@ fn fuzz_jump_increment_at_program_end() {
 }
 
 #[test]
-fn fuzz_stack_size_overflow() {
-    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, Praise, Max, Qeq, Praise, ];
+fn fuzz_stack_size_overflow() { // TODO: how do we want to handle this? for now it's ignored in fuzzer
+    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, Praise, Max, Qeq, Praise ];
     verify_repro(ops, vec![0, 0, 0]);
+}
+
+#[test]
+fn fuzz_stack_size_overflow2() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, Increment, Praise, Increment, DigitSum, Praise, Praise ];
+   verify_repro(ops, vec![1, 1, 255]);
+}
+
+#[test]
+fn fuzz_funkcia_negative_input_range() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Qeq, Funkcia, ];
+   verify_repro(ops, vec![1, 1, 7]);
+}
+
+#[test]
+fn fuzz_bitshift_deopt() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Qeq, Bitshift ];
+   verify_repro(ops, vec![1, 1, 1]);
+}
+
+#[test]
+fn fuzz_swap0_divisivility_alias_analysis() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, Praise, DigitSum, LSwap, Modulo, Remainder, Swap, LSwap, ];
+   verify_repro(ops, vec![0, 1, 10]);
+}
+
+#[test]
+fn fuzz_bad_zero_divisibility_assume() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Remainder, DigitSum, DigitSum, Swap, DigitSum, LSwap, Qeq, ];
+   verify_repro(ops, vec![855484965027766032, 812630658534838159, 0]);
+}
+
+#[test]
+fn fuzz_repro() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Remainder, DigitSum, Remainder, ];
+   verify_repro(ops, vec![1, 1, 1]);
 }

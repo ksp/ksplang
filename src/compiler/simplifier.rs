@@ -446,6 +446,21 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                 }
             }
 
+            if let Some(def) = cfg.get_defined_at(b) {
+                if matches!(def.op, OptOp::Mod | OptOp::ModEuclid) && def.inputs[0] == a {
+                    let y = def.inputs[1];
+                    let ar = cfg.val_range_at(a, at);
+                    let yr = cfg.val_range_at(y, at);
+                    if *ar.start() >= 0 && *yr.start() > 0 {
+                        match condition {
+                            Condition::Eq(_, _) => return Condition::Lt(a, y),
+                            Condition::Neq(_, _) => return Condition::Geq(a, y),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
             condition
         }
 
@@ -453,15 +468,11 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
             let (ar, br) = (cfg.val_range_at(a, at), cfg.val_range_at(b, at));
             let ara = abs_range(&ar);
             let bra = abs_range(&br);
-            if *ara.end() < *bra.start() || *bra.end() == 0 {
-                return if *ara.start() == 0 {
-                    Condition::Eq(b, ValueId::C_ZERO)
-                } else {
-                    Condition::False
-                };
+            if *ara.end() < *bra.start() {
+                return Condition::Eq(a, ValueId::C_ZERO);
             }
-            if *ara.end() == 0 {
-                return Condition::Neq(b, ValueId::C_ZERO);
+            if *bra.end() == 0 {
+                return Condition::False;
             }
 
             // if *br.end() > *ar.end() / 2 && ar.start() != 0 {
@@ -482,6 +493,10 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                     let b = cfg.store_constant(-bc);
                     return Condition::Divides(a, b);
                 }
+            }
+
+            if ar == (0..=0) {
+                return Condition::Neq(ValueId::C_ZERO, b)
             }
 
             if range_is_signless(&br) && range_is_signless(&ar) && !(ara.contains(&1) && ara.contains(&cmp::max(2, *bra.start()))) {
@@ -1609,7 +1624,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             static PATTERN: LazyLock<OptOptPattern> = LazyLock::new(||
                 P::op2(OptOp::Mul, -2, P::op2(OptOp::Median, 2, P::any().named("a")))
             );
-            println!("DBG {i}");
             if let Ok(r) = dbg!(PATTERN.try_match(cfg, &i.inputs)) &&
                 let Some(a) = r.get_named_single("a") &&
                 i.inputs.contains(&a)

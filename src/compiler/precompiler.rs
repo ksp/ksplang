@@ -702,8 +702,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 Continue
             }
             crate::ops::Op::Bitshift => {
-                let bits = self.g.pop_stack();
-                let num = self.g.pop_stack();
+                let bits = self.g.peek_stack();
                 let bits_range = self.g.val_range(bits);
                 // let num_range = self.g.val_range(num);
 
@@ -711,6 +710,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     self.g.push_instr_may_deopt(OptOp::deopt_always(), &[]);
                     return Continue;
                 }
+
+                let bits = self.g.pop_stack();
+                let num = self.g.pop_stack();
 
                 // let range = eval_combi(num_range, bits_range, 1024, |num, bits| Some(num.checked_shl(rhs) << bits));
 
@@ -870,7 +872,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let (c_start, c_end) = self.g.val_range(c).into_inner();
 
                 if self.g.get_constant(a) == Some(0) {
-                    
+
                     if self.g.get_constant(b) == Some(0) {
                         self.g.pop_stack_n(3);
                         // equation is `c == 0`
@@ -878,7 +880,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             let cond = if (c_start, c_end) == (0, 0) {
                                 Condition::False
                             } else {
-                                Condition::NeqConst(c, 0)
+                                Condition::Neq(ValueId::C_ZERO, c)
                             };
                             self.g.push_assert(cond, OperationError::QeqZeroEqualsZero, None);
                         }
@@ -896,7 +898,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     }
 
                     if b_start <= 0 && b_end >= 0 {
-                        self.g.push_deopt_assert(Condition::NeqConst(b, 0), false);
+                        self.g.push_deopt_assert(Condition::Neq(ValueId::C_ZERO, b), false);
                     }
 
                     // result = -(c / b) assuming b divides c

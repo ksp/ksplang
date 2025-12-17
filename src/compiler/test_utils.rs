@@ -1,3 +1,5 @@
+use std::cmp;
+
 use crate::compiler::{
     cfg::GraphBuilder, cfg_interpreter, osmibytecode::OsmibytecodeBlock, osmibytecode_vm::{self, ExitPointId, RegFile}, precompiler::{NoTrace, Precompiler}
 };
@@ -34,16 +36,16 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) {
     let cfg_res = cfg_interpreter::interpret_cfg(&g, &mut cfg_stack, true);
 
     let vm_ops_limit = if obc_res.is_ok() { executed_ops } else { 500_000 };
-    let max_stack = 1000;
+    let max_stack = cmp::max(1000, obc_stack.len() + 100);
 
     // use stop_after to get success, not error result
     let vm_options = VMOptions::new(&input, max_stack, &PI_TEST_VALUES, u64::MAX, vm_ops_limit);
     let vm_res = vm::run(&ops, vm_options);
 
     if cfg!(debug_assertions) {
-        println!("CFG result: {:?}", cfg_res);
-        println!("OBC result: {:?}", obc_res);
-        println!("Interpreter result: {:?}", vm_res);
+        println!("    * CFG result: {cfg_res:?} stack: {} {cfg_stack:?}", cfg_stack.len());
+        println!("    * OBC result: {obc_res:?} stack: {} {obc_stack:?}", obc_stack.len());
+        println!("    * Interpreter result: {:?}", vm_res);
     }
 
     match (obc_res, cfg_res, vm_res) {

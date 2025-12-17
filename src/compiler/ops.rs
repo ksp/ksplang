@@ -484,7 +484,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Mod => Some(range_mod(inputs[0].clone(), inputs[1].clone())),
             OptOp::ModEuclid => Some(range_mod_euclid(inputs[0].clone(), inputs[1].clone())),
             OptOp::Tetration => eval_combi(inputs[0].clone(), inputs[1].clone(), 16, |a, b| vm::tetration(a, b).ok()), // TODO: smarter heuristic?
-            OptOp::Funkcia => Some(0..=cmp::min(1_000_000_007 - 1, inputs[0].end().saturating_mul(*inputs[1].end()))),
+            OptOp::Funkcia => Some(0..=cmp::min(1_000_000_007 - 1, abs_range(&inputs[0]).end().saturating_mul(*abs_range(&inputs[1]).end())) as i64),
             OptOp::LenSum => Some(add_range(&range_num_digits(&inputs[0]), &range_num_digits(&inputs[1]))),
             OptOp::Max => Some(inputs.iter().map(|r| *r.start()).max().unwrap()..=inputs.iter().map(|r| *r.end()).max().unwrap()),
             OptOp::Min => Some(inputs.iter().map(|r| *r.start()).min().unwrap()..=inputs.iter().map(|r| *r.end()).min().unwrap()),
