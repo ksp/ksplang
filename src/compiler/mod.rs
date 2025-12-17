@@ -15,4 +15,6 @@ pub mod opt_hoisting;
 pub mod test_utils;
 #[cfg(test)]
 pub mod tests;
+#[cfg(test)]
+pub mod simplifier_tests;
 

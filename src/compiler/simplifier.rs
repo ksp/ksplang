@@ -474,62 +474,79 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
             if *bra.end() == 0 {
                 return Condition::False;
             }
+            if ar == (0..=0) {
+                return Condition::Neq(ValueId::C_ZERO, b);
+            }
+            if *bra.end() <= 1 {
+                return Condition::Neq(ValueId::C_ZERO, b);
+            }
+            if *ara.end() <= 1 && *bra.start() > 1 {
+                return Condition::Eq(ValueId::C_ZERO, a);
+            }
 
             // if *br.end() > *ar.end() / 2 && ar.start() != 0 {
             //     return Condition::Eq(a, b);
             // }
             if *br.end() == *br.start() {
                 let bc = *br.start();
-                if bc == 1 || bc == -1 {
-                    return Condition::True
-                }
-                if (*ara.end() / bc.abs_diff(0)) * bc.abs_diff(0) < *ara.start() {
+                let abs_b = bc.unsigned_abs();
+                let m = (*ara.end() / abs_b) * abs_b;
+
+                if m < *ara.start() {
                     return Condition::False;
                 }
-                if (*ara.end() / bc.abs_diff(0)) * bc.abs_diff(0) < *ara.start() + bc.abs_diff(0) {
-                    return Condition::Eq(a, b);
+                if m < *ara.start() + abs_b {
+                    // Only one multiple M exists in the absolute range -> |a| must be M.
+                    if *ar.start() >= 0 {
+                        return Condition::Eq(a, cfg.store_constant(m as i64));
+                    } else if *ar.end() <= 0 {
+                        return Condition::Eq(a, cfg.store_constant(0i64.strict_sub_unsigned(m)));
+                    }
+                    // ar crosses zero, but m is zero
+                    if m == 0 {
+                         return Condition::Eq(a, ValueId::C_ZERO);
+                    }
                 }
+
                 if bc < 0 && bc != i64::MIN {
                     let b = cfg.store_constant(-bc);
                     return Condition::Divides(a, b);
                 }
             }
 
-            if ar == (0..=0) {
-                return Condition::Neq(ValueId::C_ZERO, b)
-            }
-
             if range_is_signless(&br) && range_is_signless(&ar) && !(ara.contains(&1) && ara.contains(&cmp::max(2, *bra.start()))) {
                 // Try to reduce 3 % x == 0 into 3 == x
                 // we need the lowest divisor of a constant `a`
-                let mindiv = if *ar.start() == *ar.end() {
+                if a.is_constant() {
                     let ac = *ar.start();
-                    if ac == 1 || ac == -1 {
-                        return Condition::Eq(b, if *br.start() >= 0 { ValueId::C_ONE } else { ValueId::C_NEG_ONE });
-                    }
-                    try_get_lowest_divisor(ac.unsigned_abs()).unwrap_or(*SOME_PRIMES.last().unwrap() as u64)
-                } else {
-                    2 // any non-trivial range can be divided by 2
-                };
-
-                let min_divided = bra.start().div_ceil(&mindiv);
-                let max_divided = bra.end() / mindiv;
-                // TODO: this probably needs a rewrite as it's probably still broken
-                if min_divided == max_divided && a.is_constant() {
-                    // so, condition is only true if |b| == |a|
-                    // we just need to go though some hoops to express that...
-                    if (*br.start() >= 0) == (*ar.start() >= 0) {
-                        return Condition::Eq(a, b);
+                    let abs_a = ac.unsigned_abs();
+                    // 1. |b| > |a| => False
+                    // 2. |a|/2 < |b| < |a| => False
+                    if *bra.start() > abs_a || *bra.start() > abs_a / 2 && *bra.end() < abs_a {
+                        return Condition::False;
                     }
 
-                    if *ar.start() == *ar.end() {
-                        // flip sign, but it's a constant
-                        let a_flip = cfg.store_constant(-*ar.start());
-                        return Condition::Eq(a_flip, b);
+
+                    let known_mindiv = try_get_lowest_divisor(abs_a);
+                    let lower_bound_factor = known_mindiv.unwrap_or_else(|| {
+                        let prime = *SOME_PRIMES.last().unwrap() as u64;
+                        if abs_a < prime * prime { abs_a } else { prime }
+                    });
+
+                    // |b| < smallest prime factor => |b| == 1
+                    if *bra.end() < lower_bound_factor {
+                        if bra.contains(&1) {
+                            return Condition::Eq(b, if *br.start() >= 0 { ValueId::C_ONE } else { ValueId::C_NEG_ONE });
+                        } else {
+                            return Condition::False;
+                        }
                     }
-                    // IDK, maybe later...
+
+                    // If a is prime, then |b| must be 1 or a.
+                    if Some(abs_a) == known_mindiv && *bra.start() > 1 {
+                        return Condition::Eq(b, if (*br.start() >= 0) == (ac >= 0) { a } else { cfg.store_constant(-ac) });
+                    }
                 }
-                // TODO: maybe also check if there is some other number which is the only divisor of A
             }
 
             Condition::Divides(a, b)
@@ -541,6 +558,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
 
 const SOME_PRIMES: [u8; 54] = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241, 251];
 fn try_get_lowest_divisor(a: u64) -> Option<u64> {
+    if a == 1 { return None }
     for p in SOME_PRIMES {
         if a % (p as u64) == 0 {
             return Some(p as u64);
