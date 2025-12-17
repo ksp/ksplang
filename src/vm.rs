@@ -819,8 +819,13 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
                 if i < 0 {
                     return Err(OperationError::NegativeInstructionIndex { index: i });
                 }
+                if i >= self.ops.len() as i64 {
+                    return Err(OperationError::InstructionOutOfRange { index: i });
+                }
 
                 let ip = (self.ip as i64) + if self.reversed { -1 } else { 1 };
+
+                
                 self.stack.push(ip);
                 return Ok(Effect::SetInstructionPointer(
                      i.try_into().map_err(|_| OperationError::InstructionOutOfRange { index: i })?,
@@ -1143,7 +1148,7 @@ fn run_state<'a, T: Tracer>(
                             .ok_or(build_err(OperationError::IntegerOverflow))?
                     };
 
-                    if return_ip < 0 || return_ip > s.ops.len() as i64 {
+                    if return_ip < 0 || return_ip >= s.ops.len() as i64 {
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: return_ip,
                         }));

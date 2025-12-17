@@ -670,8 +670,10 @@ fn test_branchifzero() {
     assert!(!run_op_is_ok(&[], Op::BranchIfZero));
     assert!(!run_op_is_ok(&[0], Op::BranchIfZero));
 
+    // Index at end
+    assert!(run_is_ok(&[5, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
     // Index too large
-    assert!(!run_is_ok(&[5, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+    assert!(!run_is_ok(&[6, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
     // Negative index
     assert!(!run_is_ok(&[-1, 0], &[Op::BranchIfZero, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
 
@@ -686,6 +688,7 @@ fn test_call() {
     assert!(!run_op_is_ok(&[], Op::Call));
     // Index too large
     assert!(!run_is_ok(&[5], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]));
+    assert!(!run_is_ok(&[6], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]));
     // Negative index
     assert!(!run_is_ok(&[-1], &[Op::Call, Op::Nop, Op::Nop, Op::Nop, Op::Nop]));
     assert_eq!(
@@ -703,8 +706,10 @@ fn test_call() {
 fn test_goto() {
     // Not enough parameters
     assert!(!run_op_is_ok(&[], Op::Goto));
+    // Index at end
+    assert!(run_is_ok(&[5], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
     // Index too large
-    assert!(!run_is_ok(&[5], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+    assert!(!run_is_ok(&[6], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
     // Negative index
     assert!(!run_is_ok(&[-1], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
     assert_eq!(run(&[1, 2, 3, 4], &[Op::Goto, Op::Pop, Op::Pop, Op::Pop, Op::Pop]), [1, 2, 3]);
@@ -717,7 +722,8 @@ fn test_jump() {
     assert!(!run_op_is_ok(&[], Op::Jump));
     // Index too large
     assert!(!run_is_ok(&[5], &[Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
-    assert!(!run_is_ok(&[4], &[Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
+    // Index at end
+    assert!(run_is_ok(&[4], &[Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
     // Negative index
     assert!(!run_is_ok(&[-2], &[Op::Jump, Op::Pop, Op::Pop, Op::Pop, Op::Pop]));
 
