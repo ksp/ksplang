@@ -131,3 +131,15 @@ fn fuzz_select_simplification() {
     let ops = vec![ DigitSum, DigitSum, Remainder, DigitSum, DigitSum, Remainder, Increment, BulkXor, ];
     verify_repro(ops, vec![42, 43, 67]);
 }
+
+#[test]
+fn fuzz_jump_increment_at_program_end() {
+    let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, Increment, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment ];
+    verify_repro(ops, vec![123, 1234, 89999999]);
+}
+
+#[test]
+fn fuzz_stack_size_overflow() {
+    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, Praise, Max, Qeq, Praise, ];
+    verify_repro(ops, vec![0, 0, 0]);
+}

@@ -1143,7 +1143,7 @@ fn run_state<'a, T: Tracer>(
                             .ok_or(build_err(OperationError::IntegerOverflow))?
                     };
 
-                    if return_ip < 0 || return_ip >= s.ops.len() as i64 {
+                    if return_ip < 0 || return_ip > s.ops.len() as i64 {
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: return_ip,
                         }));
@@ -1169,13 +1169,13 @@ fn run_state<'a, T: Tracer>(
                     }
                 }
                 IPChange::Set(new_ip) => {
-                    if new_ip >= s.ops.len() {
+                    if new_ip > s.ops.len() {
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: new_ip as i64,
                         }));
                     }
                     if s.conf.should_log(25) {
-                        println!("Branching {}->{} {:?} (set) Stack {}, top3: {:?}", s.ip, new_ip, s.ops[new_ip], s.stack.len(), s.stack.iter().rev().copied().take(3).collect::<Vec<i64>>());
+                        println!("Branching {}->{} {:?} (set) Stack {}, top3: {:?}", s.ip, new_ip, s.ops.get(new_ip), s.stack.len(), s.stack.iter().rev().copied().take(3).collect::<Vec<i64>>());
                     }
                     s.ip = new_ip;
                 }
@@ -1190,13 +1190,13 @@ fn run_state<'a, T: Tracer>(
                             .ok_or(build_err(OperationError::IntegerOverflow))?
                     };
 
-                    if new_ip < 0 || new_ip >= s.ops.len() as i64 {
+                    if new_ip < 0 || new_ip > s.ops.len() as i64 {
                         return Err(build_err(OperationError::InstructionOutOfRange {
                             index: new_ip,
                         }));
                     }
                     if s.conf.should_log(25) {
-                        println!("Branching {}->{} {:?} (add {}) Stack {}, top3: {:?}", s.ip, new_ip, s.ops[new_ip as usize], offset, s.stack.len(), s.stack.iter().rev().copied().take(3).collect::<Vec<i64>>());
+                        println!("Branching {}->{} {:?} (add {}) Stack {}, top3: {:?}", s.ip, new_ip, s.ops.get(new_ip as usize), offset, s.stack.len(), s.stack.iter().rev().copied().take(3).collect::<Vec<i64>>());
                     }
                     s.ip = new_ip as usize;
                 }
