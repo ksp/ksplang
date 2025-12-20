@@ -183,6 +183,34 @@ fn test_absfactorial_zero_lt_always_true() {
 }
 
 #[test]
+fn test_abssub_sgn_symmetric_range() {
+    let (mut g, [a]) = create_graph([-3..=3]);
+    let sgn = g.push_instr(OptOp::Sgn, &[a], false, None, None).0;
+    let abs = g.push_instr(OptOp::AbsSub, &[a, sgn], false, None, None).0;
+
+    // 3 <= |a - sgn(a)| is false
+    let simplified = simplify_cond(&mut g, Condition::Lt(ValueId::C_THREE, abs), END_INSTR);
+    assert_eq!(simplified, Condition::False);
+    let simplified = simplify_cond(&mut g, Condition::Leq(ValueId::C_THREE, abs), END_INSTR);
+    assert_eq!(simplified, Condition::False);
+
+    // 2 <= |a - sgn(a)|  —— cannot be simplified
+    let simplified = simplify_cond(&mut g, Condition::Leq(ValueId::C_TWO, abs), END_INSTR);
+    assert_eq!(simplified, Condition::Eq(ValueId::C_TWO, abs));
+}
+
+#[test]
+fn test_abssub_sgn_border_check_asymmetric_range() {
+    let (mut g, [a]) = create_graph([-3..=4]);
+    let sgn = g.push_instr(OptOp::Sgn, &[a], false, None, None).0;
+    let abs = g.push_instr(OptOp::AbsSub, &[a, sgn], false, None, None).0;
+
+    // 3 <= |a - sgn(a)| is false
+    let simplified = simplify_cond(&mut g, Condition::Leq(ValueId::C_THREE, abs), END_INSTR);
+    assert_eq!(simplified, Condition::Eq(ValueId::C_FOUR, a));
+}
+
+#[test]
 fn test_absfactorial_3to6_range() {
     let (mut g, [a]) = create_graph([3..=6]);
     let fact = g.push_instr(OptOp::AbsFactorial, &[a], false, None, None).0;

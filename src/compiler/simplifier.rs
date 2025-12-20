@@ -871,6 +871,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         return (i, None);
     }
 
+    let mut out_range = None;
     let mut iter = 0;
     let mut change_path: Vec<(OptOp<ValueId>, SmallVec<[ValueId; 4]>, SmallVec<[RangeInclusive<i64>; 4]>)> = Vec::new();
     'main: loop {
@@ -1607,6 +1608,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 else if nested.op == OptOp::Sgn && nested.inputs[0] == x {
                     // |a - sgn(a)| will not overflow, just mark it as without effect
                     i.effect = OpEffect::None;
+                    // and range is known to be special
+                    let ar = abs_range(&ranges[0]);
+                    out_range = Some((ar.start().saturating_sub(1) as i64) ..= (ar.end().saturating_sub(1)) as i64);
                 }
             }
         }
@@ -1699,7 +1703,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
 
 
-    (i, None)
+    (i, out_range)
 }
 
 // fn get_defs(g: &GraphBuilder, vals: impl Iterator<Item = ValueId>) -> SmallVec<[Option<&OptInstr>; 4]> {
