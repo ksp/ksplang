@@ -199,13 +199,13 @@ fn fuzz_gcd_min_deopt2() {
 }
 
 #[test]
-fn fuzz_repro_bitshift_negative_range_1() {
+fn fuzz_bitshift_negative_range_1() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Qeq, Remainder, DigitSum, Increment, Bitshift, Remainder, Increment, DigitSum, Increment, Remainder, ];
    verify_repro(ops, vec![1, 1, 79]);
 }
 
 #[test]
-fn fuzz_repro_bitshift_negative_range_2() {
+fn fuzz_bitshift_negative_range_2() {
     // only fails with range-checking interpreter
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Qeq, Remainder, DigitSum, Increment, Bitshift ];
    verify_repro(ops, vec![1, 1, 79]);
@@ -236,11 +236,12 @@ fn fuzz_probably_cyclic_phi_swaps() {
 }
 
 #[test]
-fn fuzz_repro_i_forgot_whats_this() {
+fn fuzz_i_forgot_whats_this() {
    let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, Increment, DigitSum, DigitSum, Modulo, Qeq, ];
    verify_repro(ops, vec![-253, -739441781291, 0]);
 }
 
+#[test]
 fn fuzz_jump_overflow1() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Jump, Qeq, Jump ];
    verify_repro(ops, vec![1, 1, 1]);
@@ -251,4 +252,3 @@ fn fuzz_jump_overflow2() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, Jump, ];
    verify_repro(ops, vec![9150749290107117950, -72007441148674178, 0]);
 }
-
