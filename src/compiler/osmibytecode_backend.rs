@@ -1216,7 +1216,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn materialize_deopt_stack(&mut self, mut stack: &[ValueId]) -> Vec<RegId> {
+    fn materialize_deopt_stack(&mut self, stack: &[ValueId]) -> Vec<RegId> {
         if stack.len() > self.temp_regs.available.len() {
             let mut free_registers: BTreeSet<RegId> = (0..u8::MAX).map(RegId).collect();
             for s in stack {

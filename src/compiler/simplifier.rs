@@ -369,10 +369,13 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                     }
                     if let OptOp::AbsFactorial = &def.op {
                         let fac_input = def.inputs[0]; // TODO: generalize for all monotonous functions (tetr, lensum)
+                        let range = cfg.val_range_at(fac_input, at);
+                        let positive = range.end().unsigned_abs() >= range.start().unsigned_abs();
+                        let sign = if positive { 1 } else { -1 };
+
                         match vm::FACTORIAL_TABLE.binary_search(&ac) {
                             _ if ac == 1 => {
-                                // special: two values (0 and 1) map to 1
-                                let range = cfg.val_range_at(fac_input, at);
+                                // special case: two values (0 and 1) map to 1
                                 match condition {
                                     Condition::Eq(_, _) if *range.start() >= -1 =>
                                         return Condition::Geq(ValueId::C_ONE, fac_input), // 1 == |a|! -> 1 >= a
@@ -385,18 +388,40 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                                     _ => unreachable!("This should have been range-optimized: {condition}")
                                 }
                             }
-                            Err(next_higher) => match condition {
-                                Condition::Eq(_, _) => return Condition::True,
-                                Condition::Neq(_, _) => return Condition::False,
-                                Condition::Gt(_, _) | Condition::Geq(_, _) => // 200 > |v|!   -> 6 > v
-                                    return Condition::Gt(ValueId::from_predefined_const(next_higher as i64).unwrap(), fac_input),
-                                Condition::Lt(_, _) | Condition::Leq(_, _) => // 200 < |v|!   -> 6 <= v
-                                    return Condition::Leq(ValueId::from_predefined_const(next_higher as i64).unwrap(), fac_input),
-                                _ => {}
+                            Err(next_higher) => {
+                                let n = next_higher as i64;
+                                let lower_n = n - 1;
+
+                                match condition {
+                                    Condition::Eq(_, _) => return Condition::False,
+                                    Condition::Neq(_, _) => return Condition::True,
+                                    Condition::Gt(_, _) | Condition::Geq(_, _) => {
+                                        if !range.contains(&(-sign * n)) {
+                                            let lower_const = cfg.store_constant(sign * lower_n);
+                                            if positive { return Condition::Geq(lower_const, fac_input); }
+                                            else { return Condition::Leq(lower_const, fac_input); }
+                                        }
+                                    }
+                                    Condition::Lt(_, _) | Condition::Leq(_, _) => {
+                                        if n == 0 { return Condition::False; }
+                                        if !range.contains(&(-sign * lower_n)) {
+                                            let n_const = cfg.store_constant(sign * n);
+                                            if positive { return Condition::Leq(n_const, fac_input); }
+                                            else { return Condition::Geq(n_const, fac_input); }
+                                        }
+                                    }
+                                    _ => return condition.clone(),
+                                }
                             }
                             Ok(reversed_factorial) => {
-                                let new_const = ValueId::from_predefined_const(reversed_factorial as i64).unwrap();
-                                return condition.replace_arr([new_const, fac_input])
+                                if !range.contains(&(-sign * reversed_factorial as i64)) {
+                                    let k_const = cfg.store_constant(sign * reversed_factorial as i64);
+                                    return if positive {
+                                        condition.replace_arr([k_const, fac_input])
+                                    } else {
+                                        condition.replace_arr([fac_input, k_const])
+                                    }
+                                }
                             }
                         }
                     }
@@ -1155,20 +1180,20 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             }
 
             OptOp::Median if i.inputs.len() == 2 && i.inputs[0].is_constant() => {
-                let mut c = cfg.get_constant_(i.inputs[0]);
-                let ar = &ranges[1];
+                let c = cfg.get_constant_(i.inputs[0]);
                 let a = if c % 2 == 1 {
                     todo!("should not happen, right?");
-                    // we could optimize to (a + c) / 2, but we'll rather try (a + 1) / 2 + c / 2 and (a - 1) / 2 + c / 2
-                    if *ar.start() != i64::MIN {
-                        c += 1;
-                        cfg.value_numbering(OptOp::Add, &[i.inputs[1], ValueId::C_NEG_ONE], None, Some(OpEffect::None))
-                    } else if *ar.end() != i64::MAX {
-                        c -= 1;
-                        cfg.value_numbering(OptOp::Add, &[i.inputs[1], ValueId::C_ONE], None, Some(OpEffect::None))
-                    } else {
-                        break 'main;
-                    }
+                    // let ar = &ranges[1];
+                    // // we could optimize to (a + c) / 2, but we'll rather try (a + 1) / 2 + c / 2 and (a - 1) / 2 + c / 2
+                    // if *ar.start() != i64::MIN {
+                    //     c += 1;
+                    //     cfg.value_numbering(OptOp::Add, &[i.inputs[1], ValueId::C_NEG_ONE], None, Some(OpEffect::None))
+                    // } else if *ar.end() != i64::MAX {
+                    //     c -= 1;
+                    //     cfg.value_numbering(OptOp::Add, &[i.inputs[1], ValueId::C_ONE], None, Some(OpEffect::None))
+                    // } else {
+                    //     break 'main;
+                    // }
                 } else {
                     // for 2: -1 will get rounded differently in (a + 2) / 2 than in a / 2 + 1
                     // we prefer the second form, so we need to make sure -1 cannot be an input
