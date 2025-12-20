@@ -18,6 +18,21 @@ fn overlap(a: &RangeInclusive<i64>, b: &RangeInclusive<i64>) -> Option<RangeIncl
     }
 }
 
+fn cond_flip(cond: &Condition<ValueId>, when: bool) -> Condition<ValueId> {
+    if when {
+        match cond {
+            Condition::Eq(_, _) | Condition::Neq(_, _) | Condition::True | Condition::False => cond.clone(),
+            &Condition::Lt(a, b) => Condition::Gt(a, b),
+            &Condition::Leq(a, b) => Condition::Geq(a, b),
+            &Condition::Gt(a, b) => Condition::Lt(a, b),
+            &Condition::Geq(a, b) => Condition::Leq(a, b),
+            _ => unreachable!("{cond}")
+        }
+    } else {
+        cond.clone()
+    }
+}
+
 pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: InstrId) -> Condition<ValueId> {
     let mut cond_mut = condition.clone();
     let mut changelog: SmallVec<[Condition<ValueId>; 4]> = smallvec![cond_mut.clone()];
@@ -311,7 +326,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         let ac_ceil = ac.div_ceil(&mul);
                         let exact = ac_floor == ac_ceil;
 
-                        match &condition {
+                        match cond_flip(&condition, /* when: */ mul < 0) {
                             Condition::Eq(_, _) => if exact {
                                 return Condition::Eq(cfg.store_constant(ac_floor), b2)
                             } else {

@@ -62,6 +62,18 @@ fn test_digitsum_zero() {
 }
 
 #[test]
+fn test_mul_simplification_gt_negative_multiplier() {
+    let (mut g, [x]) = create_graph([-99..=99]);
+    let mul = g.push_instr(OptOp::Mul, &[ValueId::C_NEG_TWO, x], false, None, None).0;
+
+    // 2 > (-2 * x)  =>  -1 < x
+    assert_eq!(simplify_cond(&mut g, Condition::Gt(ValueId::C_TWO, mul), END_INSTR), Condition::Lt(ValueId::C_NEG_ONE, x));
+
+    // 2 < (-2 * x)  =>  x < -1  =>  -1 > x
+    assert_eq!(simplify_cond(&mut g, Condition::Lt(ValueId::C_TWO, mul), END_INSTR), Condition::Gt(ValueId::C_NEG_ONE, x));
+}
+
+#[test]
 fn test_divides_simplification_bug_10_2() {
     let (mut g, [v2]) = create_graph([2..=2]);
     // 10 % 2 == 0
