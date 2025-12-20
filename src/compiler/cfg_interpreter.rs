@@ -37,6 +37,20 @@ pub fn interpret_cfg(
     let mut block_iteration_guard = 0usize;
     let mut arg_values: Vec<i64> = Vec::new();
 
+    macro_rules! save_val {
+        ($id:expr, $val:expr) => {
+            if $id.is_constant() {
+                debug_assert_eq!(g.get_constant_($id), $val);
+            } else if $id.is_computed() {
+                values.insert($id, $val);
+                if cfg!(debug_assertions) {
+                    let info = g.val_info_($id);
+                    debug_assert!(info.range.contains(&$val), "Value {} = {} not in range {:?}\nAt: IP={next_ip}", $id, $val, info);
+                }
+            }
+        };
+    }
+
     'block: loop {
         let block = g.block(current_block).expect("Invalid current_block");
 
@@ -69,7 +83,7 @@ pub fn interpret_cfg(
 
                         for (param, arg) in target_block.parameters.iter().zip(&instr.inputs) {
                             let value = resolve_value(g, &values, *arg);
-                            values.insert(*param, value);
+                            save_val!(*param, value);
                         }
 
                         if g.conf.should_log(25) {
@@ -109,9 +123,7 @@ pub fn interpret_cfg(
                 OptOp::Pop => {
                     match stack.pop() {
                         Some(value) => {
-                            if instr.out.is_computed() {
-                                values.insert(instr.out, value);
-                            }
+                            save_val!(instr.out, value);
                         }
                         None => {
                             error = Some((OperationError::PopFailed, instr.id));
@@ -141,9 +153,7 @@ pub fn interpret_cfg(
                     let old_value = stack[idx as usize];
                     stack[idx as usize] = replacement;
 
-                    if instr.out.is_computed() {
-                        values.insert(instr.out, old_value);
-                    }
+                    save_val!(instr.out, old_value);
                     continue;
                 }
                 OptOp::StackRead => {
@@ -164,9 +174,7 @@ pub fn interpret_cfg(
                     }
 
                     let value = stack[idx as usize];
-                    if instr.out.is_computed() {
-                        values.insert(instr.out, value);
-                    }
+                    save_val!(instr.out, value);
                     continue;
                 }
                 _ => {}
@@ -184,9 +192,7 @@ pub fn interpret_cfg(
 
             match op.evaluate(&arg_values) {
                 Ok(value) => {
-                    if instr.out.is_computed() {
-                        values.insert(instr.out, value);
-                    }
+                    save_val!(instr.out, value);
                 }
                 Err(Some(err)) => {
                     error = Some((err, instr.id));
