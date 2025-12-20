@@ -385,7 +385,8 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                                         return Condition::Lt(ValueId::C_ONE, fac_input), // 1 != |a|! -> 1 < a
                                     Condition::Neq(_, _) if *range.end() <= 1 =>
                                         return Condition::Gt(ValueId::C_NEG_ONE, fac_input), // 1 != |a|! -> -1 > a
-                                    _ => unreachable!("This should have been range-optimized: {condition}")
+                                    Condition::Eq(_, _) | Condition::Neq(_, _) => {}, // no luck
+                                    _ => unreachable!("This should have been range-optimized: {condition} (range {range:?})"),
                                 }
                             }
                             Err(next_higher) => {

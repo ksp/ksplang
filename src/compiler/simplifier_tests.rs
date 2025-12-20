@@ -161,6 +161,16 @@ fn test_absfactorial_eq_neq_non_factorial_0to6() {
 }
 
 #[test]
+fn test_absfactorial_zero_lt_always_true() {
+    let (mut g, [a]) = create_graph([-3..=3]);
+    let fact = g.push_instr(OptOp::AbsFactorial, &[a], false, None, None).0;
+
+    // 0 < |a|! and 0 <= |a|! is always true
+    assert_eq!(simplify_cond(&mut g, Condition::Leq(ValueId::C_ZERO, fact), END_INSTR), Condition::True);
+    assert_eq!(simplify_cond(&mut g, Condition::Lt(ValueId::C_ZERO, fact), END_INSTR), Condition::True);
+}
+
+#[test]
 fn test_absfactorial_3to6_range() {
     let (mut g, [a]) = create_graph([3..=6]);
     let fact = g.push_instr(OptOp::AbsFactorial, &[a], false, None, None).0;
@@ -210,6 +220,15 @@ fn test_absfactorial_eq_factorial_constant_6_mixed_sign_keeps() {
 
     // When both signs are possible, simplifier should leave the condition unchanged
     assert_eq!(simplified, Condition::Eq(c6, fact));
+}
+
+#[test]
+fn test_absfactorial_eq_one_mixed_range_panics() {
+    let (mut g, [a]) = create_graph([-5..=5]);
+    let fact = g.push_instr(OptOp::AbsFactorial, &[a], false, None, None).0;
+
+    // Simplifying 1 == |a|! across a mixed-sign range currently panics via unreachable!
+    let _ = simplify_cond(&mut g, Condition::Eq(ValueId::C_ONE, fact), END_INSTR);
 }
 
 #[test]
