@@ -970,12 +970,12 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.push_deopt_assert(Condition::Neq(c, ValueId::C_IMIN), false);
                     }
 
-
-                    let div = self.g.value_numbering(OptOp::Div, &[dividend, divisor], if elide_neg { Some(negated_range.clone()) } else { Some(div_range.clone()) }, Some(OpEffect::None)); // all failures must be handled specially here
+                    // TODO: move these instructions to additional_instr and remove the alt_branch.is_empty() hack
+                    let div = self.g.value_numbering(OptOp::Div, &[dividend, divisor], if !alt_branch.is_empty() { None } else if elide_neg { Some(negated_range.clone()) } else { Some(div_range.clone()) }, Some(OpEffect::None)); // all failures must be handled specially here
 
                     let result = if !elide_neg {
                         let neg = self.g.value_numbering(OptOp::Sub, &[ValueId::C_ZERO, div],
-                            Some(negated_range),
+                            alt_branch.is_empty().then_some(negated_range),
                             Some(if can_overflow { OpEffect::MayFail } else { OpEffect::None })
                         );
                         neg

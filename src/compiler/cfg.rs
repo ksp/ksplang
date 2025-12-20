@@ -470,9 +470,14 @@ impl GraphBuilder {
         });
     }
 
-    pub fn new_value(&mut self) -> &mut ValueInfo {
+    pub fn assign_value_id(&mut self) -> ValueId {
         let id = ValueId(self.next_val_id);
         self.next_val_id += 1;
+        id
+    }
+
+    pub fn new_value(&mut self) -> &mut ValueInfo {
+        let id = self.assign_value_id();
         let info = ValueInfo {
             id,
             assigned_at: None,
