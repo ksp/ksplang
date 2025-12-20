@@ -320,8 +320,11 @@ impl<'a> Compiler<'a> {
             }
         }
 
+        // negative numbers get rounded down with bitshift
+        let can_use_shift = *self.g.val_range(div.inputs[0]).start() >= 0;
+
         self.lower_binary(div, |out, a, b| OsmibyteOp::Div(out, a, b), |out, a, c| {
-            if c > 0 && (c as u64).is_power_of_two() {
+            if can_use_shift && c > 0 && (c as u64).is_power_of_two() {
                 let shift_amount = -(c.trailing_zeros() as i32) as i8;
                 return Some(OsmibyteOp::ShiftConst(out, a, shift_amount));
             }
@@ -1944,7 +1947,7 @@ mod lowering_tests {
         g.push_instr(OptOp::DigitSum, &[div_out], false, None, None);
 
         let block = OsmibytecodeBlock::from_cfg(&g);
-        assert!(matches!(&block.program[..], [OsmibyteOp::ShiftConst(_, _, -1), OsmibyteOp::AddConst(_, _, 1), OsmibyteOp::DigitSum(_, _) ]), "{block}\n{:?}", block.program);
+        assert!(matches!(&block.program[..], [OsmibyteOp::DivConst(_, _, 2), OsmibyteOp::AddConst(_, _, 1), OsmibyteOp::DigitSum(_, _) ]), "{block}\n{:?}", block.program);
     }
     #[test]
     fn fusing_median2_no2() {
@@ -1958,7 +1961,7 @@ mod lowering_tests {
         g.clean_poped_values();
 
         let block = OsmibytecodeBlock::from_cfg(&g);
-        assert!(matches!(&block.program[..], [OsmibyteOp::ShiftConst(_, _, -1), OsmibyteOp::AddConst(_, _, 3) ]), "{block}\n{:?}", block.program);
+        assert!(matches!(&block.program[..], [OsmibyteOp::DivConst(_, _, 2), OsmibyteOp::AddConst(_, _, 3) ]), "{block}\n{:?}", block.program);
     }
 
     #[test]
