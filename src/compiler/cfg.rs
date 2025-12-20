@@ -1009,7 +1009,7 @@ impl GraphBuilder {
         let move_from = match at { Before(id) => id.1,
                                    After(id) => id.1 + 1 };
         let mut move_to = move_from;
-        let mut shift_by = 0;
+        let mut shift_by = 20; // if no space, move everything by 10 slots
         for (&following_instr, _) in b.instructions.range(move_from..) {
             if disallow_moving(InstrId(bid, following_instr)) {
                 return None // TODO: try moving to the other side
@@ -1018,6 +1018,7 @@ impl GraphBuilder {
             if free_space >= 1 {
                 // 
                 shift_by = free_space.div_ceil(2);
+                break;
             } else {
                 move_to += 1;
             }

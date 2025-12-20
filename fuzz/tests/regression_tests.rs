@@ -175,7 +175,68 @@ fn fuzz_bad_zero_divisibility_assume() {
 }
 
 #[test]
-fn fuzz_repro() {
+fn fuzz_another_divisibility_simplification_bug() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Remainder, DigitSum, Remainder, ];
    verify_repro(ops, vec![1, 1, 1]);
+}
+
+#[test]
+fn fuzz_spill_and_deopt() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Increment, Praise, DigitSum, Praise, Gcd2, Remainder, Qeq, BulkXor, ];
+   verify_repro(ops, vec![3602879701889992651, -3454260914193170432, 0]);
+}
+
+#[test]
+fn fuzz_gcd_min_deopt() {
+   let ops = vec![ Gcd2, ];
+   verify_repro(ops, vec![0, 0, 0, 0, i64::MIN]);
+}
+
+#[test]
+fn fuzz_gcd_min_deopt2() {
+   let ops = vec![ DigitSum, LSwap, DigitSum, Bitshift, Gcd2, ];
+   verify_repro(ops, vec![9999999, 0, 0]);
+}
+
+#[test]
+fn fuzz_repro_bitshift_negative_range_1() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Qeq, Remainder, DigitSum, Increment, Bitshift, Remainder, Increment, DigitSum, Increment, Remainder, ];
+   verify_repro(ops, vec![1, 1, 79]);
+}
+
+#[test]
+fn fuzz_repro_bitshift_negative_range_2() {
+    // only fails with range-checking interpreter
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Qeq, Remainder, DigitSum, Increment, Bitshift ];
+   verify_repro(ops, vec![1, 1, 79]);
+}
+
+#[test]
+fn fuzz_hoisting_no_space_1() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, DigitSum, DigitSum, Remainder, DigitSum, DigitSum, Modulo, Qeq, Increment, Increment, Increment, Increment, Increment, Pop, Increment, Bitshift, DigitSum, Pop2, DigitSum, Increment, DigitSum, Increment, Increment, Increment, Increment, DigitSum, Increment, Bitshift, DigitSum, Pop2, DigitSum, Modulo, DigitSum, DigitSum, Increment, Increment, And, Remainder, DigitSum, Increment, Bitshift, DigitSum, Pop2, DigitSum, Increment, DigitSum, Increment, Increment, Increment, Increment, LenSum, Increment, Bitshift, DigitSum, Pop2, DigitSum, Modulo, DigitSum, DigitSum, Increment, Increment, Increment, Pop, Increment, Bitshift, DigitSum, Pop2, DigitSum, Increment, DigitSum, And, Remainder, DigitSum, Increment, Bitshift, DigitSum, Pop2, Increment, Increment, Increment, LenSum, Increment, Increment, ];
+   verify_repro(ops, vec![4851502695418381121, -53126547782941885, 33554431]);
+}
+
+#[test]
+fn fuzz_hoisting_no_space_2() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, DigitSum, DigitSum, Remainder, DigitSum, DigitSum, Modulo, Qeq, Increment, Increment, Increment, Pop, Increment, Bitshift, DigitSum, Pop2, DigitSum, Increment, DigitSum, Increment, Increment, Bitshift, DigitSum, Pop2, DigitSum, Increment, DigitSum, Increment, Increment, Increment, Increment, DigitSum, Increment, Bitshift, DigitSum, Modulo, DigitSum, DigitSum, Increment, Increment, And, Remainder, DigitSum, Increment, Bitshift, DigitSum, Pop2, DigitSum, Increment, DigitSum, Increment, Increment, Increment, And, Remainder, DigitSum, Increment, Remainder, Remainder, Remainder, Remainder, Increment, Increment, ];
+   verify_repro(ops, vec![-60413, -3187671041, 0]);
+}
+
+#[test]
+fn fuzz_hoisting_no_space_3() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, DigitSum, DigitSum, Remainder, DigitSum, DigitSum, Modulo, Qeq, Increment, Increment, Pop, Increment, Bitshift, DigitSum, Pop2, DigitSum, Increment, DigitSum, Increment, Bitshift, DigitSum, Pop2, DigitSum, Increment, DigitSum, Increment, DigitSum, Increment, Bitshift, DigitSum, Modulo, DigitSum, DigitSum, Increment, Increment, And, Remainder, DigitSum, Increment, Bitshift, DigitSum, Pop2, DigitSum, DigitSum, Increment, Increment, Increment, And, Remainder, DigitSum, Increment, Remainder, Remainder, Remainder, Increment, Remainder, ];
+   verify_repro(ops, vec![-15466496, 288230372964040703, 1]);
+}
+
+#[test]
+fn fuzz_probably_cyclic_phi_swaps() {
+   let ops = vec![ LSwap, LSwap, Pop, DigitSum, DigitSum, Remainder, Increment, DigitSum, DigitSum, DigitSum, Remainder, Qeq, DigitSum, DigitSum, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Increment, DigitSum, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Qeq, Increment, Pop, DigitSum, DigitSum, DigitSum, Remainder, Remainder, Increment, Increment, DigitSum, DigitSum, Remainder, Qeq, Remainder, Remainder, ];
+   verify_repro(ops, vec![-5781140590214271057, 4868117448974905171, -5781140590221376701, 175]);
+}
+
+#[test]
+fn fuzz_repro() {
+   let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, Increment, DigitSum, DigitSum, Modulo, Qeq, ];
+   verify_repro(ops, vec![-253, -739441781291, 0]);
 }
