@@ -797,12 +797,14 @@ impl OptInstr {
         if self.out.is_computed() {
             let out_range = val_range(self.out);
             if out_range != FULL_RANGE {
+                let sgn_a = if *out_range.start() >= 0 { "" } else { "-" };
+                let sgn_b = if *out_range.end() >= 0 { "" } else { "-" };
                 if *out_range.start() == i64::MIN {
-                    write!(f, " ..={:x}", out_range.end())?;
+                    write!(f, " ..={sgn_b}{:x}", out_range.end())?;
                 } else if *out_range.end() == i64::MAX {
-                    write!(f, " {:x}..=", out_range.start())?;
+                    write!(f, " {sgn_a}{:x}..=", out_range.start())?;
                 } else {
-                    write!(f, " {:x}..={:x}", out_range.start(), out_range.end())?;
+                    write!(f, " {sgn_a}{:x}..={sgn_b}{:x}", out_range.start().unsigned_abs(), out_range.end().unsigned_abs())?;
                 }
             }
         }
