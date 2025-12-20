@@ -1211,7 +1211,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn materialize_deopt_stack(&mut self, stack: &[ValueId]) -> Vec<RegId> {
+    fn materialize_deopt_stack(&mut self, mut stack: &[ValueId]) -> Vec<RegId> {
         if stack.len() > self.temp_regs.available.len() {
             let mut free_registers: BTreeSet<RegId> = (0..u8::MAX).map(RegId).collect();
             for s in stack {
@@ -1220,15 +1220,30 @@ impl<'a> Compiler<'a> {
                 }
             }
             self.temp_regs.available.clear();
-            self.temp_regs.cache.clear();
             self.temp_regs.available.extend(free_registers);
         }
 
+        let available_regs = self.temp_regs.available.clone();
+        let mut todo = stack.to_vec();
+        todo.reverse();
+
         let mut result = vec![];
-        for s in stack {
-            result.push(self.materialize_value(*s).expect("TODO"))
+        'outer: loop {
+            for chunk in result.chunks(7) {
+                self.emit_push(chunk);
+            }
+            result.clear();
+            self.temp_regs.cache.clear();
+            self.temp_regs.available = available_regs.clone();
+            while let Some(s) = todo.pop() {
+                let Ok(reg) = self.materialize_value(s) else {
+                    todo.push(s);
+                    continue 'outer;
+                };
+                result.push(reg)
+            }
+            return result
         }
-        result
     }
 
     pub fn finish(mut self) -> OsmibytecodeBlock {
