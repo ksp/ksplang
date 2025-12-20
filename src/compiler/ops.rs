@@ -3,7 +3,7 @@ use std::{cmp, collections::BTreeSet, fmt::{self, Debug, Display}, num::NonZeroI
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec};
 
-use crate::{compiler::{osmibytecode::Condition, range_ops::{eval_combi, range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{FULL_RANGE, abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
+use crate::{compiler::{osmibytecode::Condition, range_ops::{eval_combi, range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{FULL_RANGE, SaturatingInto, abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -501,11 +501,11 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Or => inputs.iter().cloned().reduce(range_or),
             OptOp::Xor => inputs.iter().cloned().reduce(range_xor),
             OptOp::ShiftL => {
-                let can_overflow = inputs[0].end().leading_zeros() as i64 <= *inputs[1].end();
+                let can_overflow = cmp::min(inputs[0].end().leading_zeros(), inputs[0].start().leading_zeros()) as i64 <= *inputs[1].end();
                 if *inputs[1].end() < 0 {
                     None // always error
                 } else if can_overflow {
-                    None
+                    eval_combi(inputs[0].clone(), inputs[1].clone(), 256, |a: i64, b: i64| Some(a.checked_shl(b.saturating_into()).unwrap_or(0)))
                 } else {
                     assert!(*inputs[1].end() < 64);
                     assert!(*inputs[1].start() < 64);
