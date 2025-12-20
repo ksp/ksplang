@@ -236,7 +236,19 @@ fn fuzz_probably_cyclic_phi_swaps() {
 }
 
 #[test]
-fn fuzz_repro() {
+fn fuzz_repro_i_forgot_whats_this() {
    let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, Increment, DigitSum, DigitSum, Modulo, Qeq, ];
    verify_repro(ops, vec![-253, -739441781291, 0]);
 }
+
+fn fuzz_jump_overflow1() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Jump, Qeq, Jump ];
+   verify_repro(ops, vec![1, 1, 1]);
+}
+
+#[test]
+fn fuzz_jump_overflow2() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, Jump, ];
+   verify_repro(ops, vec![9150749290107117950, -72007441148674178, 0]);
+}
+

@@ -138,14 +138,18 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         }
     
         if let Some(target_const) = self.g.get_constant(target) {
-            let target_ip = if is_relative {
-                if self.reversed_direction {
-                    self.position.checked_sub(target_const as usize + 1)
-                } else {
-                    self.position.checked_add(target_const as usize + 1)
-                }
+            let target_ip: Option<usize> = if is_relative {
+                target_const.try_into().ok()
+                    .and_then(|x: isize| x.checked_add(1))
+                    .and_then(|x|
+                        if self.reversed_direction {
+                            self.position.checked_sub_signed(x)
+                        } else {
+                            self.position.checked_add_signed(x)
+                        }
+                    )
             } else {
-                Some(target_const as usize)
+                target_const.try_into().ok()
             };
             if self.conf.should_log(5) {
                 println!("Branching to constant target {target_const} {}->{target_ip:?} (relative={is_relative}, call={is_call}, condition={condition:?})", self.position);
