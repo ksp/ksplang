@@ -252,3 +252,9 @@ fn fuzz_jump_overflow2() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, Jump, ];
    verify_repro(ops, vec![9150749290107117950, -72007441148674178, 0]);
 }
+
+#[test]
+fn fuzz_ctr_increment_need_to_hold_registers_in_allocator() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, Remainder, Jump, Increment, Max, TetrationNumIters, ];
+   verify_repro(ops, vec![0, 0, 111]);
+}

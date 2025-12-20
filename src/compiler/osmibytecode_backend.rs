@@ -1732,13 +1732,27 @@ impl fmt::Display for LiveRanges {
     }
 }
 
-fn get_instr_stack_effect(i: &OptInstr) -> [ValueId; 2] {
-    const N: ValueId = ValueId(0);
-    match i.op {
-        OptOp::Pop => [i.out, N], // pop value
-        OptOp::StackSwap => [i.out, i.inputs[0]], // previous value
-        OptOp::Push => [N, N], // nothing removed from stack, can be reverted without any additional pinned values
-        _ => [N, N],
+fn extract_instr_deopt_remember_variables(i: &OptInstr, out: &mut Vec<ValueId>) {
+    macro_rules! out_val {
+        ($val:expr) => {
+            if $val.is_computed() {
+                out.push($val);
+            }
+        };
+    }
+    match &i.op {
+        OptOp::Pop => out_val!(i.out),
+        OptOp::StackSwap => { out_val!(i.out); out_val!(i.inputs[0]); }, // previous value
+        OptOp::Push => {}, // nothing removed from stack, can be reverted without any additional pinned values
+        OptOp::KsplangOpsIncrement(cond) => {
+            for x in cond.regs() {
+                out_val!(x);
+            }
+            for &arg in &i.inputs {
+                out_val!(arg);
+            }
+        }
+        _ => {},
     }
 }
 
@@ -1775,7 +1789,7 @@ fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: 
                         last_checkpoint.as_mut().unwrap().extend(additional_values);
                         break 'search_for_checkpoint;
                     }
-                    additional_values.extend(get_instr_stack_effect(i).into_iter().filter(|v| v.is_computed()));
+                    extract_instr_deopt_remember_variables(i, &mut additional_values);
                 }
             }
         }
@@ -1792,10 +1806,8 @@ fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: 
         }
         if i.out.is_computed() { defined_at.insert(i.out, iid); }
 
-        for x in get_instr_stack_effect(i) {
-            if x.is_computed() {
-                last_checkpoint.as_mut().unwrap().push(x);
-            }
+        if let Some(last_checkpoint) = &mut last_checkpoint {
+            extract_instr_deopt_remember_variables(i, last_checkpoint);
         }
     }
     (defined_at, last_use)
