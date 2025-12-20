@@ -704,13 +704,9 @@ pub fn extract_effect(g: &mut GraphBuilder, current_effect: OpEffect, op: &OptOp
         },
         OptOp::Gcd => {
             // may overflow if all arguments are equal to i64::MIN
-            let may_fail = args.iter().any(|a| *g.val_range(*a).start() != i64::MIN);
-
-            if may_fail {
-                (OpEffect::MayFail, vec![])
-            } else {
-                (OpEffect::None, vec![])
-            }
+            let ranges = args.iter().map(|v| g.val_range(*v)).collect::<Vec<_>>();
+            let effect = op.effect_based_on_ranges(&ranges);
+            (effect, vec![])
         },
         OptOp::StackSwap => (OpEffect::MayDeopt, vec![]),
         OptOp::StackRead => (OpEffect::MayDeopt, vec![]),

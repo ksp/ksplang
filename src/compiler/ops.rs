@@ -283,11 +283,11 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
     pub fn worst_case_effect(&self) -> OpEffect {
         match self {
             OptOp::Push | OptOp::Pop => OpEffect::StackWrite,
-            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Gcd | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn | OptOp::Checkpoint => OpEffect::None,
+            OptOp::Nop | OptOp::Const(_) | OptOp::Select(_) | OptOp::DigitSum | OptOp::Median | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::ShiftR | OptOp::BinNot | OptOp::BoolNot | OptOp::Funkcia | OptOp::LenSum | OptOp::Min | OptOp::Max | OptOp::Sgn | OptOp::Checkpoint => OpEffect::None,
             OptOp::KsplangOpsIncrement(_) => OpEffect::CtrIncrement,
 
             // overflow checks, div by zero
-            OptOp::Add | OptOp::Sub | OptOp::AbsSub | OptOp::Mul | OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuclid | OptOp::Tetration | OptOp::ShiftL | OptOp::AbsFactorial =>
+            OptOp::Add | OptOp::Sub | OptOp::AbsSub | OptOp::Mul | OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuclid | OptOp::Tetration | OptOp::ShiftL | OptOp::AbsFactorial | OptOp::Gcd =>
                 OpEffect::MayFail,
 
             OptOp::Assert(_, _) => OpEffect::MayFail,
@@ -622,12 +622,13 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                 } else {
                     OpEffect::MayFail
                 },
-            OptOp::Gcd =>
-                if inputs.iter().all(|r| *r.start() == i64::MIN) {
+            OptOp::Gcd => {
+                if inputs.iter().any(|r| r.contains(&i64::MIN)) && inputs.iter().all(|r| r.contains(&0) || r.contains(&i64::MIN)) {
                     OpEffect::MayFail
                 } else {
                     OpEffect::None
-                },
+                }
+            },
             _ => self.worst_case_effect() // do not depend on ranges
         }
     }
