@@ -732,13 +732,18 @@ impl<'a> Compiler<'a> {
         // sequence of swaps
         let mut reg_remap = BTreeMap::new();
         while let Some((from, to)) = atomic_moves.pop() {
+            // TODO: test this properly
+            // println!("{from} -> {to}   in {atomic_moves:?}  | {reg_remap:?}");
             let from = *reg_remap.get(&from).unwrap_or(&from);
+            // println!("{from_loc} -> {to}");
             if from == to {
                 continue
             }
             self.program.push(OsmibyteOp::Mov2(to, from, from, to));
-            // `from` is now temporarily swapped in `to`
+            // `from` is now temporarily swapped with `to`
+
             reg_remap.insert(from, to);
+            reg_remap.insert(to, from);
         }
         for chunk in sequential_moves.chunks(3) {
             match chunk {
