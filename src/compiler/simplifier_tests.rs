@@ -420,3 +420,32 @@ fn test_add_mul_equivalence() {
     assert_eq!(2, g.current_block_ref().instructions.len());
 }
 
+#[test]
+fn test_median_cursed_conversion1() {
+    let (mut g, [a, b]) = create_graph([FULL_RANGE, FULL_RANGE]);
+    let n = g.store_constant(2);
+
+    let instr = OptInstr::new(g.next_instr_id(), OptOp::MedianCursed, &[n, a, b], ValueId::from(i32::MAX));
+    let (simplified, _) = simplify_instr(&mut g, instr);
+
+    assert_eq!(simplified.op, OptOp::Median);
+    assert_eq!(simplified.inputs.len(), 2);
+    assert_eq!([n, a], simplified.inputs.as_slice());
+}
+
+#[test]
+fn test_median_cursed_conversion2() {
+    let (mut g, [n, a, b]) = create_graph([2..=3, FULL_RANGE, FULL_RANGE]);
+
+    g.push_assert(Condition::Neq(n, ValueId::C_THREE), crate::vm::OperationError::DivisionByZero, None);
+
+    let n_range = g.val_range_at(n, g.next_instr_id());
+    assert_eq!(n_range, 2..=2);
+
+    let instr = OptInstr::new(g.next_instr_id(), OptOp::MedianCursed, &[n, a, b, ValueId::C_ZERO], ValueId::from(i32::MAX));
+    let (simplified, _) = simplify_instr(&mut g, instr);
+
+    assert_eq!(simplified.op, OptOp::Median, "{simplified}\n{g}");
+    assert_eq!(simplified.inputs.len(), 2);
+    assert_eq!([ValueId::C_TWO, a], simplified.inputs.as_slice());
+}

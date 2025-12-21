@@ -1164,12 +1164,13 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 continue;
             }
 
-            OptOp::MedianCursed if i.inputs[0].is_constant() => {
-                let n = cfg.get_constant_(i.inputs[0]);
+            OptOp::MedianCursed if ranges[0].start() == ranges[0].end() => {
+                let n = *ranges[0].start();
                 if n <= 0 || n as usize > i.inputs.len() - 1 {
                     return (OptInstr::deopt(Condition::True), None)
                 }
-                let mut vals = i.inputs[0..n as usize].to_vec();
+                let mut vals = i.inputs[..n as usize].to_vec();
+                vals[0] = cfg.store_constant(n);
                 vals.sort();
                 i.inputs = vals.to_smallvec();
                 i.op = OptOp::Median;
