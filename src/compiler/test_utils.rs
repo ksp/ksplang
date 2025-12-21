@@ -54,13 +54,13 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) {
         (Ok(obc_run), Ok(cfg_run), Ok(vm_run)) => {
             assert_eq!(cfg_run.executed_ksplang, obc_run.ksplang_interpreted, "CFG vs Osmibyte op count mismatch");
 
-            assert_eq!(obc_stack, vm_run.stack, "Osmibyte vs VM stack mismatch. Program: {:?}, Input: {:?}", ops, input);
             assert_eq!(cfg_stack, vm_run.stack, "CFG vs VM stack mismatch. Program: {:?}, Input: {:?}", ops, input);
+            assert_eq!(obc_stack, vm_run.stack, "Osmibyte vs VM stack mismatch. Program: {:?}, Input: {:?}", ops, input);
         },
         (Err(obc_err), Err(cfg_err), Err(vm_err)) => {
             if let RunError::InstructionFailed { error: vm_op_err, .. } = vm_err {
-                assert_eq!(obc_err, vm_op_err, "Osmibyte vs VM error mismatch");
                 assert_eq!(cfg_err, vm_op_err, "CFG vs VM error mismatch");
+                assert_eq!(obc_err, vm_op_err, "Osmibyte vs VM error mismatch");
             }
         },
         (Ok(obc_run), Err(e), _) => {

@@ -214,11 +214,13 @@ impl<'a> Compiler<'a> {
                 let first_reg = self.materialize_value_(first_val);
                 self.save_deopt_maybe(instr);
                 self.program.push(op(tmp_inter, first_reg, second_reg));
+                self.temp_regs.release(first_reg);
             }
             for value in inputs {
                 let reg = self.materialize_value_(value);
                 self.save_deopt_maybe(instr);
                 self.program.push(op(tmp_inter, tmp_inter, reg));
+                self.temp_regs.release(reg);
             }
         } else {
             let first_reg = self.materialize_value_(first_val);

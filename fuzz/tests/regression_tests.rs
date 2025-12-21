@@ -264,3 +264,9 @@ fn fuzz_invalid_mul_add_normalization() {
    let ops = vec![ DigitSum, Increment, DigitSum, Increment, DigitSum, DigitSum, LenSum, Universal, ];
    verify_repro(ops, vec![0, 0, 0]);
 }
+
+#[test]
+fn fuzz_variadic_op_ran_out_of_temp_registers() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, Gcd2, Max, Max, Max, DigitSum, DigitSum, DigitSum, Increment, DigitSum, LenSum, Goto, Max, Praise, Roll, ];
+   verify_repro(ops, vec![4431242408380362622, 648518346341351423, 7144743315925499684, 2337]);
+}
