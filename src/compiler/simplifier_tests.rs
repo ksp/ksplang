@@ -450,6 +450,23 @@ fn test_median_cursed_conversion2() {
     assert_eq!([ValueId::C_TWO, a], simplified.inputs.as_slice());
 }
 
+// #[test]
+// fn test_median_two_args_odd_constant() { // will not happen in practice
+//     let (mut g, [a]) = create_graph([0..=10]);
+
+//     let instr = OptInstr::new(g.next_instr_id(), OptOp::Median, &[ValueId::C_THREE, a], ValueId::from(i32::MAX));
+//     let _ = simplify_instr(&mut g, instr);
+// }
+
+#[test]
+fn test_mul_constant_chain_overflow_panics() {
+    let (mut g, [a]) = create_graph([0..=10]);
+    let (double, _) = g.push_instr(OptOp::Mul, &[ValueId::C_TWO, a], false, None, None);
+
+    let instr = OptInstr::new(g.next_instr_id(), OptOp::Mul, &[ValueId::C_IMIN, double], ValueId::from(i32::MAX));
+    let _ = simplify_instr(&mut g, instr);
+}
+
 #[test]
 fn test_gcd1_is_1() {
     let (mut g, [a, b]) = create_graph([FULL_RANGE, FULL_RANGE]);

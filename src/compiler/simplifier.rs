@@ -1517,10 +1517,15 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 // }
                 if def.op == OptOp::Mul && def.inputs[0].is_constant() {
                     let c2 = cfg.get_constant_(def.inputs[0]);
-                    i.effect = OpEffect::worse_of(i.effect, def.effect);
-                    i.inputs[1] = def.inputs[1];
-                    i.inputs[0] = cfg.store_constant(c * c2);
-                    continue;
+                    if let Some(new_const) = c.checked_mul(c2) {
+                        i.effect = OpEffect::worse_of(i.effect, def.effect);
+                        i.inputs[1] = def.inputs[1];
+                        i.inputs[0] = cfg.store_constant(new_const);
+                        continue;
+                    } else {
+                        cfg.push_assert(Condition::Eq(ValueId::C_ZERO, def.inputs[1]), OperationError::IntegerOverflow, None);
+                        return (i.clone().with_op(OptOp::Add, &[ ValueId::C_ZERO ], OpEffect::None), None);
+                    }
                 }
             }
         }
