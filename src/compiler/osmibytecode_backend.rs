@@ -337,7 +337,7 @@ impl<'a> Compiler<'a> {
 
     fn lower_mul(&mut self, instr: &OptInstr) {
         self.lower_variadic(instr, |out, a, b| OsmibyteOp::Mul(out, a, b), |out, a, c| {
-            if c > 0 && (c as u64).is_power_of_two() {
+            if c > 0 && (c as u64).is_power_of_two() && instr.effect == OpEffect::None {
                 let shift_amount = c.trailing_zeros() as i8;
                 return Some(OsmibyteOp::ShiftConst(out, a, shift_amount));
             }

@@ -270,3 +270,9 @@ fn fuzz_variadic_op_ran_out_of_temp_registers() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, Gcd2, Max, Max, Max, DigitSum, DigitSum, DigitSum, Increment, DigitSum, LenSum, Goto, Max, Praise, Roll, ];
    verify_repro(ops, vec![4431242408380362622, 648518346341351423, 7144743315925499684, 2337]);
 }
+
+#[test]
+fn fuzz_repro() {
+   let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Remainder, DigitSum, DigitSum, Increment, Max, Increment, Max, DigitSum, Universal, DigitSum, GcdN, Roll, ];
+   verify_repro(ops, vec![8033895653830950782, -244091581890705, -7813745819768708738]);
+}
