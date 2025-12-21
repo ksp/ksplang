@@ -272,7 +272,13 @@ fn fuzz_variadic_op_ran_out_of_temp_registers() {
 }
 
 #[test]
-fn fuzz_repro() {
+fn fuzz_invalid_mul_to_shift_optimization() {
    let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Remainder, DigitSum, DigitSum, Increment, Max, Increment, Max, DigitSum, Universal, DigitSum, GcdN, Roll, ];
    verify_repro(ops, vec![8033895653830950782, -244091581890705, -7813745819768708738]);
+}
+
+#[test]
+fn fuzz_gcd_preserve_error_in_variadics() {
+   let ops = vec![ DigitSum, Bitshift, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Gcd2, Gcd2, Gcd2, ];
+   verify_repro(ops, vec![281894152633852286, 36825871673603, 16794249597]);
 }

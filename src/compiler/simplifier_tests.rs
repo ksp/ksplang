@@ -449,3 +449,13 @@ fn test_median_cursed_conversion2() {
     assert_eq!(simplified.inputs.len(), 2);
     assert_eq!([ValueId::C_TWO, a], simplified.inputs.as_slice());
 }
+
+#[test]
+fn test_gcd1_is_1() {
+    let (mut g, [a, b]) = create_graph([FULL_RANGE, FULL_RANGE]);
+
+    let res = g.value_numbering(OptOp::Gcd, &[a, b, ValueId::C_ONE], None, None);
+
+    assert_eq!(ValueId::C_ONE, res);
+}
+

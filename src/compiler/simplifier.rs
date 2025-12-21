@@ -826,6 +826,9 @@ pub fn get_values_offset(g: &GraphBuilder, val1: ValueId, val2: ValueId) -> Opti
 /// Flattens nested associative / commutative variadic operations (Add, Mul, And, Or, Xor, Max, Min, Gcd).
 /// Returns true if any change (inputs replaced) so caller can restart simplification loop.
 fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit: i64) -> bool {
+    if instr.effect != OpEffect::None {
+        return false;
+    }
     let op = &instr.op;
     let mut changed = false;
     let mut new_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
@@ -834,7 +837,7 @@ fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit
             return false;
         }
         let def = cfg.get_defined_at(v);
-        if let Some(d) = def {
+        if let Some(d) = def && d.effect == OpEffect::None {
             if d.op == *op {
                 if dedup {
                     for iv in &d.inputs {
@@ -895,8 +898,8 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         assert!(i.op.arity().contains(&i.inputs.len()), "Invalid arity for {:?}: {}. Optimized as {change_path:?}", i.op, i.inputs.len());
 
         // Generic flattening for associative non-overflowing ops
-        if matches!(i.op, OptOp::Max | OptOp::Min | OptOp::Gcd | OptOp::And | OptOp::Or | OptOp::Xor) && i.inputs.len() >= 2 {
-            let dedup = !matches!(i.op, OptOp::Xor);
+        if matches!(i.op, OptOp::Max | OptOp::Min | OptOp::Gcd | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Add | OptOp::Mul) && i.inputs.len() >= 2 {
+            let dedup = !matches!(i.op, OptOp::Xor | OptOp::Add | OptOp::Mul);
             flatten_variadic(cfg, &mut i, dedup, /* limit */ 32);
         }
 
@@ -1191,6 +1194,11 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 let mut new_inputs = smallvec![cfg.store_constant(constant as i64)];
                 new_inputs.extend(i.inputs.iter().copied().filter(|a| !a.is_constant()));
                 i.inputs = new_inputs;
+                continue;
+            }
+
+            OptOp::Gcd if i.inputs[0] == ValueId::C_ZERO => {
+                i.inputs.remove(0);
                 continue;
             }
 
