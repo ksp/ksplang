@@ -858,11 +858,18 @@ fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit
     changed
 }
 
-fn merge_constants(cfg: &mut GraphBuilder, i: &mut OptInstr, merge: impl FnMut(i64, i64) -> i64) {
+fn merge_constants(cfg: &mut GraphBuilder, i: &mut OptInstr, merge: impl FnMut(i64, i64) -> Option<i64>) -> bool {
     let (constants, vars) = i.inputs.iter().copied().partition::<SmallVec<_>, _>(|v| v.is_constant());
-    let c = constants.into_iter().map(|c| cfg.get_constant_(c)).reduce(merge).unwrap();
-    i.inputs = vars;
-    i.inputs.insert(0, cfg.store_constant(c));
+    if constants.len() > 1 {
+        let Some(c) = constants[1..].iter().map(|&c| cfg.get_constant_(c))
+            .try_fold(cfg.get_constant_(constants[0]), merge) else {
+            return false;
+        };
+        i.inputs = vars;
+        i.inputs.insert(0, cfg.store_constant(c));
+        return true;
+    }
+    return false;
 }
 
 /// Returns (changed, new instruction)
@@ -1346,10 +1353,19 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 }
             }
 
-            OptOp::And if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a & b); continue; }
-            OptOp::Or if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a | b); continue; }
-            OptOp::Xor if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a ^ b); continue; }
-            OptOp::Add if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| a + b); continue; }
+            OptOp::And if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| Some(a & b)); continue; }
+            OptOp::Or if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| Some(a | b)); continue; }
+            OptOp::Xor if i.inputs[1].is_constant() => { merge_constants(cfg, &mut i, |a, b| Some(a ^ b)); continue; }
+            OptOp::Add if i.inputs[1].is_constant() => {
+                if merge_constants(cfg, &mut i, |a, b| a.checked_add(b)) {
+                    continue;
+                }
+            },
+            OptOp::Mul if i.inputs[1].is_constant() => {
+                if merge_constants(cfg, &mut i, |a, b| a.checked_mul(b)) {
+                    continue;
+                }   
+            }
 
             OptOp::KsplangOpsIncrement(Condition::False) => return (i.clone().with_op(OptOp::Const(0), &[ ], OpEffect::None), None),
             OptOp::KsplangOpsIncrement(Condition::True) if i.inputs.len() == 1 => {
@@ -1417,6 +1433,25 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     new_args.sort();
                     i.inputs = new_args;
                     continue;
+                }
+            }
+
+            if OptOp::<ValueId>::Add.effect_based_on_ranges(&ranges) == OpEffect::None {
+                for (ix, d) in defines.iter().enumerate() {
+                    println!("DBG {ix} {d:?}");
+                    if  let Ok(Some(add_i)) = d &&
+                        let OptOp::Add = add_i.op &&
+                        i.inputs.len() + add_i.inputs.len() <= 32
+                    {
+                        println!("yay {:?}", i.effect);
+                        if add_i.effect == OpEffect::None {
+                            println!("yay2");
+                            i.inputs.remove(ix);
+                            i.inputs.extend_from_slice(&add_i.inputs);
+                            i.inputs.sort();
+                            continue 'main;
+                        }
+                    }
                 }
             }
 
@@ -1687,7 +1722,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             static PATTERN: LazyLock<OptOptPattern> = LazyLock::new(||
                 P::op2(OptOp::Mul, -2, P::op2(OptOp::Median, 2, P::any().named("a")))
             );
-            if let Ok(r) = dbg!(PATTERN.try_match(cfg, &i.inputs)) &&
+            if let Ok(r) = PATTERN.try_match(cfg, &i.inputs) &&
                 let Some(a) = r.get_named_single("a") &&
                 i.inputs.contains(&a)
             {

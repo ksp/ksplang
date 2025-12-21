@@ -385,4 +385,25 @@ fn test_mul_div_simplification_keeps_divide_by_zero_effect() {
     assert_eq!(last_instr.op, OptOp::Assert(Condition::Neq(ValueId::C_ZERO, x), crate::vm::OperationError::DivisionByZero));
 }
 
+#[test]
+fn test_add_merging_simplification() {
+    let (mut g, [a, b, c, d]) = create_graph([-100..=100, 0..=100, 0..=100, 0..=111]);
+    let add1 = g.value_numbering(OptOp::Add, &[a, b], None, None);
+    let sub = g.value_numbering(OptOp::Sub, &[c, b], None, None);
+    let add2 = g.value_numbering(OptOp::Add, &[add1, sub], None, None);
+    let add3 = g.value_numbering(OptOp::Add, &[add2, d], None, None);
+    println!("{g}");
+
+    g.stack.poped_values.extend([add1, sub, add2, add3]);
+    g.stack.push(add3);
+    g.clean_poped_values();
+
+    let last_instr = g.current_block_ref().instructions.values().last().unwrap();
+    assert_eq!(last_instr.op, OptOp::Add);
+    assert_eq!(last_instr.effect, OpEffect::None);
+    assert_eq!(last_instr.inputs.as_slice(), [a, c, d]);
+
+    assert_eq!(1, g.current_block_ref().instructions.len());
+}
+
 
