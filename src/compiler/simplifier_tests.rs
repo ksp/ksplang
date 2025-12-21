@@ -1,8 +1,5 @@
 use crate::compiler::{
-    cfg::GraphBuilder,
-    ops::{BlockId, InstrId, OptInstr, OptOp, OpEffect, ValueId},
-    osmibytecode::Condition,
-    simplifier::{simplify_cond, simplify_instr}, utils::FULL_RANGE,
+    cfg::GraphBuilder, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::Condition, pattern::OptOptPattern, simplifier::{simplify_cond, simplify_instr}, utils::FULL_RANGE
 };
 use std::ops::RangeInclusive;
 const END_INSTR: InstrId = InstrId(BlockId(0), u32::MAX);
@@ -406,4 +403,20 @@ fn test_add_merging_simplification() {
     assert_eq!(1, g.current_block_ref().instructions.len());
 }
 
+#[test]
+fn test_add_mul_equivalence() {
+    let (mut g, [a, b]) = create_graph([-100..=100, 0..=100]);
+    let add1 = g.value_numbering(OptOp::Add, &[a, ValueId::C_ONE], None, None);
+    let add2 = g.value_numbering(OptOp::Add, &[b, ValueId::C_ONE], None, None);
+    let mul = g.value_numbering(OptOp::Mul, &[add1, add2], None, None);
+
+    g.stack.poped_values.extend([add1, mul, add2]);
+    g.stack.push(mul);
+    g.clean_poped_values();
+    println!("{g}");
+
+    let pattern = OptOptPattern::op4(OptOp::Add, 1, a, b, OptOptPattern::op2(OptOp::Mul, a, b));
+    assert!(pattern.try_match(&g, &[mul]).is_ok());
+    assert_eq!(2, g.current_block_ref().instructions.len());
+}
 

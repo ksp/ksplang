@@ -478,6 +478,7 @@ impl GraphBuilder {
 
     pub fn new_value(&mut self) -> &mut ValueInfo {
         let id = self.assign_value_id();
+        self.stack.poped_values.push(id);
         let info = ValueInfo {
             id,
             assigned_at: None,

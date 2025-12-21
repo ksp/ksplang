@@ -76,6 +76,9 @@ impl<'a> OptOptPattern<'a> {
     pub fn op3(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>, b: impl Into<OptOptPattern<'a>>, c: impl Into<OptOptPattern<'a>>) -> Self {
         Self::default().or_op(op, vec![a.into(), b.into(), c.into()])
     }
+    pub fn op4(op: OptOp<Box<OptOptPattern<'a>>>, a: impl Into<OptOptPattern<'a>>, b: impl Into<OptOptPattern<'a>>, c: impl Into<OptOptPattern<'a>>, d: impl Into<OptOptPattern<'a>>) -> Self {
+        Self::default().or_op(op, vec![a.into(), b.into(), c.into(), d.into()])
+    }
 
     pub fn val(val: ValueId) -> Self {
         Self::default().or_value(val)
@@ -148,6 +151,16 @@ impl<'a> OptOptPattern<'a> {
         Ok(info)
     }
 
+    pub fn try_match_instr(&'_ self, cfg: &GraphBuilder, instr: &OptInstr) -> Result<MatchInfo<'_>, ()> {
+        let mut info = MatchInfo::new();
+        if self.match_instr_core(cfg, instr, &mut info) {
+            info.values.push(instr.out);
+            Ok(info)
+        } else {
+            Err(())
+        }
+    }
+
     fn consolidate_ranges(r: &mut SmallVec<[(i64, i64); 1]>) {
         if r.len() <= 1 { return; }
         r.sort_by_key(|r| r.0);
@@ -198,21 +211,19 @@ impl<'a> OptOptPattern<'a> {
             }
         }
         if !self.options_ops.is_empty() || !self.anything_in_range.is_empty() {
-            for v in val {
-                let val_info = cfg.val_info(*v).ok_or(())?;
+            for &v in val {
+                let val_info = cfg.val_info(v).ok_or(())?;
                 for (start, end) in self.anything_in_range.iter() {
                     if *start <= *val_info.range.start() && *val_info.range.end() <= *end {
-                        return Ok(*v);
+                        return Ok(v);
                     }
                 }
 
                 if !self.options_ops.is_empty() {
                     let Some(instr_id) = val_info.assigned_at else { continue; };
                     let Some(instr) = cfg.get_instruction(instr_id) else { continue; };
-                    for (op, args) in &self.options_ops {
-                        if Self::matches_instr(info, cfg, *v, &val_info, instr, op, args, !self.disable_commutativity) {
-                            return Ok(*v);
-                        }
+                    if self.match_instr_core(cfg, instr, info) {
+                        return Ok(v);
                     }
                 }
             }
@@ -234,7 +245,16 @@ impl<'a> OptOptPattern<'a> {
         Err(())
     }
 
-    fn matches_instr(info: &mut MatchInfo<'a>, cfg: &GraphBuilder, _val: ValueId, _val_info: &ValueInfo, instr: &OptInstr, pattern: &OptOp<Box<OptOptPattern<'a>>>, args: &[OptOptPattern<'a>], allow_commutativity: bool) -> bool {
+    fn match_instr_core(&self, cfg: &GraphBuilder, instr: &OptInstr, info: &mut MatchInfo<'a>) -> bool {
+        for (op, args) in &self.options_ops {
+            if Self::matches_instr(info, cfg, instr, op, args, !self.disable_commutativity) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn matches_instr(info: &mut MatchInfo<'a>, cfg: &GraphBuilder, instr: &OptInstr, pattern: &OptOp<Box<OptOptPattern<'a>>>, args: &[OptOptPattern<'a>], allow_commutativity: bool) -> bool {
         if instr.op.discriminant() != pattern.discriminant() {
             return false;
         }

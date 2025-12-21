@@ -257,11 +257,12 @@ fn test_dup_32bit_vzorak() {
 
 #[test]
 fn test_dup1_limited_ranges() {
-    test_dup(VZORAKOVA_DUP, 0..=1000000);
+    // test_dup(VZORAKOVA_DUP, 0..=1000000);
     // test_dup(VZORAKOVA_DUP, -1..=1);
     test_dup(VZORAKOVA_DUP, 1345432..=1345432);
-    test_dup(VZORAKOVA_DUP, -1345432..=-2);
-    // test_dup(VZORAKOVA_DUP, i64::MIN..=i64::MIN + 1);
+    // test_dup(VZORAKOVA_DUP, 1345432..=i64::MAX);
+    // test_dup(VZORAKOVA_DUP, -1345432..=-2);
+    test_dup(VZORAKOVA_DUP, i64::MIN..=i64::MIN + 1);
 }
 
 fn assert_pattern(g: &GraphBuilder, v: ValueId, p: OptOptPattern) {

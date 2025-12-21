@@ -1540,10 +1540,11 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                             in_clone[arg_ix] = *v;
                             cfg.value_numbering(OptOp::Mul, &in_clone, None, Some(i.effect))
                         }).collect();
+                        // println!("end rec: {new_args:?}");
 
                         i.inputs = new_args;
                         i.op = OptOp::Add;
-                        continue;
+                        continue 'main;
                     }
                 }
             }

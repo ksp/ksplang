@@ -258,3 +258,9 @@ fn fuzz_ctr_increment_need_to_hold_registers_in_allocator() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, Remainder, Jump, Increment, Max, TetrationNumIters, ];
    verify_repro(ops, vec![0, 0, 111]);
 }
+
+#[test]
+fn fuzz_invalid_mul_add_normalization() {
+   let ops = vec![ DigitSum, Increment, DigitSum, Increment, DigitSum, DigitSum, LenSum, Universal, ];
+   verify_repro(ops, vec![0, 0, 0]);
+}
