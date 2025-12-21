@@ -13,7 +13,9 @@ const PI_TEST_VALUES: [i8; 42] = [
 
 pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) {
     let g = GraphBuilder::new(0);
-    let mut precompiler = Precompiler::new(&ops, input.len(), false, 0, 100_000, true, None, g, NoTrace());
+    let mut precompiler = Precompiler::new(&ops, input.len(), false, 0, 2_000, true, None, g, NoTrace());
+    precompiler.bb_limit = 32;
+    precompiler.instr_limit = 500;
     precompiler.interpret();
     let g = precompiler.g;
     // if is_trivial(&g) { return; }

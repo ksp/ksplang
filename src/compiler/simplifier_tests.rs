@@ -1,8 +1,8 @@
 use crate::compiler::{
     cfg::GraphBuilder,
-    ops::{BlockId, InstrId, OptOp, ValueId},
+    ops::{BlockId, InstrId, OptInstr, OptOp, OpEffect, ValueId},
     osmibytecode::Condition,
-    simplifier::simplify_cond, utils::FULL_RANGE,
+    simplifier::{simplify_cond, simplify_instr}, utils::FULL_RANGE,
 };
 use std::ops::RangeInclusive;
 const END_INSTR: InstrId = InstrId(BlockId(0), u32::MAX);
@@ -59,6 +59,24 @@ fn test_digitsum_zero() {
 
     // expected: a == 0, normalize to 0 == a
     assert_eq!(simplified, Condition::Eq(c0, a));
+}
+
+#[test]
+fn test_mod_simplification_gt_const_imin() {
+    let (mut g, [x]) = create_graph([0..=10]);
+    let m = g.push_instr(OptOp::Mod, &[x, ValueId::C_TWO], false, Some(0..=1), None).0;
+
+    // i64::MIN > (x % 2) is impossible
+    assert_eq!(simplify_cond(&mut g, Condition::Gt(ValueId::C_IMIN, m), END_INSTR), Condition::False);
+}
+
+#[test]
+fn test_mod_simplification_lt_const_imax() {
+    let (mut g, [x]) = create_graph([0..=10]);
+    let m = g.push_instr(OptOp::Mod, &[x, ValueId::C_TWO], false, Some(0..=1), None).0;
+
+    // i64::MAX < (x % 2) is impossible
+    assert_eq!(simplify_cond(&mut g, Condition::Lt(ValueId::C_IMAX, m), END_INSTR), Condition::False);
 }
 
 #[test]
@@ -353,6 +371,18 @@ fn test_absfactorial_gt_lt_mixed_range() {
 
     assert_eq!(simplify_cond(&mut g, Condition::Lt(c120, fact), at), Condition::Lt(c120, fact));
     assert_eq!(simplify_cond(&mut g, Condition::Leq(c120, fact), at), Condition::Leq(c120, fact));
+}
+
+#[test]
+fn test_mul_div_simplification_keeps_divide_by_zero_effect() {
+    let (mut g, [a, x]) = create_graph([FULL_RANGE, -1..=1]);
+    let (mul, mul_instr) = g.push_instr(OptOp::Mul, &[a, x], true, None, None);
+    assert_eq!(OpEffect::MayFail, mul_instr.unwrap().effect);
+
+    let div = g.value_numbering(OptOp::Div, &[mul, x], None, None);
+    assert_eq!(div, a);
+    let last_instr = g.current_block_ref().instructions.values().last().unwrap();
+    assert_eq!(last_instr.op, OptOp::Assert(Condition::Neq(ValueId::C_ZERO, x), crate::vm::OperationError::DivisionByZero));
 }
 
 

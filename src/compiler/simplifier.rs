@@ -1522,13 +1522,17 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             if let Some(defined_at) = cfg.get_defined_at(i.inputs[0]) {
                 if defined_at.op == OptOp::Mul && defined_at.inputs.contains(&divisor) {
                     let divisor_index = defined_at.inputs.iter().position(|&x| x == divisor).unwrap();
-                    let other_mul = if defined_at.inputs.len() == 2 {
-                        defined_at.inputs[1 - divisor_index]
+                    let mut others = defined_at.inputs.clone();
+                    others.remove(divisor_index);
+                    let other_mul = if others.len() == 1 {
+                        others[0]
                     } else {
-                        let mut others = defined_at.inputs.clone();
-                        others.remove(divisor_index);
+                        debug_assert!(others.len() > 1);
                         cfg.value_numbering(OptOp::Mul, &others, None, None)
                     };
+                    if ranges[1].contains(&0) {
+                        cfg.push_assert(Condition::Neq(ValueId::C_ZERO, i.inputs[1]), OperationError::DivisionByZero, None);
+                    }
                     return (i.clone().with_op(OptOp::Add, &[ other_mul ], OpEffect::None), None);
                 }
             }
