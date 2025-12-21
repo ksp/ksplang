@@ -1447,14 +1447,11 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
             if OptOp::<ValueId>::Add.effect_based_on_ranges(&ranges) == OpEffect::None {
                 for (ix, d) in defines.iter().enumerate() {
-                    println!("DBG {ix} {d:?}");
                     if  let Ok(Some(add_i)) = d &&
                         let OptOp::Add = add_i.op &&
                         i.inputs.len() + add_i.inputs.len() <= 32
                     {
-                        println!("yay {:?}", i.effect);
                         if add_i.effect == OpEffect::None {
-                            println!("yay2");
                             i.inputs.remove(ix);
                             i.inputs.extend_from_slice(&add_i.inputs);
                             i.inputs.sort();

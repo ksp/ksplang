@@ -1,4 +1,4 @@
-use std::{cmp, hint::select_unpredictable, ops::{Index, IndexMut}, u32};
+use std::{cmp, fmt, hint::select_unpredictable, ops::{Index, IndexMut}, u32};
 
 use num_integer::Integer;
 
@@ -49,58 +49,101 @@ pub struct RunBlockResult {
     pub exit_point: ExitPointId
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RegFile {
-    regs: [i64; 256]
+    regs: [i64; 256],
+    #[cfg(debug_assertions)]
+    set_bitmap: [u64; 256/64]
 }
 impl RegFile {
-    pub fn new() -> Self { RegFile { regs: [0i64; 256] } }
-    pub fn new_debug() -> Self { RegFile { regs: [0xbadda4abadda4aai64; 256] } }
+    pub fn new() -> Self {
+        Self { regs: [0i64; 256],
+               #[cfg(debug_assertions)]
+               set_bitmap: [0u64; _], }
+    }
+    pub fn new_debug() -> Self {
+        let mut x = Self::new();
+        x.regs = [0xbadda4abadda4aai64; 256];
+        x
+    }
+    #[inline(always)]
+    pub fn clear_debug_set_bitmap(&mut self) {
+        #[cfg(debug_assertions)] {
+            self.set_bitmap.fill(0);
+        }
+    }
     // fn new_unsafe() -> Self { unsafe { RegFile { regs: MaybeUninit::uninit().assume_init() } } }
 }
 impl Index<u8> for RegFile {
     type Output = i64;
 
     #[inline(always)]
-    fn index(&self, index: u8) -> &Self::Output { &self.regs[index as usize] }
+    fn index(&self, index: u8) -> &Self::Output {
+        #[cfg(debug_assertions)] {
+            assert!(((self.set_bitmap[(index/64) as usize] >> (index % 64)) & 1) > 0, "Register r{index} has not been set yet:\n{self:?}");
+        }
+        &self.regs[index as usize]
+    }
 }
 impl Index<&u8> for RegFile {
     type Output = i64;
 
     #[inline(always)]
-    fn index(&self, index: &u8) -> &Self::Output { &self.regs[*index as usize] }
+    fn index(&self, index: &u8) -> &Self::Output { &self[*index] }
 }
 impl IndexMut<u8> for RegFile {
     #[inline(always)]
-    fn index_mut(&mut self, index: u8) -> &mut Self::Output { &mut self.regs[index as usize] }
+    fn index_mut(&mut self, index: u8) -> &mut Self::Output {
+        #[cfg(debug_assertions)] {
+            self.set_bitmap[(index / 64) as usize] |= 1 << (index % 64);
+        }
+        &mut self.regs[index as usize]
+    }
 }
 impl IndexMut<&u8> for RegFile {
     #[inline(always)]
-    fn index_mut(&mut self, index: &u8) -> &mut Self::Output { &mut self.regs[*index as usize] }
+    fn index_mut(&mut self, index: &u8) -> &mut Self::Output { &mut self[*index] }
 }
 
 impl Index<RegId> for RegFile {
     type Output = i64;
 
     #[inline(always)]
-    fn index(&self, index: RegId) -> &Self::Output { &self.regs[index.0 as usize] }
+    fn index(&self, index: RegId) -> &Self::Output { &self[index.0] }
 }
 
 impl Index<&RegId> for RegFile {
     type Output = i64;
 
     #[inline(always)]
-    fn index(&self, index: &RegId) -> &Self::Output { &self.regs[index.0 as usize] }
+    fn index(&self, index: &RegId) -> &Self::Output { &self[index.0] }
 }
 
 impl IndexMut<RegId> for RegFile {
     #[inline(always)]
-    fn index_mut(&mut self, index: RegId) -> &mut Self::Output { &mut self.regs[index.0 as usize] }
+    fn index_mut(&mut self, index: RegId) -> &mut Self::Output { &mut self[index.0] }
 }
 
 impl IndexMut<&RegId> for RegFile {
     #[inline(always)]
-    fn index_mut(&mut self, index: &RegId) -> &mut Self::Output { &mut self.regs[index.0 as usize] }
+    fn index_mut(&mut self, index: &RegId) -> &mut Self::Output { &mut self[index.0] }
+}
+
+impl fmt::Debug for RegFile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut str = f.debug_struct("RegFile"); // .field("regs", &self.regs).field("set_bitmap", &self.set_bitmap).finish()
+        for i in 0..255 {
+            #[cfg(debug_assertions)]
+            let used = (self.set_bitmap[i / 64] >> (i % 64)) & 1 > 0;
+            #[cfg(not(debug_assertions))]
+            let used = self.regs[i] > 0;
+
+            if used {
+                str.field(&(format!("r{i}")), &self.regs[i]);
+            }
+        }
+        str.finish()
+    }
 }
 
 fn eval_cond(regs: &RegFile, cond: Condition<RegId>) -> bool {

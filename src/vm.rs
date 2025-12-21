@@ -1683,6 +1683,7 @@ impl OptimizingVM {
                     s = state_ret;
                     result
                 } else {
+                    self.obc_regs.clear_debug_set_bitmap();
                     Self::interpret_block(&opt_block, &mut s.stack, &mut self.obc_regs, self.conf.error_as_deopt)
                 };
 

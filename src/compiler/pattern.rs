@@ -2,7 +2,7 @@ use std::{borrow::Cow, collections::BTreeMap, fmt, ops::{Range, RangeBounds, Ran
 
 use smallvec::SmallVec;
 
-use crate::compiler::{cfg::GraphBuilder, ops::{OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::{IRange, from_rangebounds}};
+use crate::compiler::{cfg::GraphBuilder, ops::{OptInstr, OptOp, ValueId}, osmibytecode::Condition, range_ops::{IRange, from_rangebounds}};
 
 #[derive(Clone)]
 pub struct HackEqDebug<T, TId>(pub T, pub TId);
