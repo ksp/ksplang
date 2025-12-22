@@ -1,4 +1,4 @@
-use std::{cmp, ops::RangeInclusive, sync::LazyLock};
+use std::{cmp, collections::BTreeSet, ops::RangeInclusive, sync::LazyLock};
 
 use arrayvec::ArrayVec;
 use num_integer::Integer;
@@ -1028,7 +1028,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Assert(Condition::True, _) | OptOp::DeoptAssert(Condition::True) | OptOp::Jump(Condition::False, _) =>
                 return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
             // degenerate expressions are all simplified to degenerate Add, which is the only thing user then has to handle
-            OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Max | OptOp::Min if i.inputs.len() == 1 =>
+            OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Max | OptOp::Min | OptOp::Median if i.inputs.len() == 1 =>
                 return (i.clone().with_op(OptOp::Add, &i.inputs, OpEffect::None), None),
 
             OptOp::AbsSub | OptOp::Sub if i.inputs[0] == i.inputs[1] =>
@@ -1265,6 +1265,10 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     let max = cfg.value_numbering(OptOp::Max, &[min, i.inputs[0]], None, None);
                     return (i.clone().with_op(OptOp::Add, &[ max ], OpEffect::None), None);
                 }
+            }
+
+            OptOp::Median if i.inputs.iter().cloned().collect::<BTreeSet<_>>().len() == 1 => {
+                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None);
             }
 
             OptOp::Median if i.inputs.len() >= 3 => {

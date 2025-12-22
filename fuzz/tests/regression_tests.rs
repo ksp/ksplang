@@ -306,3 +306,9 @@ fn fuzz_obc_ctr_increment_another_deopt_bug() {
    let ops = vec![ Funkcia, Max, DigitSum, DigitSum, DigitSum, DigitSum, LenSum, Jump, Increment, Increment, DigitSum, BulkXor, BranchIfZero, Bitshift, Median, ];
    verify_repro(ops, vec![0, 0, 0, 0, 0]);
 }
+
+#[test]
+fn fuzz_single_median_item() {
+   let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, LenSum, Increment, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Remainder, TetrationItersNum, Increment, Increment, Median, ];
+   verify_repro(ops, vec![-40533015121625089, -40533483273060346, 0]);
+}
