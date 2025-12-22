@@ -1771,7 +1771,7 @@ fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: 
             continue;
         }
         let needs_checkpoint = i.effect != OpEffect::None && i.effect != OpEffect::ControlFlow && i.effect != OpEffect::CtrIncrement && (error_will_deopt || i.effect != OpEffect::MayFail);
-        if last_checkpoint.is_none() && needs_checkpoint {
+        if last_checkpoint.is_none() && (needs_checkpoint || matches!(i.op, OptOp::KsplangOpsIncrement(_) | OptOp::Pop | OptOp::StackSwap)) {
             // find checkpoint in previous blocks or panic
             let mut block_id = block.id;
             let mut additional_values = vec![];
@@ -1787,8 +1787,7 @@ fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: 
                 block_id = b.incoming_jumps[0].block_id();
                 for i in g.block_(block_id).instructions.values().rev() {
                     if i.op == OptOp::Checkpoint {
-                        last_checkpoint = Some(i.inputs.iter().copied().filter(|c| c.is_computed()).collect());
-                        last_checkpoint.as_mut().unwrap().extend(additional_values);
+                        last_checkpoint = Some(i.inputs.iter().copied().filter(|c| c.is_computed()).chain(additional_values).collect());
                         break 'search_for_checkpoint;
                     }
                     extract_instr_deopt_remember_variables(i, &mut additional_values);

@@ -282,3 +282,15 @@ fn fuzz_gcd_preserve_error_in_variadics() {
    let ops = vec![ DigitSum, Bitshift, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Gcd2, Gcd2, Gcd2, ];
    verify_repro(ops, vec![281894152633852286, 36825871673603, 16794249597]);
 }
+
+#[test]
+fn fuzz_obc_ksplangopsincrement_deopt_bug1() {
+   let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, Modulo, DigitSum, DigitSum, DigitSum, LenSum, Jump, Increment, Increment, Max, TetrationNumIters, ];
+   verify_repro(ops, vec![1, 1, 179]);
+}
+
+#[test]
+fn fuzz_obc_ksplangopsincrement_deopt_bug2() {
+   let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, DigitSum, BulkXor, Qeq, DigitSum, Increment, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Bitshift, Increment, TetrationNumIters, DigitSum, ];
+   verify_repro(ops, vec![9114925018868809795, -71982827398290050, 163255447823154725]);
+}

@@ -1482,9 +1482,10 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         let c1 = cfg.get_constant_(i.inputs[0]);
                         let c2 = cfg.get_constant_(sub_i.inputs[0]);
                         let negated = sub_i.inputs[1];
-                        let c_new = cfg.store_constant(c1 + c2);
-                        i.inputs = smallvec![c_new, negated];
-                        continue 'main
+                        if let Some(c_new) = c1.checked_add(c2) {
+                            i.inputs = smallvec![cfg.store_constant(c_new), negated];
+                            continue 'main
+                        }
                     }
 
                     if i.inputs.len() == 2 && sub_i.inputs[0] == ValueId::C_ZERO {

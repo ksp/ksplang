@@ -468,11 +468,20 @@ fn test_mul_constant_chain_overflow_panics() {
 }
 
 #[test]
+fn test_add_sub_constant_overflow_panics() {
+    let (mut g, [x]) = create_graph([0..=10]);
+    let (sub, _) = g.push_instr(OptOp::Sub, &[ValueId::C_ONE, x], false, None, None);
+
+    let instr = OptInstr::new(g.next_instr_id(), OptOp::Add, &[ValueId::C_IMAX, sub], ValueId::from(i32::MAX));
+    let _ = simplify_instr(&mut g, instr);
+}
+
+
+#[test]
 fn test_gcd1_is_1() {
     let (mut g, [a, b]) = create_graph([FULL_RANGE, FULL_RANGE]);
 
     let res = g.value_numbering(OptOp::Gcd, &[a, b, ValueId::C_ONE], None, None);
-
     assert_eq!(ValueId::C_ONE, res);
 }
 
