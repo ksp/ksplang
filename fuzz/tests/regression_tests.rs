@@ -300,3 +300,9 @@ fn fuzz_index_out_of_range_in_dataflow() {
    let ops = vec![ DigitSum, Bitshift, DigitSum, DigitSum, Remainder, DigitSum, Increment, DigitSum, DigitSum, Remainder, Increment, DigitSum, LSwap, BranchIfZero, Modulo, Max, LSwap, BranchIfZero, Modulo, ];
    verify_repro(ops, vec![0, 0, 0]);
 }
+
+#[test]
+fn fuzz_obc_ctr_increment_another_deopt_bug() {
+   let ops = vec![ Funkcia, Max, DigitSum, DigitSum, DigitSum, DigitSum, LenSum, Jump, Increment, Increment, DigitSum, BulkXor, BranchIfZero, Bitshift, Median, ];
+   verify_repro(ops, vec![0, 0, 0, 0, 0]);
+}

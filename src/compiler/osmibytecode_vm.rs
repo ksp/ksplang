@@ -597,6 +597,12 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                         ksplang_ops_done = ksplang_ops_done.wrapping_add_signed(*x as i64)
                     }
                 },
+                OsmibyteOp::KsplangOpsIncrementCondVar(condition, reg, mult, offset) => {
+                    if eval_cond(&regs, condition.clone()) {
+                        let val = regs[reg] * *mult as i64 + *offset as i64;
+                        ksplang_ops_done = ksplang_ops_done.wrapping_add_signed(val);
+                    }
+                },
                 OsmibyteOp::Spill(ix, a) => {
                     while spill.len() <= *ix as usize {
                         spill.push(0);

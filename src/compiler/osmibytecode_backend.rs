@@ -784,6 +784,7 @@ impl<'a> Compiler<'a> {
         let deopt = self.current_deopt.as_ref().unwrap();
 
         if lowered_condition == Condition::False &&
+            matches!(instr.op, OptOp::DeoptAssert(_)) && // pointless optimization for unlikely asserts
             deopt.ip <= u32::MAX as usize &&
             deopt.stack_reconstruction.len() <= 7 * 3 &&
             deopt.ksplang_ops_increment.unsigned_abs() <= i16::MAX as u64
@@ -803,7 +804,7 @@ impl<'a> Compiler<'a> {
         }
 
         let id = self.save_deopt().unwrap();
-        self.program.push(OsmibyteOp::DeoptAssert(lowered_condition, id.try_into().expect("TODO")));
+        self.program.push(OsmibyteOp::DeoptAssert(lowered_condition, id.try_into().expect("too many deopts, how?")));
     }
 
     fn lower_ops_increment(&mut self, instr: &OptInstr, condition: Condition<ValueId>) {
@@ -834,12 +835,8 @@ impl<'a> Compiler<'a> {
                 self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg, 1));
                 deopt.push(OsmibyteOp::KsplangOpsIncrementVar(reg, -1));
             } else {
-                let tmp = self.temp_regs.alloc().unwrap();
-                self.program.push(OsmibyteOp::SelectConstReg(tmp, cond.clone().neg(), 0, reg));
-                self.program.push(OsmibyteOp::KsplangOpsIncrementVar(tmp, 1));
-                deopt.push(OsmibyteOp::SelectConstReg(tmp, cond.clone().neg(), 0, reg));
-                deopt.push(OsmibyteOp::KsplangOpsIncrementVar(tmp, -1));
-                self.temp_regs.release(tmp);
+                self.program.push(OsmibyteOp::KsplangOpsIncrementCondVar(cond.clone(), reg, 1, 0));
+                deopt.push(OsmibyteOp::KsplangOpsIncrementCondVar(cond.clone(), reg, -1, 0));
             }
         }
 
@@ -1161,6 +1158,7 @@ impl<'a> Compiler<'a> {
         let mut stack_push = vec![];
         let mut stack_pop = 0;
         let mut result = None;
+        let mut ctr_inc_offset = 0;
         for (_iid, i) in self.g.block_(incoming).instructions.iter().rev() {
             match &i.op {
                 OptOp::Pop => {
@@ -1188,9 +1186,34 @@ impl<'a> Compiler<'a> {
                     self.temp_regs.release(val);
                     self.temp_regs.release(ix);
                 }
-                // TODO: ksplang counter increment revert
+                OptOp::KsplangOpsIncrement(cond) => {
+                    if cond == &Condition::True {
+                        for &x in &i.inputs {
+                            if let Some(c) = self.g.get_constant(x) {
+                                ctr_inc_offset -= c;
+                            } else {
+                                let reg = self.materialize_value_(x);
+                                self.program.push(OsmibyteOp::KsplangOpsIncrementVar(reg, -1));
+                                self.temp_regs.release(reg);
+                            }
+                        }
+                    } else {
+                        let cond = self.lower_condition(cond.clone());
+                        for &x in &i.inputs {
+                            if let Some(c) = self.g.get_constant(x) &&
+                                let Ok(c_i16) = c.try_into()
+                            {
+                                self.program.push(OsmibyteOp::KsplangOpsIncrementCond(cond.clone(), c_i16));
+                            } else {
+                                let reg = self.materialize_value_(x);
+                                self.program.push(OsmibyteOp::KsplangOpsIncrementCondVar(cond.clone(), reg, -1, 0));
+                                self.temp_regs.release(reg);
+                            }
+                        }
+                    }
+                }
                 OptOp::Checkpoint => {
-                    result = Some((i.program_position, i.ksp_instr_count, i.inputs[1..].to_vec()));
+                    result = Some((i.program_position, (i.ksp_instr_count as i64) + ctr_inc_offset, i.inputs[1..].to_vec()));
                     break;
                 }
                 _ => { }
@@ -1200,7 +1223,7 @@ impl<'a> Compiler<'a> {
         // println!(" Stack: -{stack_pop}  + {stack_push:?}");
 
         if let Some((ip, ksplang_count, mut stack)) = result {
-            let ksplang_count = ksplang_count as i64 - incoming_ctr_inc;
+            let ksplang_count: i64 = ksplang_count - incoming_ctr_inc;
             stack.splice(0..stack_pop, stack_push);
             let stack = self.materialize_deopt_stack(&stack);
             Some(DeoptInfo::new(ip, &stack, ksplang_count, &self.program))
