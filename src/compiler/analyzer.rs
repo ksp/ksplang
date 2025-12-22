@@ -83,7 +83,7 @@ pub fn dataflow<T: PartialEq>(
     if reverse {
         order.reverse();
     }
-    let mut lookup = vec![usize::MAX; order.len()];
+    let mut lookup = vec![usize::MAX; g.blocks.len()];
     for (i, id) in order.iter().enumerate() {
         lookup[id.0 as usize] = i;
     }

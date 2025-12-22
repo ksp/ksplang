@@ -294,3 +294,9 @@ fn fuzz_obc_ksplangopsincrement_deopt_bug2() {
    let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, DigitSum, BulkXor, Qeq, DigitSum, Increment, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Bitshift, Increment, TetrationNumIters, DigitSum, ];
    verify_repro(ops, vec![9114925018868809795, -71982827398290050, 163255447823154725]);
 }
+
+#[test]
+fn fuzz_index_out_of_range_in_dataflow() {
+   let ops = vec![ DigitSum, Bitshift, DigitSum, DigitSum, Remainder, DigitSum, Increment, DigitSum, DigitSum, Remainder, Increment, DigitSum, LSwap, BranchIfZero, Modulo, Max, LSwap, BranchIfZero, Modulo, ];
+   verify_repro(ops, vec![0, 0, 0]);
+}
