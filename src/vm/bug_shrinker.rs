@@ -13,6 +13,14 @@ use crate::compiler::{
 
 const STACK_PREVIEW: usize = 16;
 
+fn catch_unwind_silent<F: FnOnce() -> R + panic::UnwindSafe, R>(f: F) -> std::thread::Result<R> {
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let result = panic::catch_unwind(f);
+    panic::set_hook(prev_hook);
+    result
+}
+
 pub fn verify_block<'prog, 'opts>(
     vm: &OptimizingVM,
     rev: bool, ip: usize,
@@ -189,14 +197,17 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
     fn find_reproducing_settings(&mut self, original_tracer: Option<ActualTracer>) -> (CompileSettings, ReproOutcome) {
         let base = self.default_config();
         let osmibyte_options: &[bool] = if base.use_osmibyte { &[false, true] } else { &[false] };
-        for &use_osmibyte in osmibyte_options {
+        for soft_limits in [false, true] {
             for use_trace in [false, true] {
-                let mut settings = base.clone();
-                settings.use_trace = use_trace;
-                settings.use_osmibyte = use_osmibyte;
-                let outcome = self.compile_and_reproduce(&settings);
-                if outcome.kind != OutcomeKind::Works {
-                    return (settings, outcome);
+                for &use_osmibyte in osmibyte_options {
+                    let mut settings = base.clone();
+                    settings.soft_limits = soft_limits;
+                    settings.use_trace = use_trace;
+                    settings.use_osmibyte = use_osmibyte;
+                    let outcome = self.compile_and_reproduce(&settings);
+                    if outcome.kind != OutcomeKind::Works {
+                        return (settings, outcome);
+                    }
                 }
             }
         }
@@ -272,6 +283,16 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
                 *outcome = new_outcome;
                 min_broken = mid;
                 broken = mid;
+
+                if settings.soft_limits {
+                    settings.soft_limits = false;
+                    let with_hard_limits = self.compile_and_reproduce(settings);
+                    if with_hard_limits.kind == OutcomeKind::Works {
+                        settings.soft_limits = true;
+                    } else {
+                        println!("Yay, we managed to replicate with hard limits");
+                    }
+                }
             } else {
                 works = mid;
             }
@@ -347,12 +368,12 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
     }
 
     fn compile_and_reproduce(&self, settings: &CompileSettings) -> ReproOutcome {
-        let block = match panic::catch_unwind(|| self.build_block(settings)) {
+        let block = match catch_unwind_silent(|| self.build_block(settings)) {
             Ok(block) => block,
             Err(err) => return ReproOutcome { executed_ksplang: 0, kind: OutcomeKind::Error(format_panic_message("Compilation", err)) }
         };
 
-        match panic::catch_unwind(|| {
+        match catch_unwind_silent(|| {
             let mut stack = self.start_state.stack.clone();
             let mut regfile = RegFile::new_debug();
             let r = OptimizingVM::interpret_block(&block, &mut stack, &mut regfile, self.vm.conf.error_as_deopt)?;
@@ -462,6 +483,7 @@ impl<'vm, 'prog, 'opts> ShrinkingContext<'vm, 'prog, 'opts> {
         _initial_mismatch: Option<(&[i64], usize)>,
         _initial_baseline: Option<(&[i64], usize)>,
     ) -> ! {
+        println!("Minimized settings to {settings:?}");
         if self.vm.conf.verbosity > 0 || self.vm.conf.shrinker_final_verbosity > 0 {
             println!("\nRecompiling with verbosity {}...", self.vm.conf.shrinker_final_verbosity);
         }

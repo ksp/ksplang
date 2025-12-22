@@ -48,6 +48,7 @@ pub struct VisitedIpStats {
     pub branches: HashMap<usize, usize>, // from IP -> count
 }
 
+#[derive(Debug)]
 pub struct Precompiler<'a, TP: TraceProvider> {
     pub ops: &'a [crate::ops::Op],
     pub initial_stack_size: usize,
