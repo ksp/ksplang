@@ -761,6 +761,9 @@ impl GraphBuilder {
     }
 
     pub fn push_instr(&mut self, op: OptOp<ValueId>, args: &[ValueId], value_numbering: bool, out_range: Option<RangeInclusive<i64>>, effect: Option<OpEffect>) -> (ValueId, Option<&mut OptInstr>) {
+        if self.current_block_ref().is_terminated {
+            return (ValueId(0), None);
+        }
         let explicit_nop = !value_numbering && op == OptOp::Nop;
 
         let effect2 = match effect {

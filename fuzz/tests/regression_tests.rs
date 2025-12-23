@@ -325,3 +325,9 @@ fn aby_fuzzer_nebrečel() {
    verify_repro(ops, vec![]);
 }
 
+
+#[test]
+fn fuzz_qeq_invalid_div_operation() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, LenSum, DigitSum, DigitSum, DigitSum, Increment, Increment, Increment, DigitSum, DigitSum, Remainder, Qeq, Qeq, ];
+   verify_repro(ops, vec![0, 0, 0]);
+}
