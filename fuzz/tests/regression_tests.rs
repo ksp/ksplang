@@ -331,3 +331,9 @@ fn fuzz_qeq_invalid_div_operation() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, LenSum, DigitSum, DigitSum, DigitSum, Increment, Increment, Increment, DigitSum, DigitSum, Remainder, Qeq, Qeq, ];
    verify_repro(ops, vec![0, 0, 0]);
 }
+
+#[test]
+fn fuzz_repro() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Swap, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, Swap, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Swap, ];
+   verify_repro(ops, vec![0, 0, 0]);
+}

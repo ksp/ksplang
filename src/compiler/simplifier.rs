@@ -50,10 +50,10 @@ pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: 
     if let Some(info) = cond_mut.regs().into_iter().filter(|x| x.is_computed()).next()
                                 .and_then(|v| cfg.val_info(v))
     {
-        for (assumption, _, _, _) in info.iter_assumptions(at, &cfg.block_(at.block_id()).predecessors) {
+        for (assumption, _, _, instr_id) in info.iter_assumptions(at, &cfg.block_(at.block_id()).predecessors) {
             if let Some(implied) = cond_implies(cfg, &assumption, &cond_mut, at) && implied != cond_mut {
                 if cfg.conf.should_log(10) {
-                    println!("simplify_cond: condition '{cond_mut}' + assumption '{assumption}' imply '{implied}'")
+                    println!("simplify_cond: condition '{cond_mut}' + assumption '{assumption}' (from {instr_id}) imply '{implied}'")
                 }
                 cond_mut = implied;
                 changelog.push(cond_mut.clone());
@@ -163,6 +163,13 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
             assert!(a.is_constant() || !b.is_constant()); // we depend on the ordering
             let ar = cfg.val_range_at(a, at);
             let br = cfg.val_range_at(b, at);
+
+            if ar.start() == ar.end() && !a.is_constant() { // normalize constant
+                return condition.replace_arr([cfg.store_constant(*ar.start()), b])
+            }
+            if br.start() == br.end() && !b.is_constant() {
+                return condition.replace_arr([a, cfg.store_constant(*br.start())])
+            }
 
             match condition {
                 Condition::Eq(_, _) if overlap(&ar, &br).is_none() => return Condition::False,
@@ -479,9 +486,20 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                                     let rc = create_range_constraint_condition(cfg, mod_x, rem_range, &new_r);
                                     if rc.len() == 1 {
                                         return rc[0].clone().neg_if(is_negated);
+                                    } else {
+                                        return condition
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    if let OptOp::Div = def.op && ac == 0 && *br.start() == 0 {
+                        // simplify (x / y) == 0 -> x < y
+                        match condition {
+                            Condition::Eq(a, b) => return Condition::Lt(def.inputs[0], def.inputs[1]),
+                            Condition::Neq(a, b) => return Condition::Geq(def.inputs[0], def.inputs[1]),
+                            _ => {}
                         }
                     }
                 }

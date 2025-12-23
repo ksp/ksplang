@@ -745,7 +745,10 @@ impl GraphBuilder {
             return
         }
         let cond2 = if replace_condition { Condition::True }
-                   else                 { cond };
+                    else                 { cond };
+        if self.conf.should_log(20) {
+            println!("Adding assumption about {val} at {at}: {cond2} + range {range:?} (prev range was {range:?})")
+        }
         if cond2 == Condition::True && range == current_range {
             // nothing would be gained
             return;
@@ -898,6 +901,7 @@ impl GraphBuilder {
     }
 
     pub fn push_checkpoint(&mut self) -> &mut OptInstr {
+        assert!(!self.current_block_ref().is_terminated);
         // try to replace previous redundant checkpoint
         let current_block = self.current_block_ref();
         let mut last_checkpoint: Option<InstrId> = None;

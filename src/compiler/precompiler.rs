@@ -287,6 +287,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
     }
 
     pub fn push_swap(&mut self, ix: ValueId, val: ValueId) -> ValueId {
+        assert!(!self.g.current_block_ref().is_terminated);
+        let next_iid = self.g.next_instr_id();
         // try find previous anti-swap
         let mut interfering_swaps = vec![];
         let mut has_effect = false;
@@ -303,7 +305,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 OptOp::Push | OptOp::Pop => { has_pops = true; },
                 OptOp::StackSwap => {
                     let &[instr_ix, instr_val] = instr.inputs.as_slice() else { panic!() };
-                    let is_anti = simplify_cond(&mut self.g, Condition::Eq(instr_ix, ix), iid);
+                    let is_anti = simplify_cond(&mut self.g, Condition::Eq(instr_ix, ix), next_iid);
                     if is_anti == Condition::True {
                         found_anti_swap = Some(iid);
                         break;
@@ -373,6 +375,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         // self.g.current_block_mut().instructions.insert(deopt_id.1, deopt);
 
                         self.g.push_deopt_assert(condition.clone().neg(), false);
+                        assert!(!self.g.current_block_ref().is_terminated, "What is going on: {condition} (all swaps: {interfering_swaps:?})\n{}", self.g);
                     }
                     self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
                     let orig_val = self.g.get_instruction_(anti_swap).inputs[1];
