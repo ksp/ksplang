@@ -799,7 +799,7 @@ impl<'a> Compiler<'a> {
             for regs in deopt.stack_reconstruction.clone().chunks(7) {
                 self.emit_push(regs);
             }
-            self.program.push(OsmibyteOp::Done(ip as u32, ctr_inc.unwrap()));
+            self.program.push(OsmibyteOp::Done(ip as u32, ctr_inc.unwrap_or(0)));
             return;
         }
 
@@ -1201,7 +1201,7 @@ impl<'a> Compiler<'a> {
                         let cond = self.lower_condition(cond.clone());
                         for &x in &i.inputs {
                             if let Some(c) = self.g.get_constant(x) &&
-                                let Ok(c_i16) = c.try_into()
+                                let Ok(c_i16) = (-c).try_into()
                             {
                                 self.program.push(OsmibyteOp::KsplangOpsIncrementCond(cond.clone(), c_i16));
                             } else {

@@ -308,7 +308,20 @@ fn fuzz_obc_ctr_increment_another_deopt_bug() {
 }
 
 #[test]
+fn fuzz_obc_ctr_increment_another_deopt_bug2() {
+   let ops = vec![ DigitSum, Pop, Remainder, DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, DigitSum, Increment, DigitSum, LenSum, DigitSum, BulkXor, Pop, Jump, Increment, Goto, ];
+   verify_repro(ops, vec![0, -3927539563580481243, -7822895346882761217, -7812620392308268763, 2738140736658829182, 126]);
+}
+
+#[test]
 fn fuzz_single_median_item() {
    let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, LenSum, Increment, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Remainder, TetrationItersNum, Increment, Increment, Median, ];
    verify_repro(ops, vec![-40533015121625089, -40533483273060346, 0]);
 }
+
+#[test]
+fn aby_fuzzer_nebrečel() {
+   let ops = vec![ ];
+   verify_repro(ops, vec![]);
+}
+
