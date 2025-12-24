@@ -497,8 +497,8 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                     if let OptOp::Div = def.op && ac == 0 && *br.start() == 0 {
                         // simplify (x / y) == 0 -> x < y
                         match condition {
-                            Condition::Eq(a, b) => return Condition::Lt(def.inputs[0], def.inputs[1]),
-                            Condition::Neq(a, b) => return Condition::Geq(def.inputs[0], def.inputs[1]),
+                            Condition::Eq(_, _) => return Condition::Lt(def.inputs[0], def.inputs[1]),
+                            Condition::Neq(_, _) => return Condition::Geq(def.inputs[0], def.inputs[1]),
                             _ => {}
                         }
                     }

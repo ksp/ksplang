@@ -1368,7 +1368,7 @@ impl GraphBuilder {
         for &jump_id in &block.incoming_jumps.clone() {
             let jump = self.instr_mut(jump_id).unwrap();
             let removed_value = jump.inputs.remove(index);
-            if !jump.inputs.contains(&removed_value) {
+            if jump.iter_inputs().all(|x| x != removed_value) {
                 self.remove_used_at(removed_value, jump_id);
             }
         }
