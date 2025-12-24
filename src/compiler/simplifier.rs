@@ -899,6 +899,19 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         return (i, None);
     }
 
+    macro_rules! result_val {
+        ($val: expr) => { {
+            let a = $val;
+            (i.with_op(OptOp::Add, &[a], OpEffect::None), None)
+        } };
+    }
+    macro_rules! result_const {
+        ($val: expr) => { {
+            let a = $val;
+            (i.with_op(OptOp::Const(a), &[], OpEffect::None), Some(a..=a))
+        } };
+    }
+
     let mut out_range = None;
     let mut iter = 0;
     let mut change_path: Vec<(OptOp<ValueId>, SmallVec<[ValueId; 4]>, SmallVec<[RangeInclusive<i64>; 4]>)> = Vec::new();
@@ -1040,24 +1053,26 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
         match &i.op {
             OptOp::Select(Condition::True) =>
-                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), Some(ranges[0].clone())),
+                return result_val!(i.inputs[0]),
             OptOp::Select(Condition::False) =>
-                return (i.clone().with_op(OptOp::Add, &[ i.inputs[1] ], OpEffect::None), Some(ranges[1].clone())),
-            OptOp::Assert(Condition::True, _) | OptOp::DeoptAssert(Condition::True) | OptOp::Jump(Condition::False, _) =>
+                return result_val!(i.inputs[1]),
+            OptOp::Assert(Condition::True, _) | OptOp::DeoptAssert(Condition::True) | OptOp::Jump(Condition::False, _) | OptOp::KsplangOpsIncrement(Condition::False) =>
+                return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
+            OptOp::KsplangOpsIncrement(_) if i.inputs.len() == 0 =>
                 return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
             // degenerate expressions are all simplified to degenerate Add, which is the only thing user then has to handle
             OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Max | OptOp::Min | OptOp::Median if i.inputs.len() == 1 =>
-                return (i.clone().with_op(OptOp::Add, &i.inputs, OpEffect::None), None),
+                return result_val!(i.inputs[0]),
 
             OptOp::AbsSub | OptOp::Sub if i.inputs[0] == i.inputs[1] =>
                 // abs(a - a) -> 0
-                return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), None),
+                return result_const!(0),
 
             OptOp::Sub if i.inputs[1].is_constant() && i.inputs[1] != ValueId::C_IMIN => {
                 let c = cfg.get_constant_(i.inputs[1]);
                 if c == 0 {
                     // a - 0 -> a
-                    return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), Some(ranges[0].clone()));
+                    return result_val!(i.inputs[0]);
                 }
                 let c2 = cfg.store_constant(-c);
                 i.op = OptOp::Add;
@@ -1089,13 +1104,13 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             }
 
             OptOp::Sgn if *ranges[0].start() >= 1 => {
-                return (i.clone().with_op(OptOp::Add, &[ ValueId::C_ONE ], OpEffect::None), None)
+                return result_const!(1);
             }
             OptOp::Sgn if *ranges[0].end() <= -1 => {
-                return (i.clone().with_op(OptOp::Add, &[ ValueId::C_NEG_ONE ], OpEffect::None), None)
+                return result_const!(-1)
             }
             OptOp::Sgn if *ranges[0].start() >= -1 && *ranges[0].end() <= 1 => {
-                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None);
+                return result_val!(i.inputs[0]);
             }
             OptOp::Sgn if *ranges[0].start() >= -1 => { // sgn(a) => min(1, a)
                 i.op = OptOp::Min;
@@ -1108,9 +1123,19 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 continue;
             }
 
-            OptOp::Add if i.inputs[0] == ValueId::C_ZERO => {
+            OptOp::Add | OptOp::Or | OptOp::Xor if i.inputs[0] == ValueId::C_ZERO => {
                 i.inputs.remove(0);
                 continue;
+            }
+            OptOp::Or if i.inputs[0] == ValueId::C_NEG_ONE => {
+                return result_const!(-1);
+            }
+            OptOp::And if i.inputs[0] == ValueId::C_NEG_ONE => {
+                i.inputs.remove(0);
+                continue;
+            }
+            OptOp::And if i.inputs[0] == ValueId::C_ZERO => {
+                return result_const!(0); 
             }
 
             OptOp::Mod | OptOp::ModEuclid | OptOp::Div | OptOp::CursedDiv if ranges[1] == (0..=0) =>
@@ -1123,12 +1148,12 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 if br.contains(&0) {
                     cfg.push_assert(Condition::NeqConst(i.inputs[1], 0), OperationError::DivisionByZero, None);
                 }
-                return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), None);
+                return result_const!(0);
             }
 
             OptOp::Mod | OptOp::ModEuclid if i.inputs[1] == ValueId::C_ONE || i.inputs[1] == ValueId::C_NEG_ONE => {
                 // a % 1 -> 0
-                return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), Some(0..=0));
+                return result_const!(0);
             }
 
             OptOp::ModEuclid if *ranges[0].start() >= 0 => {
@@ -1138,7 +1163,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
             OptOp::Div | OptOp::CursedDiv if i.inputs[1] == ValueId::C_ONE =>
                 // a / 1 -> a
-                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), Some(ranges[0].clone())),
+                return result_val!(i.inputs[0]),
             OptOp::Div | OptOp::CursedDiv if i.inputs[1] == ValueId::C_NEG_ONE => {
                 // a / -1 -> -a
                 i.op = OptOp::Sub;
@@ -1151,14 +1176,14 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 if br.contains(&0) {
                     cfg.push_assert(Condition::NeqConst(i.inputs[1], 0), OperationError::DivisionByZero, None);
                 }
-                return (i.clone().with_op(OptOp::Const(1), &[], OpEffect::None), None);
+                return result_const!(1);
             }
             OptOp::Mul if i.inputs.contains(&ValueId::C_ZERO) =>
                 // a * 0 -> 0
-                return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), Some(0..=0)),
+                return result_const!(0),
             &OptOp::Mul if i.inputs[0] == ValueId::C_ONE && i.inputs.len() == 2 =>
                 // 1 * a -> a
-                return (i.clone().with_op(OptOp::Add, &[ i.inputs[1] ], OpEffect::None), Some(ranges[1].clone())),
+                return result_val!(i.inputs[1]),
             &OptOp::Mul if i.inputs[0] == ValueId::C_NEG_ONE && i.inputs.len() == 2 => {
                 // -1 * a -> 0 - a
                 i.op = OptOp::Sub;
@@ -1172,7 +1197,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     break 'main;
                 }
                 if shift >= 64 {
-                    return (i.clone().with_op(OptOp::Const(0), &[], OpEffect::None), Some(0..=0));
+                    return result_const!(0);
                 }
                 let Some(mul) = 1i64.checked_shl(shift as u32) else {
                     break 'main;
@@ -1225,7 +1250,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 if let Some((offset, a_additional, b_additional)) = get_values_offset(cfg, a, b) {
                     if a_additional.is_empty() && b_additional.is_empty() && offset == 1 {
                         // gcd(a, a + 1) -> 1
-                        return (i.clone().with_op(OptOp::Const(1), &[], OpEffect::None), Some(1..=1));
+                        return result_const!(1);
                     }
                 }
             }
@@ -1271,22 +1296,22 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 let const2 = cfg.get_constant_(i.inputs[1]);
                 if const1 == const2 {
                     // median(c, c, a) -> c
-                    return (i.clone().with_op(OptOp::Const(const1), &[ ], OpEffect::None), Some(const1..=const1));
+                    return result_const!(const1);
                 } else if const1 > const2 {
                     //  median(c1, c2, a) -> clamp(a, c1, c2) = max(min(a, c1), c2)
                     let min = cfg.value_numbering(OptOp::Min, &[i.inputs[0], i.inputs[2]], None, None);
                     let max = cfg.value_numbering(OptOp::Max, &[min, i.inputs[1]], None, None);
-                    return (i.clone().with_op(OptOp::Add, &[ max ], OpEffect::None), None);
+                    return result_val!(max);
                 } else {
                     // median(c1, c2, a) -> clamp(a, c2, c1) = max(min(a, c2), c1)
                     let min = cfg.value_numbering(OptOp::Min, &[i.inputs[1], i.inputs[2]], None, None);
                     let max = cfg.value_numbering(OptOp::Max, &[min, i.inputs[0]], None, None);
-                    return (i.clone().with_op(OptOp::Add, &[ max ], OpEffect::None), None);
+                    return result_val!(max);
                 }
             }
 
             OptOp::Median if i.inputs.iter().cloned().collect::<BTreeSet<_>>().len() == 1 => {
-                return (i.clone().with_op(OptOp::Add, &[ i.inputs[0] ], OpEffect::None), None);
+                return result_val!(i.inputs[0]);
             }
 
             OptOp::Median if i.inputs.len() >= 3 => {
@@ -1395,10 +1420,17 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Mul if i.inputs[1].is_constant() => {
                 if merge_constants(cfg, &mut i, |a, b| a.checked_mul(b)) {
                     continue;
-                }   
+                }
+            }
+            OptOp::KsplangOpsIncrement(_) if i.inputs.len() > 1 && i.inputs[1].is_constant() => {
+                if merge_constants(cfg, &mut i, |a, b| a.checked_add(b)) {
+                    continue;
+                }
+            },
+            OptOp::KsplangOpsIncrement(_) if i.inputs[0] == ValueId::C_ZERO => {
+                i.inputs.remove(0);
             }
 
-            OptOp::KsplangOpsIncrement(Condition::False) => return (i.clone().with_op(OptOp::Const(0), &[ ], OpEffect::None), None),
             OptOp::KsplangOpsIncrement(Condition::True) if i.inputs.len() == 1 => {
                 if let Some(def) = cfg.val_info(i.inputs[0]).and_then(|v| v.assigned_at).and_then(|iid| cfg.get_instruction(iid)) {
                     if let OptOp::Select(condition) = &def.op && def.inputs[0] == ValueId::C_ZERO {
@@ -1412,6 +1444,31 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         continue;
                     }
                 }
+            }
+
+            OptOp::Tetration if i.inputs[1] == ValueId::C_ONE => {
+                return result_val!(i.inputs[0]);
+            }
+            OptOp::Tetration if i.inputs[0] == ValueId::C_ONE => {
+                return result_const!(1);
+            }
+            OptOp::Tetration if i.inputs[0] == ValueId::C_ZERO => { // 0 ^^ x -> x == 1 ? 0 : 1
+                cfg.push_assert(Condition::Leq(ValueId::C_ONE, i.inputs[0]),
+                                OperationError::NegativeIterations { iterations: 0 },
+                                Some(i.inputs[0]));
+                i.op = OptOp::Select(Condition::Eq(ValueId::C_ONE, i.inputs[1]));
+                i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+            }
+            OptOp::Tetration if *ranges[1].start() >= 0 && *ranges[1].end() <= 1 => {
+                // a ^^ x if x ∈ [0,1] -> x == 1 ? a : 1
+                i.op = OptOp::Select(Condition::Eq(ValueId::C_ONE, i.inputs[1]));
+                i.inputs = smallvec![i.inputs[0], ValueId::C_ONE]
+            }
+            OptOp::Tetration if *ranges[1].start() >= 5 => {
+                // with iters >= 5, it always fails for non-trivial inputs
+                cfg.push_assert(Condition::Geq(ValueId::C_ONE, i.inputs[0]), OperationError::IntegerOverflow, None);
+                cfg.push_assert(Condition::Leq(ValueId::C_ZERO, i.inputs[0]), OperationError::IntegerOverflow, None);
+                return result_const!(1);
             }
 
             _ => { }
@@ -1745,7 +1802,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 if r.get_named_single("div1") == r.get_named_single("div2") {
                     let a = r.get_named_single("v2").unwrap();
                     // let c = cfg.get_constant_(r.get_named_single("div1").unwrap());
-                    return (i.with_op(OptOp::Add, &[a], OpEffect::None), None)
+                    return result_val!(a);
                 }
             }
         }

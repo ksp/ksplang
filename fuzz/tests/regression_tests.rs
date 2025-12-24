@@ -343,3 +343,16 @@ fn fuzz_abssub_sub_invalid_optimization() {
    let ops = vec![ DigitSum, Increment, DigitSum, LenSum, DigitSum, DigitSum, Funkcia, Qeq, Increment, DigitSum, DigitSum, LenSum, DigitSum, Remainder, Increment, DigitSum, Universal, ];
    verify_repro(ops, vec![0, 0, 12345]);
 }
+
+#[test]
+fn fuzz_missing_tetration_optimization_assert() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Modulo, DigitSum, DigitSum, Swap, TetrationItersNum, ];
+   verify_repro(ops, vec![-1, 0, 126]);
+}
+
+#[test]
+fn fuzz_something_with_swaps() {
+   let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, DigitSum, LSwap, BranchIfZero, TetrationNumIters, Modulo, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Goto, ];
+   verify_repro(ops, vec![666, 777777, 3]);
+    // todo!();
+}
