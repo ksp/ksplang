@@ -1675,7 +1675,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     continue;
                 }
                 // |0 - (a - b)| => |a - b|
-                else if nested.op == OptOp::Sub {
+                else if nested.op == OptOp::Sub && x == ValueId::C_ZERO {
                     i.inputs = nested.inputs.clone();
                     continue;
                 }

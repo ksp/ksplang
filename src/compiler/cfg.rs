@@ -747,7 +747,11 @@ impl GraphBuilder {
         let cond2 = if replace_condition { Condition::True }
                     else                 { cond };
         if self.conf.should_log(20) {
-            println!("Adding assumption about {val} at {at}: {cond2} + range {range:?} (prev range was {range:?})")
+            if range != current_range {
+                println!("Adding assumption about {val} at {at}: {cond2} + range {range:?} (prev range was {current_range:?})")
+            } else {
+                println!("Adding assumption about {val} at {at}: {cond2}")
+            }
         }
         if cond2 == Condition::True && range == current_range {
             // nothing would be gained

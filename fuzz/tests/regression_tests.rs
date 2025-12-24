@@ -333,7 +333,13 @@ fn fuzz_qeq_invalid_div_operation() {
 }
 
 #[test]
-fn fuzz_repro() {
+fn fuzz_stackswap_optimization_unexpected_deopt() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Swap, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, Swap, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Swap, ];
    verify_repro(ops, vec![0, 0, 0]);
+}
+
+#[test]
+fn fuzz_abssub_sub_invalid_optimization() {
+   let ops = vec![ DigitSum, Increment, DigitSum, LenSum, DigitSum, DigitSum, Funkcia, Qeq, Increment, DigitSum, DigitSum, LenSum, DigitSum, Remainder, Increment, DigitSum, Universal, ];
+   verify_repro(ops, vec![0, 0, 12345]);
 }
