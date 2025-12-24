@@ -1,6 +1,6 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet}, i32, ops::{Range, RangeInclusive}, u32
+    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet, hash_map::Entry}, i32, ops::{Range, RangeInclusive}, u32
 };
 use rustc_hash::{FxHashMap as HashMap};
 
@@ -390,8 +390,11 @@ impl GraphBuilder {
             }
 
             let mut resolved: Vec<Option<ValueId>> = vec![None; arg_count];
+            let mut phi_dedup = HashMap::default();
+            let mut phis_duplicated = HashMap::default();
             for i in 0..arg_count {
-                let vals: BTreeSet<ValueId> = jumps.iter().flat_map(|j| self.get_phi_sources(j.inputs[i])).collect();
+                let val_array: SmallVec<[ValueId; 8]> = jumps.iter().flat_map(|j| self.get_phi_sources(j.inputs[i])).collect();
+                let vals: BTreeSet<ValueId> = val_array.iter().copied().collect();
                 assert!(!vals.is_empty());
                 if vals.len() == 1 {
                     resolved[i] = Some(*vals.iter().next().unwrap());
@@ -400,10 +403,16 @@ impl GraphBuilder {
                         .reduce(|a, b| union_range(a, b))
                         .unwrap();
                     tighten_ranges.insert(i, range);
+
+                    match phi_dedup.entry(val_array) {
+                        Entry::Vacant(vacant_entry) => { vacant_entry.insert(i); }
+                        Entry::Occupied(occupied_entry) => { phis_duplicated.insert(i, *occupied_entry.get()); }
+                    }
                 }
             }
+            println!("DBG {phi_dedup:?} {phis_duplicated:?}");
 
-            let keep_ix: Vec<usize> = (0..arg_count).filter(|i| resolved[*i].is_none()).collect();
+            let keep_ix: Vec<usize> = (0..arg_count).filter(|i| resolved[*i].is_none() && !phis_duplicated.contains_key(i)).collect();
 
             if params.is_empty() {
                 // lazy-init: create parameters for non-trivial phis; drop trivial ones entirely
@@ -418,6 +427,10 @@ impl GraphBuilder {
                     new_params.push(vi.id);
                     new_stack[i] = vi.id;
                 }
+                for (&redundant, &duplicated) in phis_duplicated.iter() {
+                    assert_ne!(0, new_stack[duplicated].0);
+                    new_stack[redundant] = new_stack[duplicated];
+                }
                 assert!(!new_stack.contains(&ValueId(0)));
                 self.block_mut(block_id).unwrap().parameters = new_params;
                 for val in new_stack {
@@ -426,9 +439,11 @@ impl GraphBuilder {
             } else {
                 for i in 0..arg_count {
                     if let Some(val) = resolved[i] {
-                        if let Some(&param) = params.get(i) {
-                            if param != val { replacements.insert(param, val); }
-                        }
+                        let param = params[i];
+                        if param != val { replacements.insert(param, val); }
+                    }
+                    else if let Some(duplicated) = phis_duplicated.get(&i) {
+                        replacements.insert(params[i], params[*duplicated]);
                     }
                 }
 
