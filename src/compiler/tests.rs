@@ -191,14 +191,14 @@ const VZORAKOVA_DUP: &str = "CS CS lensum ++ CS lensum m CS CS lensum CS funkcia
 const ERIKOVA_DUP: &str = "CS CS lensum CS funkcia cs ++ ++ ++ m cs cs ++ gcd ++ max cs cs rem qeq cs cs cs ++ ++ qeq pop2 cs cs ++ gcd cs cs cs cs bitshift bitshift cs bitshift cs cs pop2 u bitshift cs cs gcd cs ++ lroll cs u cs cs ++ gcd ++ ++ m pop2 pop2";
 const SEJSELOVA_DUP: &str =  "CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd ++ max CS CS % qeq CS CS CS ++ ++ qeq pop2 CS j ++ CS praise qeq qeq pop2 funkcia funkcia ++ % bitshift CS CS gcd CS ++ lroll CS u CS CS pop2 CS lensum m pop2 pop2";
 const SEJSELOVA2_DUP: &str = "CS CS lensum CS funkcia CS ++ ++ ++ m CS CS ++ gcd ++ max CS CS % qeq CS CS CS ++ ++ qeq pop2 CS CS ^^ CS praise qeq qeq pop2 funkcia funkcia ++ % bitshift CS CS gcd CS ++ lroll CS u CS CS pop2 CS lensum m pop2 pop2";
-// #[test]
-// fn test_dup1a() {
-//     test_dup(VZORAKOVA_DUP, FULL_RANGE);
-// }
-// #[test]
-// fn test_dup1_trochu_jina() {
-//     test_dup("CS CS lensum CS funkcia ++ ++ m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum CS funkcia ++ ++ m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia ++ ++ CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u", FULL_RANGE);
-// }
+#[test]
+fn test_dup1a() {
+    test_dup(VZORAKOVA_DUP, FULL_RANGE);
+}
+#[test]
+fn test_dup1_trochu_jina() {
+    test_dup("CS CS lensum CS funkcia ++ ++ m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift CS CS lensum CS funkcia ++ ++ m CS CS lensum CS funkcia CS ++ CS qeq u CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia ++ ++ CS ++ ++ lroll m CS CS lensum CS funkcia ++ CS CS funkcia qeq CS CS lensum CS funkcia ++ bitshift pop2 CS CS lensum CS funkcia u ++ ++ ++ CS CS CS CS lensum CS funkcia CS ++ CS qeq u CS ++ CS lensum CS ++ ++ lroll CS funkcia u CS CS lensum CS funkcia ++ CS ++ ++ lroll CS CS lensum CS funkcia CS ++ CS qeq u CS CS funkcia u", FULL_RANGE);
+}
 
 #[test]
 fn test_dup2_s1() {

@@ -1922,7 +1922,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
         // used in duplication:
         // (a / 2 * 2) + (a % 2) which is equivalent to a
-        // TODO: do the transform whenever (a / 2 * 2) is used in additive context?
         if OptOp::Add == i.op && !i.inputs[0].is_constant() && i.inputs.len() == 2 && i.inputs[0] != i.inputs[1] {
             static MUL_PATTERN: LazyLock<OptOptPattern> = LazyLock::new(||
                 P::op2(OptOp::Mul,
@@ -1933,23 +1932,26 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     )
                 )
             );
-            if let Ok(r) = MUL_PATTERN.try_match(cfg, &i.inputs) {
-                if r.get_named_single("div1") == r.get_named_single("div2") {
-                    let a = r.get_named_single("v2").unwrap();
-                    // let c = cfg.get_constant_(r.get_named_single("div1").unwrap());
-                    return result_val!(a);
-                }
+            if let Ok(r) = MUL_PATTERN.try_match(cfg, &i.inputs) &&
+               r.get_named_single("div1") == r.get_named_single("div2") &&
+               let Some(mod1) = cfg.get_defined_at(i.inputs[if i.inputs[0] == r.main_value() { 1 } else { 0 }]) &&
+               mod1.op == OptOp::Mod &&
+               mod1.inputs[0] == r.get_named_single("v2").unwrap() &&
+               mod1.inputs[1] == r.get_named_single("div1").unwrap()
+            {
+                let a = r.get_named_single("v2").unwrap();
+                return result_val!(a);
             }
         }
 
         // used in duplication:
-        // a - 2*median(2, a)
-        //   => (a + 2) % 2 - 2
         if OptOp::Add == i.op && i.inputs.len() == 2 && i.inputs[0].is_computed() && i.inputs[1].is_computed() {
-            static PATTERN: LazyLock<OptOptPattern> = LazyLock::new(||
+            // a - 2*median(2, a)
+            //   => ??
+            static PATTERN_MOD_DEV: LazyLock<OptOptPattern> = LazyLock::new(||
                 P::op2(OptOp::Mul, -2, P::op2(OptOp::Median, 2, P::any().named("a")))
             );
-            if let Ok(r) = PATTERN.try_match(cfg, &i.inputs) &&
+            if let Ok(r) = PATTERN_MOD_DEV.try_match(cfg, &i.inputs) &&
                 let Some(a) = r.get_named_single("a") &&
                 i.inputs.contains(&a)
             {
@@ -1957,11 +1959,69 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 // let mod1 = cfg.value_numbering(OptOp::Mod, &[add1, ValueId::C_TWO], None, None);
                 // i.op = OptOp::Add;
                 // i.inputs = smallvec![ValueId::C_NEG_TWO, mod1]
-                let select1 = cfg.value_numbering(OptOp::Select(Condition::Leq(ValueId::C_NEG_TWO, a)), &[ ValueId::C_NEG_ONE, ValueId::C_NEG_THREE ], None, None);
-                i.op = OptOp::Select(Condition::Divides(a, ValueId::C_TWO));
-                i.inputs = smallvec![ValueId::C_NEG_TWO, select1];
-                continue;
+                // let select1 = cfg.value_numbering(OptOp::Select(Condition::Leq(ValueId::C_NEG_TWO, a)), &[ ValueId::C_NEG_ONE, ValueId::C_NEG_THREE ], None, None);
+                // i.op = OptOp::Select(Condition::Divides(a, ValueId::C_TWO));
+                // i.inputs = smallvec![ValueId::C_NEG_TWO, select1];
+                // continue;
+                out_range = Some(-3..=-1);
+                i.effect = OpEffect::None;
             }
+
+            // main duplication logic:
+            // m = median(2, a)
+            // (2 * (m-1)) + (2 + a - 2 * m)
+            static PATTERN2: LazyLock<OptOptPattern> = LazyLock::new(||
+                P::op2(OptOp::Add,
+                    P::op2(OptOp::Mul, 2, P::op2(OptOp::Add, -1, P::op2(OptOp::Median, 2, P::any().named("a1")))),
+                    P::op3(OptOp::Add,
+                        2,
+                        P::any().named("a2"),
+                        P::op2(OptOp::Mul, -2, P::op2(OptOp::Median, 2, P::any().named("a3")))
+                    )
+                )
+            );
+            if let Ok(r) = PATTERN2.try_match_instr(cfg, &i) &&
+               r.get_named_single("a1") == r.get_named_single("a2") &&
+               r.get_named_single("a2") == r.get_named_single("a3")
+            {
+                let a = r.get_named_single("a1").unwrap();
+                return result_val!(a);
+            }
+        }
+
+        match &i.op {
+            OptOp::KsplangOpsIncrement(cond) | OptOp::Select(cond) | OptOp::Jump(cond, _) => {
+                // simplify Select if we have some built-in condition which could imply a specific branch
+                let mut changed = false;
+                for (_ix, input) in i.inputs.iter_mut().enumerate() {
+                    if let Some(val_info) = cfg.val_info(*input) &&
+                       let Some(defined_at) = val_info.assigned_at &&
+                       let Some(def) = cfg.get_instruction(defined_at)
+                    {
+                        if let OptOp::Select(select_cond) = &def.op {
+                            let select_cond = select_cond.clone();
+                            let select_inputs = def.inputs.clone();
+                            let cond2 = simplify_cond(cfg, select_cond.clone(), i.id);
+                            match cond_implies(cfg, cond, &cond2, i.id) {
+                                Some(Condition::True) => {
+                                    println!("Managed to simplify {input} ref under condition {cond} to {}, as it implies {select_cond} to be true\n in {} {:?}", select_inputs[0], i.id, i.op);
+                                    *input = select_inputs[0];
+                                    changed = true;
+                                }
+                                Some(Condition::False) => {
+                                    println!("Managed to simplify {input} ref under condition {cond} to {}, as it implies {select_cond} to be false\n in {} {:?}", select_inputs[1], i.id, i.op);
+                                    *input = select_inputs[1];
+                                    changed = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+
+                if changed { continue }
+            },
+            _ => {}
         }
 
         break;
