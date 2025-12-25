@@ -384,6 +384,12 @@ fn fuzz_swap_invalid_removal2() {
    verify_repro(ops, vec![6148914691236517502, 2377910638922800284, 0]);
 }
 #[test]
+fn fuzz_somehow_magically_value_had_empty_range() {
+   let ops = vec![ DigitSum, DigitSum, TetrationNumIters, DigitSum, LSwap, Modulo, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, DigitSum, LSwap, BranchIfZero, TetrationNumIters, And, And, And, And, And, ];
+   verify_repro(ops, vec![0, 0, 0]);
+}
+
+#[test]
 fn fuzz_broken_div_mul_add_mod_pattern() {
    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, Median, DigitSum, Increment, Increment, DigitSum, DigitSum, LenSum, Universal ];
    verify_repro(ops, vec![0, 0, 0]);

@@ -903,6 +903,10 @@ impl GraphBuilder {
                     let c = simplify_cond(self, Condition::Leq(ValueId::C_ZERO, instr.inputs[0]), instr.id);
                     self.add_assumption_simple(instr.id, c)
                 }
+                OptOp::Div | OptOp::CursedDiv | OptOp::Mod | OptOp::ModEuclid if !instr.inputs[1].is_constant() => {
+                    let c = simplify_cond(self, Condition::Neq(ValueId::C_ZERO, instr.inputs[1]), instr.id);
+                    self.add_assumption_simple(instr.id, c)
+                }
                 _ => {}
             }
         }

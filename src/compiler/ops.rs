@@ -470,6 +470,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
 
     pub fn evaluate_range_quick(&self, inputs: &[RangeInclusive<i64>]) -> Option<RangeInclusive<i64>> {
         debug_assert!(self.arity().contains(&inputs.len()), "Invalid number of inputs for {:?}: {}", self, inputs.len());
+        assert!(inputs.iter().all(|r| !r.is_empty()), "Empty inputs evaluate_range_quick({self:?}, {inputs:?})");
 
         match self {
             OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint | OptOp::Jump(_, _) | OptOp::Assert(_, _) | OptOp::DeoptAssert(_) | OptOp::StackSwap | OptOp::StackRead | OptOp::Universal | OptOp::KsplangOpsIncrement(_) => None,

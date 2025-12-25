@@ -921,7 +921,7 @@ fn merge_constants(cfg: &mut GraphBuilder, i: &mut OptInstr, merge: impl FnMut(i
 
 /// Returns (changed, new instruction)
 pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Option<RangeInclusive<i64>>) {
-    if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::StackRead | OptOp::Const(_)) {
+    if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::StackRead | OptOp::Const(_) | OptOp::Checkpoint) {
         return (i, None);
     }
 
@@ -1074,6 +1074,13 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             let mut changed = false;
             for input in &mut i.inputs {
                 let (val_norm, range) = cfg.analyze_val_at(*input, i.id);
+                if range.is_empty() {
+                    if cfg.conf.should_log(5) {
+                        println!("Well, we found out that {input} has empty range -> i.e. this branch is just unreachable");
+                    }
+                    cfg.push_assert(Condition::False, OperationError::Unreachable, None);
+                    return (i.with_op(OptOp::Nop, &[], OpEffect::None), None);
+                }
                 ranges.push(range);
                 if val_norm != *input {
                     *input = val_norm;

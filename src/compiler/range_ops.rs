@@ -277,6 +277,7 @@ fn split_range_unsigned_bitwise(a: impl Borrow<IRange>) -> ArrayVec<URange, 2> {
 fn splice_unsigned_bitwise(a: &IRange, b: &IRange,
                                mut f: impl FnMut(URange, URange) -> URange) -> IRange
 {
+    assert!(!a.is_empty() && !b.is_empty(), "splice_unsigned_bitwise({a:?}, {b:?})");
     let mut out = None;
 
     for sa in split_range_unsigned_bitwise(a) {
@@ -285,6 +286,7 @@ fn splice_unsigned_bitwise(a: &IRange, b: &IRange,
             let from = from as i64;
             let to = to as i64;
             assert_eq!(from < 0, to < 0, "{a:?} {b:?} {sa:?} {sb:?} {from} {to}");
+            assert!(from <= to, "splice_unsigned_bitwise: Empty result from f: {a:?} {b:?} {sa:?} {sb:?} {from} {to}");
 
             out = match out {
                 None => Some(from..=to),
@@ -322,7 +324,6 @@ pub fn range_xor(a: impl Borrow<IRange>, b: impl Borrow<IRange>) -> IRange {
         let (balways, bvar) = get_bitsets(&b);
         let avar = avar & !aalways;
         let bvar = bvar & !balways;
-        println!("range_xor({a:?}, {b:?})  | {aalways} {avar}  | {balways} {bvar}");
         let min = (aalways ^ balways) & !avar & !bvar;
         let max = (aalways ^ balways) | avar | bvar;
         min..=max
