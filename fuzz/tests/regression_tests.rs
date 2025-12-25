@@ -356,6 +356,12 @@ fn fuzz_something_with_swaps() {
    verify_repro(ops, vec![666, 777777, 3]);
     // todo!();
 #[test]
+fn fuzz_tetration_missing_iteration_check() {
+   let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Increment, DigitSum, Remainder, Increment, BulkXor, Jump, Increment, TetrationNumIters, ];
+   verify_repro(ops, vec![-70368758522500311, -56034555, 0]);
+}
+
+#[test]
 fn fuzz_swap_interfering_deopt1() {
    let ops = vec![ DigitSum, DigitSum, Swap, LSwap, DigitSum, Increment, DigitSum, DigitSum, DigitSum, LenSum, Goto, ];
    verify_repro(ops, vec![1, 0, 0]);

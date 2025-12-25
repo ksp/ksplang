@@ -1,10 +1,10 @@
-use std::{cmp, collections::BTreeSet, ops::RangeInclusive, sync::LazyLock};
+use std::{cmp, collections::BTreeSet, mem, ops::RangeInclusive, sync::LazyLock};
 
 use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::Condition, pattern::OptOptPattern, range_ops::{IRange, mod_split_ranges, range_signum}, utils::{abs_range, intersect_range, range_is_signless, union_range}}, vm::{self, OperationError}};
+use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::Condition, pattern::OptOptPattern, range_ops::{IRange, mod_split_ranges, range_signum}, utils::{FULL_RANGE, abs_range, intersect_range, range_is_signless, union_range}}, vm::{self, OperationError}};
 
 use super::pattern::{OptOptPattern as P};
 
@@ -1467,12 +1467,15 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 return result_val!(i.inputs[0]);
             }
             OptOp::Tetration if i.inputs[0] == ValueId::C_ONE => {
+                cfg.push_assert(Condition::Leq(ValueId::C_ZERO, i.inputs[1]),
+                                OperationError::NegativeIterations { iterations: 0 },
+                                Some(i.inputs[1]));
                 return result_const!(1);
             }
             OptOp::Tetration if i.inputs[0] == ValueId::C_ZERO => { // 0 ^^ x -> x == 1 ? 0 : 1
-                cfg.push_assert(Condition::Leq(ValueId::C_ONE, i.inputs[0]),
+                cfg.push_assert(Condition::Leq(ValueId::C_ZERO, i.inputs[1]),
                                 OperationError::NegativeIterations { iterations: 0 },
-                                Some(i.inputs[0]));
+                                Some(i.inputs[1]));
                 i.op = OptOp::Select(Condition::Eq(ValueId::C_ONE, i.inputs[1]));
                 i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
             }
