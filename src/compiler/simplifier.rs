@@ -1996,16 +1996,17 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::KsplangOpsIncrement(cond) | OptOp::Select(cond) | OptOp::Jump(cond, _) => {
                 // simplify Select if we have some built-in condition which could imply a specific branch
                 let mut changed = false;
-                for (_ix, input) in i.inputs.iter_mut().enumerate() {
+                for (ix, input) in i.inputs.iter_mut().enumerate() {
                     if let Some(val_info) = cfg.val_info(*input) &&
                        let Some(defined_at) = val_info.assigned_at &&
                        let Some(def) = cfg.get_instruction(defined_at)
                     {
                         if let OptOp::Select(select_cond) = &def.op {
+                            let cond = cond.clone().neg_if(ix == 1 && matches!(i.op, OptOp::Select(_)));
                             let select_cond = select_cond.clone();
                             let select_inputs = def.inputs.clone();
                             let cond2 = simplify_cond(cfg, select_cond.clone(), i.id);
-                            match cond_implies(cfg, cond, &cond2, i.id) {
+                            match cond_implies(cfg, &cond, &cond2, i.id) {
                                 Some(Condition::True) => {
                                     println!("Managed to simplify {input} ref under condition {cond} to {}, as it implies {select_cond} to be true\n in {} {:?}", select_inputs[0], i.id, i.op);
                                     *input = select_inputs[0];
