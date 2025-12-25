@@ -4,7 +4,7 @@ use rustc_hash::{FxHashMap as HashMap};
 use num_integer::Integer;
 use smallvec::{SmallVec, smallvec};
 
-use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
+use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
 
 pub trait TraceProvider {
     // type TracePointer
@@ -36,7 +36,7 @@ pub struct PendingBranchInfo {
     pub target: usize,
     pub reversed_direction: bool,
     pub b: Vec<PrecompileStepResultBranch>,
-    pub assumes: Vec<Condition<ValueId>>,
+    pub assumes: Vec<Vec<Condition<ValueId>>>,
     pub from: Vec<InstrId>,
     pub to_bb: BlockId,
     pub stack_snapshot: Vec<StackState>,
@@ -288,6 +288,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
 
     pub fn push_swap(&mut self, ix: ValueId, val: ValueId) -> ValueId {
         assert!(!self.g.current_block_ref().is_terminated);
+        let (val, _) = self.g.analyze_val_at(val, self.g.next_instr_id());
+        let (ix, _) = self.g.analyze_val_at(ix, self.g.next_instr_id());
         let next_iid = self.g.next_instr_id();
         // try find previous anti-swap
         let mut interfering_swaps = vec![];
@@ -412,8 +414,6 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 return orig_val;
             }
         }
-
-
 
         // else
         {
@@ -1128,7 +1128,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             },
             crate::ops::Op::BranchIfZero => {
                 let (val, target) = self.g.peek_stack_2();
-                return self.branching(target, false, false, Condition::EqConst(val, 0));
+                return self.branching(target, false, false, Condition::Eq(ValueId::C_ZERO, val));
             }
             crate::ops::Op::Call => {
                 let t = self.g.peek_stack();
@@ -1251,7 +1251,6 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     self.tracer.get_results(self.position)
                         .map(|r| format!("{}:{:?}; ", r.0, r.1))
                         .collect();
-                println!("  Stack: {}", self.g.fmt_stack());
                 print!("  Current Block: ");
                 // TODO: wtf
                 struct DisplayBlockWithRanges<'a>(&'a crate::compiler::cfg::BasicBlock, &'a GraphBuilder);
@@ -1261,6 +1260,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     }
                 }
                 println!("{}", DisplayBlockWithRanges(self.g.current_block_ref(), &self.g));
+                println!("  Stack: {}", self.g.fmt_stack());
                 println!("Interpreting op {}: {:?}", self.position, self.ops[self.position]);
                 if trace_results_fmt.len() > 0 {
                     println!("Trace results: {}", trace_results_fmt);
@@ -1374,13 +1374,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                                 pb.b.push(branch.clone());
                                 pb.stack_snapshot.push(stack_snapshot);
                                 // TODO: proper intersection of assumptions (i.e. a > 2 | a > 5  => a > 2)
-                                pb.assumes.retain(|cond| assumes.contains(cond));
+                                pb.assumes.push(assumes);
                             }
                         } else {
                             self.pending_branches.push_back(PendingBranchInfo {
                                 target: branch.target,
                                 reversed_direction: self.reversed_direction,
-                                assumes,
+                                assumes: vec![assumes],
                                 b: vec![branch],
                                 from: vec![branch_id],
                                 to_bb: target_block_id,
@@ -1486,11 +1486,29 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             // stack will be created by seal_block from auto-created parameters
             self.g.switch_to_block(bid, pb.stack_snapshot[0].depth, vec![]);
             assert_eq!(self.g.stack.stack, []);
+            assert_eq!(pb.assumes.len(), pb.stack_snapshot.len());
             self.g.seal_block(bid);
-            for assume in pb.assumes {
-                let assume = self.g.fix_replaced_values_cond(&assume);
+
+            let common_assumes: BTreeSet<_> =
+                 pb.assumes.iter().enumerate()
+                    .map(|(edge_ix, a)| a.iter().map(|x| {
+                        let assume = self.g.fix_replaced_values_cond(x);
+                        // replace arguments with PHI values
+                        let assume = assume.replace_regs(|r|
+                            if let Some(param_ix) = self.g.get_instruction_(pb.from[edge_ix]).inputs.iter().position(|i| i == r){
+                                self.g.block_(bid).parameters[param_ix]
+                            } else {
+                                 *r
+                            }
+                        );
+                        simplify_cond(&mut self.g, assume, InstrId(bid, 1))
+                    }).collect())
+                    .reduce(|mut a: BTreeSet<_>, b: BTreeSet<_>| { a.retain(|x| b.contains(x)); a }).unwrap();
+
+            for assume in common_assumes {
                 self.g.add_assumption_simple(InstrId(bid, 0), assume);
             }
+
             if self.g.block_(bid).incoming_jumps.len() > 1 {
                 self.g.push_checkpoint();
             }

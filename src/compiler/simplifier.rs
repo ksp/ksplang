@@ -159,8 +159,11 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
         Condition::Geq(a, b) if a > b => Condition::Leq(b, a),
         Condition::Eq(a, b) | Condition::Neq(a, b) | Condition::Lt(a, b) | Condition::Gt(a, b) | Condition::Leq(a, b) | Condition::Geq(a, b) => {
             assert!(a.is_constant() || !b.is_constant()); // we depend on the ordering
-            let ar = cfg.val_range_at(a, at);
-            let br = cfg.val_range_at(b, at);
+            let (a_normalized, ar) = cfg.analyze_val_at(a, at);
+            let (b_normalized, br) = cfg.analyze_val_at(b, at);
+            if a_normalized != a || b_normalized != b {
+                return condition.replace_arr([a_normalized, b_normalized])
+            }
 
             if ar.start() == ar.end() && !a.is_constant() { // normalize constant
                 return condition.replace_arr([cfg.store_constant(*ar.start()), b])
@@ -522,7 +525,8 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
         }
 
         Condition::Divides(a, b) => {
-            let (ar, br) = (cfg.val_range_at(a, at), cfg.val_range_at(b, at));
+            let (a, ar) = cfg.analyze_val_at(a, at);
+            let (b, br) = cfg.analyze_val_at(b, at);
             let ara = abs_range(&ar);
             let bra = abs_range(&br);
             if *ara.end() < *bra.start() {
@@ -1041,7 +1045,22 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             _ => { }
         };
 
-        let ranges = i.inputs.iter().map(|a| cfg.val_range_at(*a, i.id)).collect::<SmallVec<[_; 4]>>();
+        let ranges = {
+            let mut ranges = Vec::with_capacity(i.inputs.len());
+            let mut changed = false;
+            for input in &mut i.inputs {
+                let (val_norm, range) = cfg.analyze_val_at(*input, i.id);
+                ranges.push(range);
+                if val_norm != *input {
+                    *input = val_norm;
+                    changed = true; // may re-order or something
+                }
+            }
+
+            if changed { continue 'main }
+            ranges
+        };
+
 
         // if i.effect != OpEffect::None {
         //     match &i.op {

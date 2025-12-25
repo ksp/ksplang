@@ -399,7 +399,7 @@ impl GraphBuilder {
                 if vals.len() == 1 {
                     resolved[i] = Some(*vals.iter().next().unwrap());
                 } else {
-                    let range = vals.iter().map(|v| self.val_range(*v))
+                    let range = vals.iter().map(|v| self.val_range_at(*v, InstrId(id, 1)))
                         .reduce(|a, b| union_range(a, b))
                         .unwrap();
                     tighten_ranges.insert(i, range);
@@ -585,7 +585,7 @@ impl GraphBuilder {
                 }
                 // TODO: merge phis to sealed blocks
             }
-            self.val_info_mut(new).unwrap().used_at.extend(info.used_at);
+            self.val_info_mut(new).map(|v_info| v_info.used_at.extend(info.used_at));
             self.replaced_values.insert(old, new);
             self.stack.check_invariants();
         }
@@ -627,10 +627,7 @@ impl GraphBuilder {
     }
 
     pub fn store_constant(&mut self, value: i64) -> ValueId {
-        if let Some(predefined) = ValueId::from_predefined_const(value) {
-            return predefined
-        }
-        if let Some(&id) = self.constant_lookup.get(&value) {
+        if let Some(id) = self.try_store_constant_immut(value) {
             return id;
         }
         let id = ValueId::new_const(ValueId::PREDEF_RANGE + self.constants.len() as i32 + 1);
@@ -1295,11 +1292,16 @@ impl GraphBuilder {
     }
 
     pub fn val_range_at(&self, v: ValueId, at: InstrId) -> RangeInclusive<i64> {
+        self.analyze_val_at(v, at).1
+    }
+
+    pub fn analyze_val_at(&self, v: ValueId, at: InstrId) -> (ValueId, RangeInclusive<i64>) {
+        // println!("DBG: analyze_val_at {v} {at}");
         if v.is_constant() {
             let c = self.get_constant_(v);
-            return c..=c;
+            return (v, c..=c);
         }
-        let Some(info) = self.values.get(&v) else { return FULL_RANGE };
+        let Some(info) = self.values.get(&v) else { return (v, FULL_RANGE) };
         if at != InstrId::default() {
             let from_range =
                 if let Some(derived_from) = info.directly_derived_from &&
@@ -1310,13 +1312,30 @@ impl GraphBuilder {
                 assigned_at.op.evaluate_range_quick(&in_ranges).unwrap_or(FULL_RANGE)
             }
             else { FULL_RANGE };
-            // println!("DBG val_range_at({v}, {at}) assumptions: {:?}", info.iter_assumptions(at, &self.block_(at.block_id()).predecessors).collect::<Vec<_>>());
-            for (_condition, range_from, range_to, _from) in info.iter_assumptions(at, &self.block_(at.block_id()).predecessors) {
-                return intersect_range(*range_from..=*range_to, from_range)
+            let range = intersect_range(&info.range, &from_range);
+            if range.start() == range.end() && let Some(c) = self.try_store_constant_immut(*range.start()) {
+                return (c, range)
             }
-            return intersect_range(&info.range, from_range)
+            // println!("DBG val_range_at({v}, {at}) assumptions: {:?}", info.iter_assumptions(at, &self.block_(at.block_id()).predecessors).collect::<Vec<_>>());
+            for (condition, range_from, range_to, _from) in info.iter_assumptions(at, &self.block_(at.block_id()).predecessors) {
+                let range = intersect_range(*range_from..=*range_to, &range);
+                if let &Condition::Eq(eq_a, eq_b) = condition {
+                    assert!(eq_a == v || eq_b == v);
+                    let v_canonical = cmp::min(eq_a, eq_b);
+                    if v_canonical != v {
+                        return self.analyze_val_at(v_canonical, at)
+                    }
+                }
+                if range.start() == range.end() && let Some(c) = self.try_store_constant_immut(*range.start()) {
+                    return (c, range)
+                }
+                return (v, range)
+            }
+            return (v, range)
         }
-        return info.range.clone()
+        return (v, info.range.clone())
+    }
+
     pub fn iter_val_assumptions(&self, v: ValueId, at: InstrId) -> impl Iterator<Item = (Condition<ValueId>, i64, i64, InstrId)> + '_ {
         const EMPTY_VAL_INFO: ValueInfo = ValueInfo::new(ValueId::NEW_PLACEHOLDER);
         const EMPTY_VAL_INFO_REF: &'static ValueInfo = &EMPTY_VAL_INFO;
