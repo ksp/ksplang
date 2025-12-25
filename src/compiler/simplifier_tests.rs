@@ -485,3 +485,43 @@ fn test_gcd1_is_1() {
     assert_eq!(ValueId::C_ONE, res);
 }
 
+
+#[test]
+fn test_cursed_div_to_normal_div() {
+    for divisor in [ValueId::C_TWO, ValueId::C_NEG_TWO, ValueId::C_FIVE, ValueId(1)] {
+        let (mut g, [_a, b]) = create_graph([1..=10000, FULL_RANGE]);
+
+        let rem = g.value_numbering(OptOp::Mod, &[b, divisor], None, None);
+        let sub = g.value_numbering(OptOp::Sub, &[b, rem], None, None);
+        let div = g.value_numbering(OptOp::CursedDiv, &[sub, divisor], None, None);
+        g.stack.push(div);
+        g.clean_poped_values();
+
+        println!("Tested {b} / {divisor}:\n{g}");
+        let pattern = OptOptPattern::op2(OptOp::Div, b, divisor);
+        assert!(pattern.try_match(&g, &[div]).is_ok());
+        assert_eq!(1, g.current_block_ref().instructions.len());
+    }
+}
+
+#[test]
+fn test_add_sub_simplifications() {
+    let (mut g, [a, b, c]) = create_graph([-1000..=1000, -2000..=2000, 4000..=120000]);
+
+    let a_sub_b = g.value_numbering(OptOp::Sub, &[a, b], None, None);
+    let add_a_b = g.value_numbering(OptOp::Add, &[a, b], None, None);
+    let add_a_b_c = g.value_numbering(OptOp::Add, &[add_a_b, c], None, None);
+    let add_a_c = g.value_numbering(OptOp::Sub, &[add_a_b_c, b], None, None);
+    let sub_five_a = g.value_numbering(OptOp::Sub, &[ValueId::C_FIVE, a], None, None);
+    let add_a_b_neg_five = g.value_numbering(OptOp::Sub, &[b, sub_five_a], None, None);
+    let sub_sub_b = g.value_numbering(OptOp::Sub, &[a, a_sub_b], None, None);
+    let b_sub_ab = g.value_numbering(OptOp::Sub, &[b, add_a_b], None, None);
+
+    println!("results: a+c = {add_a_c}, 5-a {sub_five_a}, a+b-5 = {add_a_b_neg_five}, -b = {b_sub_ab}\n{g}");
+
+    assert!(OptOptPattern::op2(OptOp::Add, a, c).try_match(&g, &[add_a_c]).is_ok());
+    assert!(OptOptPattern::op3(OptOp::Add, a, b, -5).try_match(&g, &[add_a_b_neg_five]).is_ok());
+    assert_eq!(sub_sub_b, b);
+    assert!(OptOptPattern::op2(OptOp::Sub, 0, a).try_match(&g, &[b_sub_ab]).is_ok());
+}
+

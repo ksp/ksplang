@@ -608,6 +608,30 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         return Condition::Eq(b, if (*br.start() >= 0) == (ac >= 0) { a } else { cfg.store_constant(-ac) });
                     }
                 }
+
+            }
+            // let b_def = cfg.get_defined_at(b);
+            if let Some(a_def) = cfg.get_defined_at(a) {
+                if matches!(a_def.op, OptOp::Sub | OptOp::AbsSub) &&
+                    let Some(a_b_def) = cfg.get_defined_at(a_def.inputs[1]) &&
+                    matches!(a_b_def.op, OptOp::Mod | OptOp::ModEuclid) &&
+                    a_b_def.inputs[1] == b && a_b_def.inputs[0] == a_def.inputs[0]
+                {
+                    // a - (a % divisor)
+                    return Condition::True;
+                }
+                if matches!(a_def.op, OptOp::Mul) && a_def.inputs.contains(&b) {
+                    return Condition::True;
+                }
+                if matches!(a_def.op, OptOp::Mul) &&
+                    let Some(b_const) = cfg.get_constant(b) &&
+                    a_def.inputs.iter().filter_map(|v| cfg.get_constant(*v)).any(|mul_c| mul_c % b_const == 0)
+                {
+                    return Condition::True;
+                }
+                if matches!(a_def.op, OptOp::LenSum) && b == ValueId::C_TWO && a_def.inputs[0] == a_def.inputs[1] {
+                    return Condition::True;
+                }
             }
 
             Condition::Divides(a, b)
@@ -1700,6 +1724,32 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         //         }
         //     }
         // }
+        if matches!(i.op, OptOp::CursedDiv | OptOp::Div) &&
+           let Some(divided) = cfg.get_defined_at(i.inputs[0])
+        {
+            if divided.op == OptOp::Sub &&
+               let Some(divided_sub_mod) = cfg.get_defined_at(divided.inputs[1]) &&
+               divided_sub_mod.op == OptOp::Mod &&
+               divided_sub_mod.inputs[0] == divided.inputs[0] &&
+               divided_sub_mod.inputs[1] == i.inputs[1]
+            {
+                // (a - (a % d)) / d   -> a / d
+                i.op = OptOp::Div; // always divisible
+                i.inputs[0] = divided.inputs[0];
+                continue;
+            }
+        }
+        if OptOp::CursedDiv == i.op {
+            let cond = simplify_cond(cfg, Condition::Divides(i.inputs[0], i.inputs[1]), i.id);
+            if cond == Condition::True {
+                i.op = OptOp::Div;
+                continue;
+            }
+            if cond == Condition::False {
+                i.op = OptOp::Mod;
+                continue;
+            }
+        }
 
         if OptOp::Sgn == i.op {
             let x = i.inputs[0];
@@ -1762,6 +1812,43 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     // and range is known to be special
                     let ar = abs_range(&ranges[0]);
                     out_range = Some((ar.start().saturating_sub(1) as i64) ..= (ar.end().saturating_sub(1)) as i64);
+                }
+            }
+        }
+
+        if OptOp::Sub == i.op {
+            let &[x, y] = i.inputs.as_slice() else { panic!() };
+            if let Some(y_def) = cfg.get_defined_at(y) {
+                if y_def.op == OptOp::Mod && y_def.inputs[0] == x {
+                    // a - (a % something)    -- we won't simplify this, but we can be sure this won't overflow
+                    i.effect = OpEffect::None;
+                }
+                if y_def.op == OptOp::Add && y_def.inputs.contains(&x) && y_def.inputs.len() == 2 {
+                    // a - (x + a) -> 0 - x
+                    let new_y = if y_def.inputs[0] == x { y_def.inputs[1] } else { y_def.inputs[0] };
+                    i.inputs = smallvec![ValueId::C_ZERO, new_y];
+                    continue;
+                }
+                if y_def.op == OptOp::Sub && y_def.inputs[0] == x {
+                    // a - (a - b) -> b
+                    return result_val!(y_def.inputs[1]);
+                }
+                if y_def.op == OptOp::Sub && y_def.inputs[0].is_constant() {
+                    // a - (C - x) -> a + x + (-C)
+                    let cc = cfg.get_constant_(y_def.inputs[0]);
+                    let other_y = y_def.inputs[1];
+                    i.op = OptOp::Add;
+                    i.inputs = smallvec![cfg.store_constant(-cc), x, other_y];
+                    continue;
+                }
+            }
+            if let Some(x_def) = cfg.get_defined_at(x) {
+                if x_def.op == OptOp::Add && x_def.inputs.contains(&y) {
+                    // (x + a + y) - a -> x + y
+                    i.op = OptOp::Add;
+                    i.inputs = x_def.inputs.clone();
+                    i.inputs.remove(x_def.inputs.iter().position(|&y2| y2 == y).unwrap());
+                    continue;
                 }
             }
         }

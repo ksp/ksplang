@@ -383,4 +383,14 @@ fn fuzz_swap_invalid_removal2() {
    let ops = vec![ LSwap, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Modulo, Goto, ];
    verify_repro(ops, vec![6148914691236517502, 2377910638922800284, 0]);
 }
+#[test]
+fn fuzz_broken_div_mul_add_mod_pattern() {
+   let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, Median, DigitSum, Increment, Increment, DigitSum, DigitSum, LenSum, Universal ];
+   verify_repro(ops, vec![0, 0, 0]);
+}
+
+#[test]
+fn fuzz_invalid_lensum_mod_2_optimization() {
+   let ops = vec![ DigitSum, Increment, LenSum, DigitSum, DigitSum, LenSum, DigitSum, DigitSum, Remainder, Qeq, Increment ];
+   verify_repro(ops, vec![0, 0, 0]);
 }
