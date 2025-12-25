@@ -971,6 +971,8 @@ impl GraphBuilder {
     }
 
     pub fn push_deopt_assert(&mut self, c: Condition<ValueId>, precise_deoptinfo: bool) {
+        if self.current_block_ref().is_terminated { return }
+
         let c = simplifier::simplify_cond(self, c, self.next_instr_id());
         if c == Condition::True { return; }
 

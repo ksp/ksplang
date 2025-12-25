@@ -421,3 +421,9 @@ fn fuzz_select_of_select_condition_simplification() {
    let ops = vec![ DigitSum, Swap, DigitSum, TetrationItersNum, DigitSum, Increment, DigitSum, DigitSum, DigitSum, LenSum, BulkXor, Increment, Swap, DigitSum, TetrationItersNum, DigitSum, Increment, DigitSum, DigitSum, DigitSum, LenSum, BulkXor, Increment, DigitSum, Swap, DigitSum, TetrationItersNum ];
    verify_repro(ops, vec![-1, 0, 0, 1, 0]);
 }
+
+#[test]
+fn fuzz_deopt_on_terminated_block_crash() {
+   let ops = vec![ Bitshift, Swap, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, DigitSum, Increment, Increment, Max, Praise, Remainder, LSwap, Modulo, BranchIfZero, Remainder, Remainder, Swap, Increment, DigitSum, Max, Max, Max, Max, DigitSum, DigitSum, DigitSum, Funkcia, Swap, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, ];
+   verify_repro(ops, vec![0; 20]);
+}
