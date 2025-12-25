@@ -869,16 +869,16 @@ pub fn get_values_offset(g: &GraphBuilder, val1: ValueId, val2: ValueId) -> Opti
 
 /// Flattens nested associative / commutative variadic operations (Add, Mul, And, Or, Xor, Max, Min, Gcd).
 /// Returns true if any change (inputs replaced) so caller can restart simplification loop.
-fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit: i64) -> bool {
+fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit: i64) -> Option<SmallVec<[ValueId; 4]>> {
     if instr.effect != OpEffect::None {
-        return false;
+        return None;
     }
     let op = &instr.op;
     let mut changed = false;
     let mut new_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
     for &v in &instr.inputs {
         if limit <= new_inputs.len() as i64 + 1 {
-            return false;
+            return None
         }
         let def = cfg.get_defined_at(v);
         if let Some(d) = def && d.effect == OpEffect::None {
@@ -900,9 +900,10 @@ fn flatten_variadic(cfg: &GraphBuilder, instr: &mut OptInstr, dedup: bool, limit
     }
     if changed {
         assert_ne!(0, new_inputs.len());
-        instr.inputs = new_inputs;
+        Some(new_inputs)
+    } else {
+        None
     }
-    changed
 }
 
 fn merge_constants(cfg: &mut GraphBuilder, i: &mut OptInstr, merge: impl FnMut(i64, i64) -> Option<i64>) -> bool {
@@ -939,6 +940,14 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
     }
 
     let mut out_range = None;
+    macro_rules! narrow_out_range {
+        ($r: expr) => {
+            out_range = match &out_range {
+                Some(current) => Some(intersect_range(current, $r)),
+                None => Some($r.clone())
+            }
+        }
+    }
     let mut iter = 0;
     let mut change_path: Vec<(OptOp<ValueId>, SmallVec<[ValueId; 4]>, SmallVec<[RangeInclusive<i64>; 4]>)> = Vec::new();
     'main: loop {
@@ -953,12 +962,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         // println!("simplify_instr {:?}", change_path);
 
         assert!(i.op.arity().contains(&i.inputs.len()), "Invalid arity for {:?}: {}. Optimized as {change_path:?}", i.op, i.inputs.len());
-
-        // Generic flattening for associative non-overflowing ops
-        if matches!(i.op, OptOp::Max | OptOp::Min | OptOp::Gcd | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Add | OptOp::Mul) && i.inputs.len() >= 2 {
-            let dedup = !matches!(i.op, OptOp::Xor | OptOp::Add | OptOp::Mul);
-            flatten_variadic(cfg, &mut i, dedup, /* limit */ 32);
-        }
 
         if !matches!(i.op, OptOp::Const(_) | OptOp::StackSwap | OptOp::StackRead | OptOp::Pop | OptOp::Push) {
             if i.iter_inputs().all(|a| a.is_constant()) {
@@ -1090,6 +1093,21 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             if changed { continue 'main }
             ranges
         };
+
+        i.effect = OpEffect::better_of(i.effect, i.op.effect_based_on_ranges(&ranges));
+
+        // Generic flattening for associative non-overflowing ops
+        if matches!(i.op, OptOp::Max | OptOp::Min | OptOp::Gcd | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Add | OptOp::Mul) && i.inputs.len() >= 2 {
+            let dedup = !matches!(i.op, OptOp::Xor | OptOp::Add | OptOp::Mul);
+            if let Some(new_inputs) = flatten_variadic(cfg, &mut i, dedup, /* limit */ 32) {
+                // save original range, since flattening might break some specific heuristics
+                let prev_range = i.op.evaluate_range_quick(&i.inputs.iter().map(|&v| cfg.val_range_at(v, i.id)).collect::<Vec<_>>()).unwrap_or(FULL_RANGE);
+                println!("DBG wtf {prev_range:?} {i} ({new_inputs:?})");
+                narrow_out_range!(prev_range);
+                i.inputs = new_inputs;
+                continue;
+            }
+        }
 
 
         // if i.effect != OpEffect::None {
@@ -1556,19 +1574,23 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         }
                     }
                 }
-
+                new_args.sort();
 
                 let is_unsafe = promoted_positive && promoted_negative &&
                     OpEffect::None != OptOp::<ValueId>::Add.effect_based_on_ranges(&new_args.iter().map(|a| cfg.val_range_at(*a, i.id)).collect::<Vec<_>>());
-                if !is_unsafe {
-                    let Some(constant_i64) = constant.try_into().ok() else {
-                        return (i.with_op(OptOp::Assert(Condition::False, OperationError::IntegerOverflow), &[], OpEffect::MayFail), None);
-                    };
-                    i.op = OptOp::Add;
-                    if constant != 0 {
-                        new_args.push(cfg.store_constant(constant_i64));
+                let Some(constant_i64) = constant.try_into().ok() else {
+                    return (i.with_op(OptOp::Assert(Condition::False, OperationError::IntegerOverflow), &[], OpEffect::MayFail), None);
+                };
+                if !is_unsafe && constant == 0 {
+                    if new_args != i.inputs {
+                        i.inputs = new_args;
+                        continue;
                     }
-                    new_args.sort();
+                }
+                else if !is_unsafe && cfg.get_constant(i.inputs[0]) != Some(constant_i64) && i.inputs[1..] != new_args[..] {
+                    if constant != 0 {
+                        new_args.insert(0, cfg.store_constant(constant_i64));
+                    }
                     i.inputs = new_args;
                     continue;
                 }
@@ -1674,14 +1696,14 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                             OptOp::<ValueId>::Mul.effect_based_on_ranges(&range_clone) == OpEffect::None
                         })
                     };
-                    // println!("DEBUG Mul OPT: {} {} {}", i, is_valid, def);
+                    // println!("DBG Mul OPT: {} is_valid={} add_def={}", i, is_valid, def);
                     if is_valid {
                         let new_args = def.inputs.clone().iter().map(|v| {
                             let mut in_clone = i.inputs.clone();
                             in_clone[arg_ix] = *v;
                             cfg.value_numbering(OptOp::Mul, &in_clone, None, Some(i.effect))
                         }).collect();
-                        // println!("end rec: {new_args:?}");
+                        // println!("DBG Mul OPT: end rec: {new_args:?}");
 
                         i.inputs = new_args;
                         i.op = OptOp::Add;
