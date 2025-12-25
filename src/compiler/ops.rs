@@ -3,7 +3,7 @@ use std::{cmp, collections::BTreeSet, fmt::{self, Debug, Display}, num::NonZeroI
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec};
 
-use crate::{compiler::{osmibytecode::Condition, range_ops::{eval_combi, range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{FULL_RANGE, SaturatingInto, abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
+use crate::{compiler::{osmibytecode::Condition, range_ops::{eval_combi, range_and, range_div, range_mod, range_mod_euclid, range_num_digits, range_or, range_xor}, utils::{Annotations, FULL_RANGE, SaturatingInto, abs_range, add_range, intersect_range, mul_range, range_2_i64, sub_range, union_range}}, digit_sum, funkcia, vm::{self, OperationError, median}};
 
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -697,7 +697,7 @@ impl OpEffect {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OptInstr {
     pub id: InstrId,
     pub op: OptOp<ValueId>,
@@ -706,6 +706,7 @@ pub struct OptInstr {
     pub program_position: usize, // u64::MAX if unknown
     pub ksp_instr_count: u32,
     pub effect: OpEffect,
+    pub annot: Annotations,
 }
 
 impl OptInstr {
@@ -719,6 +720,7 @@ impl OptInstr {
             program_position: usize::MAX,
             ksp_instr_count: 0,
             effect,
+            annot: Annotations::default()
         }
     }
     pub fn validate(&self) {

@@ -263,6 +263,15 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                     regs[dst1] = v1;
                     regs[dst2] = v2;
                 },
+                OsmibyteOp::MovBulk(dst0, dst1, dst2, dst3, dst4, dst5, src) => {
+                    let v = regs[src];
+                    regs[dst0] = v;
+                    regs[dst1] = v;
+                    regs[dst2] = v;
+                    regs[dst3] = v;
+                    regs[dst4] = v;
+                    regs[dst5] = v;
+                },
                 OsmibyteOp::Add(out, a, b) => {
                     let Some(val) = regs[a].checked_add(regs[b]) else {
                         deopt_or_error!(OperationError::IntegerOverflow)

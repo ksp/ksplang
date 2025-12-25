@@ -38,6 +38,7 @@ pub enum OsmibyteOp<TReg: Debug + Clone> {
 
     Mov2(TReg, TReg, TReg, TReg), // (dst0 <- src0, dst1 <- src1) simultaneous move
     Mov3(TReg, TReg, TReg, TReg, TReg, TReg), // (dst0 <- src0, dst1 <- src1, dst2 <- src2)
+    MovBulk(TReg, TReg, TReg, TReg, TReg, TReg, TReg), // dst0 <- dst1 <- ... <- dst6 <- src0
 
     Add(TReg, TReg, TReg), // a <- b + c
     AddConst(TReg, TReg, i32), // a <- b + const
@@ -158,6 +159,8 @@ impl<TReg: Debug + Clone> OsmibyteOp<TReg> {
                 OsmibyteOp::Mov2(f(dst0, true), f(src0, false), f(dst1, true), f(src1, false)),
             OsmibyteOp::Mov3(dst0, src0, dst1, src1, dst2, src2) =>
                 OsmibyteOp::Mov3(f(dst0, true), f(src0, false), f(dst1, true), f(src1, false), f(dst2, true), f(src2, false)),
+            OsmibyteOp::MovBulk(dst0, dst1, dst2, dst3, dst4, dst5, src) =>
+                OsmibyteOp::MovBulk(f(dst0, true), f(dst1, true), f(dst2, true), f(dst3, true), f(dst4, true), f(dst5, true), f(src, false)),
 
             OsmibyteOp::Add(a, b, c) => OsmibyteOp::Add(f(a, true), f(b, false), f(c, false)),
             OsmibyteOp::AddConst(a, b, c) => OsmibyteOp::AddConst(f(a, true), f(b, false), *c),

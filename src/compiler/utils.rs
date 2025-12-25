@@ -1,6 +1,7 @@
-use std::{borrow::Borrow, cmp, collections::HashSet, fmt::Debug, ops::RangeInclusive};
+use std::{any::{Any, TypeId}, borrow::Borrow, cmp, collections::HashSet, fmt::Debug, ops::RangeInclusive, panic::RefUnwindSafe, sync::Arc};
 
 use num_traits::{Bounded, CheckedMul, One, SaturatingAdd, SaturatingMul, SaturatingSub, Zero};
+use rustc_hash::FxHashMap;
 
 pub const EMPTY_RANGE: RangeInclusive<i64> = 1..=0;
 pub const FULL_RANGE: RangeInclusive<i64> = i64::MIN..=i64::MAX;
@@ -190,5 +191,57 @@ where U: TryFrom<T>,
         #[cfg(not(debug_assertions))]
         let Ok(result) = self.try_into() else { unreachable!() };
         result
+    }
+}
+
+pub trait AnnotationObj: Any + Debug + RefUnwindSafe {
+    fn type_name(&self) -> &str { std::any::type_name::<Self>() }
+}
+
+#[derive(Default, Clone)]
+pub struct Annotations {
+    data: Option<Box<FxHashMap<TypeId, Arc<dyn AnnotationObj>>>>
+}
+
+impl Annotations {
+    pub fn new() -> Self { Self::default() }
+    pub fn len(&self) -> usize {
+        let Some(data) = &self.data else { return 0 };
+        data.len()
+    }
+    pub fn get<T: 'static + AnnotationObj>(&self) -> Option<&T> {
+        let x = self.data.as_ref()?.get(&TypeId::of::<T>())?;
+        let x = x.as_ref();
+        let xy: &dyn Any = x;
+        xy.downcast_ref()
+    }
+    pub fn set<T: 'static + AnnotationObj>(&mut self, x: T) {
+        let data = self.data.get_or_insert_with(|| Box::new(FxHashMap::default()));
+        data.insert(TypeId::of::<T>(), Arc::new(x));
+    }
+    pub fn remove<T: 'static + AnnotationObj>(&mut self) -> bool {
+        if let Some(data) = &mut self.data {
+            data.remove(&TypeId::of::<T>()).is_some()
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq for Annotations {
+    fn eq(&self, _other: &Self) -> bool {
+        true // hack...
+    }
+}
+
+impl Debug for Annotations {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Some(data) = &self.data else { return write!(f, "{{}}") };
+
+        let mut map = f.debug_map();
+        for (_t, instance) in data.as_ref() {
+            map.entry(&instance.as_ref().type_name(), instance.as_ref());
+        }
+        map.finish()
     }
 }

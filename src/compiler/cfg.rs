@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap as Map};
 #[cfg(not(debug_assertions))]
 use std::collections::{hash_map::Entry as MapEntry};
 
-use crate::{compiler::{analyzer::{self}, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
+use crate::{compiler::{analyzer::{self}, config::{JitConfig, get_config}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId, ValueInfo}, osmibytecode::Condition, range_ops::IRange, simplifier::{self, simplify_cond}, utils::{Annotations, FULL_RANGE, abs_range, intersect_range, union_range}}, vm::OperationError};
 
 // #[derive(Debug, Clone, PartialEq)]
 // struct DeoptInfo<TReg> {
@@ -807,7 +807,8 @@ impl GraphBuilder {
             out: if op.has_output() { ValueId(i32::MAX) } else { ValueId(0) },
             ksp_instr_count: self.current_block_ref().ksplang_instr_count,
             program_position: self.assumed_program_position.unwrap_or(usize::MAX),
-            effect: effect2
+            effect: effect2,
+            annot: Annotations::default()
         };
         if self.conf.should_log(30) {
             println!("Maybe pushing {instr} (vn={value_numbering}, {out_range:?}, {effect:?})")

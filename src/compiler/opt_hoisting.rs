@@ -3,7 +3,7 @@ use rustc_hash::{FxHashMap as HashMap};
 
 use crate::compiler::{
     cfg::{BasicBlock, GraphBuilder},
-    ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, utils::union_range,
+    ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, utils::{Annotations, union_range},
 };
 
 /// Hoists common instructions from following blocks of the specified predecessor block.
@@ -112,6 +112,7 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                 program_position: program_position.unwrap_or(usize::MAX),
                 ksp_instr_count: ksplang_ops_increment.map_or(u32::MAX, |ctr| ctr + g.block_(predecessor).ksplang_instr_count),
                 effect: aggregated_effect,
+                annot: Annotations::default()
             };
 
             g.block_mut_(predecessor).instructions
