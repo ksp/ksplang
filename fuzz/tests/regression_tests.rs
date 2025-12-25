@@ -353,8 +353,10 @@ fn fuzz_missing_tetration_optimization_assert() {
 #[test]
 fn fuzz_something_with_swaps() {
    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, DigitSum, LSwap, BranchIfZero, TetrationNumIters, Modulo, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Goto, ];
-   verify_repro(ops, vec![666, 777777, 3]);
-    // todo!();
+   let (_g, obc) = verify_repro(ops, vec![666, 777777, 3]);
+    assert!(obc.program.len() < 25, "Too long program, did some opt fail?");
+}
+
 #[test]
 fn fuzz_tetration_missing_iteration_check() {
    let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Increment, DigitSum, Remainder, Increment, BulkXor, Jump, Increment, TetrationNumIters, ];

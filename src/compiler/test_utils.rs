@@ -11,7 +11,7 @@ const PI_TEST_VALUES: [i8; 42] = [
     0, 2, 8, 8, 4, 1, 9, 7, 1, 6,
 ];
 
-pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) {
+pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, OsmibytecodeBlock) {
     let g = GraphBuilder::new(0);
     let mut precompiler = Precompiler::new(&ops, input.len(), false, 0, 2_000, true, None, g, NoTrace());
     precompiler.bb_limit = 32;
@@ -65,17 +65,19 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) {
         },
         (Ok(obc_run), Err(e), _) => {
              if obc_run.exit_point == ExitPointId::Start || (obc_run.ksplang_interpreted == 0 && obc_stack == input) {
-                return;
+                return (g, obc_block)
              }
              panic!("Osmibyte OK, CFG Err: {:?}", e)
         },
         (Err(e), Ok(_), _) => panic!("Osmibyte Err: {:?}, CFG OK", e),
         (Ok(obc_run), _, Err(e)) => {
              if obc_run.exit_point == ExitPointId::Start || (obc_run.ksplang_interpreted == 0 && obc_stack == input) {
-                return;
+                return (g, obc_block)
              }
              panic!("Osmibyte OK, VM Err: {:?}", e)
         },
         (Err(e), _, Ok(_)) => panic!("Osmibyte Err: {:?}, VM OK", e),
     }
+
+    return (g, obc_block)
 }
