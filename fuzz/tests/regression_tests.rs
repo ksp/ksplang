@@ -409,3 +409,9 @@ fn fuzz_invalid_lensum_mod_2_optimization() {
    let ops = vec![ DigitSum, Increment, LenSum, DigitSum, DigitSum, LenSum, DigitSum, DigitSum, Remainder, Qeq, Increment ];
    verify_repro(ops, vec![0, 0, 0]);
 }
+
+#[test]
+fn fuzz_ctr_increment_empty_input_array() {
+   let ops = vec![ DigitSum, DigitSum, Modulo, DigitSum, DigitSum, Increment, Gcd2, BulkXor, DigitSum, DigitSum, Remainder, BulkXor, Jump, Increment, ];
+   verify_repro(ops, vec![0, 0, 0]);
+}

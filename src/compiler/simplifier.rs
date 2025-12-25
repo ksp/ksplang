@@ -1123,8 +1123,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 return result_val!(i.inputs[1]),
             OptOp::Assert(Condition::True, _) | OptOp::DeoptAssert(Condition::True) | OptOp::Jump(Condition::False, _) | OptOp::KsplangOpsIncrement(Condition::False) =>
                 return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
-            OptOp::KsplangOpsIncrement(_) if i.inputs.len() == 0 =>
-                return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
             // degenerate expressions are all simplified to degenerate Add, which is the only thing user then has to handle
             OptOp::Add | OptOp::Mul | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Max | OptOp::Min | OptOp::Median if i.inputs.len() == 1 =>
                 return result_val!(i.inputs[0]),
@@ -1487,6 +1485,8 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     continue;
                 }
             }
+            OptOp::KsplangOpsIncrement(_) if i.inputs.len() == 0 || &ranges == &[0..=0] =>
+                return (i.clone().with_op(OptOp::Nop, &[], OpEffect::None), None),
             OptOp::KsplangOpsIncrement(_) if i.inputs.len() > 1 && i.inputs[1].is_constant() => {
                 if merge_constants(cfg, &mut i, |a, b| a.checked_add(b)) {
                     continue;
@@ -1494,6 +1494,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             },
             OptOp::KsplangOpsIncrement(_) if i.inputs[0] == ValueId::C_ZERO => {
                 i.inputs.remove(0);
+                continue;
             }
 
             OptOp::KsplangOpsIncrement(Condition::True) if i.inputs.len() == 1 => {
@@ -1526,11 +1527,13 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                                 Some(i.inputs[1]));
                 i.op = OptOp::Select(Condition::Eq(ValueId::C_ONE, i.inputs[1]));
                 i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_ONE];
+                continue;
             }
             OptOp::Tetration if *ranges[1].start() >= 0 && *ranges[1].end() <= 1 => {
                 // a ^^ x if x ∈ [0,1] -> x == 1 ? a : 1
                 i.op = OptOp::Select(Condition::Eq(ValueId::C_ONE, i.inputs[1]));
-                i.inputs = smallvec![i.inputs[0], ValueId::C_ONE]
+                i.inputs = smallvec![i.inputs[0], ValueId::C_ONE];
+                continue;
             }
             OptOp::Tetration if *ranges[1].start() >= 5 => {
                 // with iters >= 5, it always fails for non-trivial inputs
