@@ -296,51 +296,66 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         let mut interfering_reads = vec![];
         let mut has_effect = false;
         let mut has_pops = false;
+        let mut has_branching = false;
         let mut found_anti_swap = None;
         let mut found_anti_read = None;
 
-        let iids: Vec<u32> = self.g.current_block_ref().instructions.keys().rev().copied().collect();
+        let mut bid = self.g.current_block;
 
-        for iid in iids {
-            let instr = &self.g.current_block_ref().instructions[&iid];
-            let iid = InstrId(self.g.current_block, iid);
-            let effect = instr.effect != OpEffect::None;
-            match instr.op {
-                OptOp::Push | OptOp::Pop => { has_pops = true; },
-                OptOp::StackSwap => {
-                    let &[instr_ix, instr_val] = instr.inputs.as_slice() else { panic!() };
-                    let is_same_address = simplify_cond(&mut self.g, Condition::Eq(instr_ix, ix), next_iid);
-                    if is_same_address == Condition::True {
-                        found_anti_swap = Some(iid);
-                        break;
+        'main: loop {
+            let iids: Vec<u32> = self.g.block_(bid).instructions.keys().rev().copied().collect();
+            for &iid in &iids {
+                let iid = InstrId(bid, iid);
+                let instr = &self.g.get_instruction_(iid);
+                let effect = !matches!(instr.effect, OpEffect::None | OpEffect::ControlFlow);
+                match instr.op {
+                    OptOp::Push | OptOp::Pop => { has_pops = true; },
+                    OptOp::StackSwap => {
+                        let &[instr_ix, instr_val] = instr.inputs.as_slice() else { panic!() };
+                        let is_same_address = simplify_cond(&mut self.g, Condition::Eq(instr_ix, ix), next_iid);
+                        if is_same_address == Condition::True {
+                            found_anti_swap = Some(iid);
+                            break 'main;
+                        }
+                        if is_same_address != Condition::False {
+                            if interfering_swaps.len() > 4 { break; }
+                            interfering_swaps.push((iid, instr_ix, instr_val, is_same_address));
+                        }
                     }
-                    if is_same_address != Condition::False {
-                        interfering_swaps.push((iid, instr_ix, instr_val, is_same_address));
-
-                        if interfering_swaps.len() > 4 { break; }
+                    OptOp::StackRead => {
+                        let &[instr_ix] = instr.inputs.as_slice() else { panic!() };
+                        let out_val = instr.out;
+                        let is_same_address = simplify_cond(&mut self.g, Condition::Eq(instr_ix, ix), next_iid);
+                        if is_same_address == Condition::True {
+                            // don't break, try to find the oldest stack read
+                            found_anti_read = Some(iid);
+                            // break 'main; // we won't find anything better probably
+                        }
+                        if is_same_address != Condition::False {
+                            interfering_reads.push((iid, instr_ix, out_val, is_same_address));
+                        }
+                    }
+                    _ => {
                     }
                 }
-                OptOp::StackRead => {
-                    let &[instr_ix] = instr.inputs.as_slice() else { panic!() };
-                    let out_val = instr.out;
-                    let is_same_address = simplify_cond(&mut self.g, Condition::Eq(instr_ix, ix), next_iid);
-                    if is_same_address == Condition::True {
-                        found_anti_read = Some(iid);
-                    }
-                    if is_same_address != Condition::False {
-                        interfering_reads.push((iid, instr_ix, out_val, is_same_address));
-                    }
-                }
-                _ => {
-                    has_effect |= effect;
-                }
+                has_effect |= effect;
+            }
+            let block = self.g.block_(bid);
+            if block.is_sealed && block.incoming_jumps.len() == 1 {
+                bid = block.incoming_jumps[0].0;
+                has_branching = true;
+            } else {
+                break;
             }
         }
 
         if let Some(anti_swap) = found_anti_swap {
+            if self.conf.should_log(15) {
+                println!("We have found anti-swap: {}", self.g.get_instruction_(anti_swap));
+            }
             // try to optimize away the StackSwap completely if it just undoes previous one
             {
-                if !has_effect && !has_pops && interfering_swaps.is_empty() && interfering_reads.is_empty() {
+                if !has_effect && !has_pops && !has_branching && interfering_swaps.is_empty() && interfering_reads.is_empty() {
                     let prev_swap = self.g.instr_mut(anti_swap).unwrap();
                     let &[prev_ix, prev_val] = prev_swap.inputs.as_slice() else { panic!() };
                     // rewrite previous swap to StackRead
@@ -348,7 +363,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     prev_swap.op = OptOp::StackRead;
                     prev_swap.inputs = smallvec![prev_ix];
                     prev_swap.effect = OpEffect::StackRead;
-                    let prev_out = prev_swap.out;
+                    let prev_out_raw = prev_swap.out;
+                    let (prev_out, _) = self.g.analyze_val_at(prev_out_raw, self.g.next_instr_id());
                     if prev_val.is_computed() {
                         if let Some(info) = self.g.values.get_mut(&prev_val) {
                             info.used_at.remove(&anti_swap);
@@ -356,6 +372,14 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                                 self.g.stack.poped_values.push(prev_val);
                             }
                         }
+                    }
+                    if prev_out != prev_out_raw && !has_pops {
+                        // we don't even need the read, it's just shadowing a previous one
+                        if self.conf.should_log(15) {
+                            println!("Removing {anti_swap} (replace {prev_out_raw} with {prev_out})");
+                        }
+                        self.g.replace_values([(prev_out_raw, prev_out)].into_iter().collect());
+                        self.g.remove_instruction(anti_swap, false);
                     }
                     // remove preceeding Checkpoint, it's not needed for anything (does not work)
                     // if let Some(prev_prev) = self.g.block_(anti_swap.0).instructions.range(0..anti_swap.1).last() &&
@@ -371,7 +395,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     }
 
 
-                    self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
+                    let (new_val, _) = self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
+                    // this operation return prev_val - what was assigned in the removed StackSwap
+                    // however, the actually emitted StackSwap will return the original read value:
+                    self.g.add_assumption(new_val, InstrId::BEGIN, Condition::Eq(prev_out, new_val), FULL_RANGE);
                     return prev_val;
                 }
             }
@@ -393,8 +420,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.push_deopt_assert(condition.clone().neg(), false);
                         assert!(!self.g.current_block_ref().is_terminated, "What is going on: {condition} (all swaps: {interfering_swaps:?})\n{}", self.g);
                     }
-                    self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
                     let orig_val = self.g.get_instruction_(anti_swap).inputs[1];
+                    let (orig_val, _) = self.g.analyze_val_at(orig_val, self.g.next_instr_id());
+                    let (new_val, _) = self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
+                    self.g.add_assumption(new_val, InstrId::BEGIN, Condition::Eq(orig_val, new_val), FULL_RANGE);
                     return orig_val;
                 }
             }
@@ -409,8 +438,13 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     self.g.push_deopt_assert(condition.clone().neg(), false);
                     assert!(!self.g.current_block_ref().is_terminated, "What is going on: {condition} (all swaps: {interfering_swaps:?})\n{}", self.g);
                 }
-                self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
+                if self.conf.should_log(15) {
+                    println!("Found previous read: {}", self.g.get_instruction_(anti_read));
+                }
                 let orig_val = self.g.get_instruction_(anti_read).out;
+                let (orig_val, _) = self.g.analyze_val_at(orig_val, self.g.next_instr_id());
+                let (new_val, _) = self.g.push_instr(OptOp::StackSwap, &[ix, val], false, None, None);
+                self.g.add_assumption(new_val, InstrId::BEGIN, Condition::Eq(orig_val, new_val), FULL_RANGE);
                 return orig_val;
             }
         }

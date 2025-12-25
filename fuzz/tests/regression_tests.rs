@@ -355,4 +355,26 @@ fn fuzz_something_with_swaps() {
    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, DigitSum, LSwap, BranchIfZero, TetrationNumIters, Modulo, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Goto, ];
    verify_repro(ops, vec![666, 777777, 3]);
     // todo!();
+#[test]
+fn fuzz_swap_interfering_deopt1() {
+   let ops = vec![ DigitSum, DigitSum, Swap, LSwap, DigitSum, Increment, DigitSum, DigitSum, DigitSum, LenSum, Goto, ];
+   verify_repro(ops, vec![1, 0, 0]);
+}
+#[test]
+fn fuzz_swap_interfering_deopt2() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, Swap, Funkcia, LSwap, DigitSum, Increment, BranchIfZero, Pop, DigitSum, Increment, Increment, Increment, Increment, Increment, DigitSum, DigitSum, DigitSum, Max, DigitSum, LenSum, Goto, ];
+   verify_repro(ops, vec![1, 0, 1]);
+}
+
+#[test]
+fn fuzz_swap_invalid_removal1() {
+   let ops = vec![ DigitSum, LSwap, DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Modulo, Goto, ];
+   verify_repro(ops, vec![1, 0, 0]);
+}
+
+#[test]
+fn fuzz_swap_invalid_removal2() {
+   let ops = vec![ LSwap, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Modulo, Goto, ];
+   verify_repro(ops, vec![6148914691236517502, 2377910638922800284, 0]);
+}
 }
