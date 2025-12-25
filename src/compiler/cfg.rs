@@ -410,7 +410,6 @@ impl GraphBuilder {
                     }
                 }
             }
-            println!("DBG {phi_dedup:?} {phis_duplicated:?}");
 
             let keep_ix: Vec<usize> = (0..arg_count).filter(|i| resolved[*i].is_none() && !phis_duplicated.contains_key(i)).collect();
 
@@ -638,6 +637,16 @@ impl GraphBuilder {
         self.constants.push(value);
         self.constant_lookup.insert(value, id);
         id
+    }
+
+    pub fn try_store_constant_immut(&self, value: i64) -> Option<ValueId> {
+        if let Some(predefined) = ValueId::from_predefined_const(value) {
+            return Some(predefined)
+        }
+        if let Some(&id) = self.constant_lookup.get(&value) {
+            return Some(id)
+        }
+        None
     }
 
     fn mark_used_at(&mut self, val: ValueId, instr: InstrId) {
@@ -1308,6 +1317,22 @@ impl GraphBuilder {
             return intersect_range(&info.range, from_range)
         }
         return info.range.clone()
+    pub fn iter_val_assumptions(&self, v: ValueId, at: InstrId) -> impl Iterator<Item = (Condition<ValueId>, i64, i64, InstrId)> + '_ {
+        const EMPTY_VAL_INFO: ValueInfo = ValueInfo::new(ValueId::NEW_PLACEHOLDER);
+        const EMPTY_VAL_INFO_REF: &'static ValueInfo = &EMPTY_VAL_INFO;
+        let info = self.values.get(&v).unwrap_or(EMPTY_VAL_INFO_REF);
+        info.iter_assumptions(at, &self.block_(at.0).predecessors).cloned()
+            .chain([()].into_iter().flat_map(move |_| {
+                let preceeding_jumps = self.block_(at.0).instructions.range(0..at.1).rev().take_while(|(_iid, i)| matches!(i.op, OptOp::Jump(_, _)));
+                preceeding_jumps.filter_map(move |(iid, i)| {
+                    let OptOp::Jump(cond, _) = &i.op else { panic!() };
+                    if cond.regs().contains(&v) {
+                        Some((cond.clone().neg(), i64::MIN, i64::MAX, InstrId(at.0, *iid)))
+                    } else {
+                        None
+                    }
+                })
+            }))
     }
 
     pub fn stack_top_info<'a>(&'a self, offset: usize) -> Option<Cow<'a, ValueInfo>> {

@@ -7,6 +7,8 @@ use crate::compiler::{cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, V
 /// Simplify b assuming a is true
 pub fn cond_implies(_cfg: &GraphBuilder, a: &Condition<ValueId>, b: &Condition<ValueId>, _at: InstrId) -> Option<Condition<ValueId>> {
     // very naive implementation for now
+    if a == &Condition::False || b == &Condition::True { return Some(Condition::True) }
+    if a == &Condition::True || b == &Condition::False { return Some(b.clone()) }
     if a == b {
         return Some(Condition::True);
     }

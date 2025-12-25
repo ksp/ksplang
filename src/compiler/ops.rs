@@ -23,6 +23,8 @@ impl ValueId {
     pub const C_SEVEN: ValueId = Self::from_predefined_const(7).unwrap();
     pub const C_IMIN: ValueId = Self::from_predefined_const(i64::MIN).unwrap();
     pub const C_IMAX: ValueId = Self::from_predefined_const(i64::MAX).unwrap();
+    pub const NEW_PLACEHOLDER: ValueId = ValueId(i32::MAX);
+    pub const NULL: ValueId = ValueId(0);
     pub const fn is_null(&self) -> bool {
         self.0 == 0
     }
@@ -152,6 +154,7 @@ impl fmt::Debug for BlockId {
 pub struct InstrId(pub BlockId, pub u32);
 impl InstrId {
     pub const UNDEFINED: InstrId = InstrId(BlockId::UNDEFINED, u32::MAX);
+    pub const BEGIN: InstrId = InstrId(BlockId(0), 0);
     pub fn block_id(self) -> BlockId { self.0 }
     pub fn instr_ix(self) -> u32 {
         self.1
@@ -831,7 +834,7 @@ pub struct ValueInfo {
 }
 
 impl ValueInfo {
-    pub fn new(id: ValueId) -> Self {
+    pub const fn new(id: ValueId) -> Self {
         Self { id, directly_derived_from: None, assigned_at: None, range: i64::MIN..=i64::MAX, used_at: BTreeSet::new(), assumptions: vec![] }
     }
     pub fn is_constant(&self) -> bool {

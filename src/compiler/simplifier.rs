@@ -47,10 +47,8 @@ pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: 
         }
     }
 
-    if let Some(info) = cond_mut.regs().into_iter().filter(|x| x.is_computed()).next()
-                                .and_then(|v| cfg.val_info(v))
-    {
-        for (assumption, _, _, instr_id) in info.iter_assumptions(at, &cfg.block_(at.block_id()).predecessors) {
+    for val in cond_mut.regs().into_iter().filter(|x| x.is_computed()) {
+        for (assumption, _, _, instr_id) in cfg.iter_val_assumptions(val, at) {
             if let Some(implied) = cond_implies(cfg, &assumption, &cond_mut, at) && implied != cond_mut {
                 if cfg.conf.should_log(10) {
                     println!("simplify_cond: condition '{cond_mut}' + assumption '{assumption}' (from {instr_id}) imply '{implied}'")
@@ -64,7 +62,7 @@ pub fn simplify_cond(cfg: &mut GraphBuilder, condition: Condition<ValueId>, at: 
         }
     }
     if cfg!(debug_assertions) && cond_mut != condition && cfg.conf.should_log(5) {
-        println!("simplify_cond({condition}, {at}) ... {:?} -> {cond_mut}", changelog)
+        println!("simplify_cond({condition}, {at}) ... {:?} -> {cond_mut}", changelog);
     }
     cond_mut
 }
