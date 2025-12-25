@@ -964,11 +964,11 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             if i.iter_inputs().all(|a| a.is_constant()) {
                 let all_args: SmallVec<[i64; 8]> = i.iter_inputs().map(|a| cfg.get_constant_(a)).collect();
                 match i.op.evaluate(&all_args) {
-                    Ok(v) => return (i.with_op(OptOp::Const(v), &[], OpEffect::None), Some(v..=v)),
-                    Err(Some(error)) => {
+                    Ok(v) if !i.op.has_output() => return (i.with_op(OptOp::Nop, &[], OpEffect::None), None),
+                    Ok(v) => return result_const!(v),
+                    Err(Some(error)) =>
                         // will always fail
-                        return (i.with_op(OptOp::Assert(Condition::False, error), &[], OpEffect::MayFail), None);
-                    },
+                        return (i.with_op(OptOp::Assert(Condition::False, error), &[], OpEffect::MayFail), None),
                     Err(None) => {
                         // cannot be evaluated
                     }
@@ -1036,8 +1036,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
                 match outputs {
                     [Ok(out1), Ok(out2)] if out1 == out2 => { // amazing
-                        let c = cfg.store_constant(out1);
-                        return (i.clone().with_op(OptOp::Add, &[ c ], OpEffect::None), Some(out1..=out1));
+                        return result_const!(out1);
                     }
                     [Ok(out1), Ok(out2)] => {
                         i.op = OptOp::Select(select_condition.clone());

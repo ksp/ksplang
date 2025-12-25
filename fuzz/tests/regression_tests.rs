@@ -385,6 +385,13 @@ fn fuzz_swap_invalid_removal2() {
    let ops = vec![ LSwap, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Modulo, Goto, ];
    verify_repro(ops, vec![6148914691236517502, 2377910638922800284, 0]);
 }
+
+#[test]
+fn fuzz_nop_assert_simplification() {
+   let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, Increment, Increment, Increment, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, TetrationNumIters, ];
+   verify_repro(ops, vec![0, 0, 0]);
+}
+
 #[test]
 fn fuzz_somehow_magically_value_had_empty_range() {
    let ops = vec![ DigitSum, DigitSum, TetrationNumIters, DigitSum, LSwap, Modulo, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, DigitSum, LSwap, BranchIfZero, TetrationNumIters, And, And, And, And, And, ];
