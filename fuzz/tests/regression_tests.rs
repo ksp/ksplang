@@ -440,3 +440,16 @@ fn fuzz_invalid_range_condition_push_though_modulo() {
    verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0]);
 }
 
+
+#[test]
+fn fuzz_missing_value_materialization_in_ctr_increment_deopt() {
+   let ops = vec![ DigitSum, DigitSum, Increment, LenSum, Jump, Increment, Increment, Increment, Increment, Increment, BulkXor, Jump, Increment, Pop, LenSum, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Praise, Roll, Increment, BulkXor, ];
+
+   verify_repro(ops, vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+}
+
+#[test]
+fn fuzz_value_materialization_in_ctr_increment_deopt_bug() {
+   let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, BulkXor, Jump, Increment, Remainder, ];
+   verify_repro(ops, vec![-290271069732865, 2964283004886712319, -347875573761, -6413125852061499357, -6796097142415970305, 7595878676688797947, 7566047376929042281, 251]);
+}

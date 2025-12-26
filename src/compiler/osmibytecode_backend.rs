@@ -808,8 +808,13 @@ impl<'a> Compiler<'a> {
     }
 
     fn lower_ops_increment(&mut self, instr: &OptInstr, condition: Condition<ValueId>) {
-        let cond = self.lower_condition(condition);
         let mut deopt: Vec<OsmibyteOp<RegId>> = vec![];
+        let cond = self.lower_condition_with_mapping(
+            condition,
+            |this, val, reg| {
+                deopt.extend(this.mk_materialization(val, reg))
+            }
+        );
         let mut deopt_const: i64 = 0;
         for &value in &instr.inputs {
             if let Some(c) = self.g.get_constant(value) {
@@ -851,80 +856,92 @@ impl<'a> Compiler<'a> {
         &mut self,
         condition: Condition<ValueId>,
     ) -> Condition<RegId> {
+        self.lower_condition_with_mapping(condition, |_this, _val, _reg| { })
+    }
+    fn lower_condition_with_mapping(
+        &mut self,
+        condition: Condition<ValueId>,
+        mut mapping: impl FnMut(&mut Self, ValueId, RegId) -> ()
+    ) -> Condition<RegId> {
         use Condition::*;
         fn i16conv(x: i64) -> Option<i16> {
             return x.try_into().ok()
         }
+        let mut materialize = |this: &mut Self, val| {
+            let reg = this.materialize_value_(val);
+            mapping(this, val, reg);
+            reg
+        };
         match condition {
             Eq(a, b) => {
                 if let Some(c) = self.g.get_constant(a).and_then(i16conv) {
-                    EqConst(self.materialize_value_(b), c)
+                    EqConst(materialize(self, b), c)
                 } else {
-                    Eq(self.materialize_value_(a), self.materialize_value_(b))
+                    Eq(materialize(self, a), materialize(self, b))
                 }
             }
             Neq(a, b) => {
                 if let Some(c) = self.g.get_constant(a).and_then(i16conv) {
-                    NeqConst(self.materialize_value_(b), c)
+                    NeqConst(materialize(self, b), c)
                 } else {
-                    Neq(self.materialize_value_(a), self.materialize_value_(b))
+                    Neq(materialize(self, a), materialize(self, b))
                 }
             }
             Lt(a, b) => {
                 if let Some(c) = self.g.get_constant(a).and_then(i16conv) {
                     // a < b  where a is const  =>  b > const
-                    GtConst(self.materialize_value_(b), c)
+                    GtConst(materialize(self, b), c)
                 } else {
-                    Lt(self.materialize_value_(a), self.materialize_value_(b))
+                    Lt(materialize(self, a), materialize(self, b))
                 }
             }
             Leq(a, b) => {
                 if let Some(c) = self.g.get_constant(a).and_then(i16conv) {
                     // a <= b  where a is const  =>  b >= const
-                    GeqConst(self.materialize_value_(b), c)
+                    GeqConst(materialize(self, b), c)
                 } else {
-                    Leq(self.materialize_value_(a), self.materialize_value_(b))
+                    Leq(materialize(self, a), materialize(self, b))
                 }
             }
             Gt(a, b) => {
                 if let Some(c) = self.g.get_constant(a).and_then(i16conv) {
                     // a > b  where a is const  =>  b < const
-                    LtConst(self.materialize_value_(b), c)
+                    LtConst(materialize(self, b), c)
                 } else {
-                    Gt(self.materialize_value_(a), self.materialize_value_(b))
+                    Gt(materialize(self, a), materialize(self, b))
                 }
             }
             Geq(a, b) => {
                 if let Some(c) = self.g.get_constant(a).and_then(i16conv) {
                     // a >= b  where a is const  =>  b <= const
-                    LeqConst(self.materialize_value_(b), c)
+                    LeqConst(materialize(self, b), c)
                 } else {
-                    Geq(self.materialize_value_(a), self.materialize_value_(b))
+                    Geq(materialize(self, a), materialize(self, b))
                 }
             }
             Divides(a, b) => {
                 if let Some(c) = self.g.get_constant(b).and_then(|c| u16::try_from(c).ok()) {
-                    DividesConst(self.materialize_value_(a), c)
+                    DividesConst(materialize(self, a), c)
                 } else {
-                    Divides(self.materialize_value_(a), self.materialize_value_(b))
+                    Divides(materialize(self, a), materialize(self, b))
                 }
             }
             NotDivides(a, b) => {
                 if let Some(c) = self.g.get_constant(b).and_then(|c| u16::try_from(c).ok()) {
-                    NotDividesConst(self.materialize_value_(a), c)
+                    NotDividesConst(materialize(self, a), c)
                 } else {
-                    NotDivides(self.materialize_value_(a), self.materialize_value_(b))
+                    NotDivides(materialize(self, a), materialize(self, b))
                 }
             }
             // Already const variants
-            EqConst(a, c) => EqConst(self.materialize_value_(a), c),
-            NeqConst(a, c) => NeqConst(self.materialize_value_(a), c),
-            LtConst(a, c) => LtConst(self.materialize_value_(a), c),
-            LeqConst(a, c) => LeqConst(self.materialize_value_(a), c),
-            GtConst(a, c) => GtConst(self.materialize_value_(a), c),
-            GeqConst(a, c) => GeqConst(self.materialize_value_(a), c),
-            DividesConst(a, c) => DividesConst(self.materialize_value_(a), c),
-            NotDividesConst(a, c) => NotDividesConst(self.materialize_value_(a), c),
+            EqConst(a, c) => EqConst(materialize(self, a), c),
+            NeqConst(a, c) => NeqConst(materialize(self, a), c),
+            LtConst(a, c) => LtConst(materialize(self, a), c),
+            LeqConst(a, c) => LeqConst(materialize(self, a), c),
+            GtConst(a, c) => GtConst(materialize(self, a), c),
+            GeqConst(a, c) => GeqConst(materialize(self, a), c),
+            DividesConst(a, c) => DividesConst(materialize(self, a), c),
+            NotDividesConst(a, c) => NotDividesConst(materialize(self, a), c),
             True => True,
             False => False,
         }
