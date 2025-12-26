@@ -433,3 +433,10 @@ fn fuzz_deopt_on_deferred_stack_swap_is_invalid() {
    let ops = vec![ DigitSum, DigitSum, Increment, LenSum, DigitSum, LenSum, Swap, LenSum, Increment, DigitSum, DigitSum, DigitSum, LenSum, Call, ];
    verify_repro(ops, vec![0, 0, 0, 0]);
 }
+
+#[test]
+fn fuzz_invalid_range_condition_push_though_modulo() {
+   let ops = vec![ LenSum, DigitSum, Increment, LenSum, DigitSum, LenSum, Praise, DigitSum, DigitSum, DigitSum, Swap, Remainder, Modulo, TetrationNumIters, ];
+   verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0]);
+}
+

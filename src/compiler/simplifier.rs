@@ -460,7 +460,9 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                         }
 
                         // simplify a <??> (x % Const2) by splitting the ranges
-                        if def.inputs.len() == 2 && def.inputs[1].is_constant() {
+                        if def.inputs.len() == 2 && def.inputs[1].is_constant() &&
+                            matches!(condition, Condition::Eq(_, _) | Condition::Neq(_, _)) // TODO: can we generalize this for ranges? seems tricky
+                        {
                             let (condition, is_negated) = if let Condition::Neq(_, _) = &condition { (condition.clone().neg(), true) }
                                                           else                                     { (condition.clone(), false) };
                             let mod_c = cfg.get_constant_(def.inputs[1]);
