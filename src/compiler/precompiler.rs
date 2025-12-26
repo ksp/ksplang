@@ -380,6 +380,15 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         }
                         self.g.replace_values([(prev_out_raw, prev_out)].into_iter().collect());
                         self.g.remove_instruction(anti_swap, false);
+                        // remove any checkpoints in between to avoid deopting into the unsafe space
+                        let checkpoints: Vec<InstrId> =
+                            self.g.block_(anti_swap.0).instructions.range(anti_swap.1..)
+                                .filter(|(_, instr)| instr.op == OptOp::Checkpoint)
+                                .map(|(_, instr)| instr.id)
+                                .collect();
+                        for iid in checkpoints {
+                            self.g.remove_instruction(iid, false);
+                        }
                     }
                     // remove preceeding Checkpoint, it's not needed for anything (does not work)
                     // if let Some(prev_prev) = self.g.block_(anti_swap.0).instructions.range(0..anti_swap.1).last() &&

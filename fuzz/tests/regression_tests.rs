@@ -427,3 +427,9 @@ fn fuzz_deopt_on_terminated_block_crash() {
    let ops = vec![ Bitshift, Swap, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, DigitSum, Increment, Increment, Max, Praise, Remainder, LSwap, Modulo, BranchIfZero, Remainder, Remainder, Swap, Increment, DigitSum, Max, Max, Max, Max, DigitSum, DigitSum, DigitSum, Funkcia, Swap, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Funkcia, Qeq, ];
    verify_repro(ops, vec![0; 20]);
 }
+
+#[test]
+fn fuzz_deopt_on_deferred_stack_swap_is_invalid() {
+   let ops = vec![ DigitSum, DigitSum, Increment, LenSum, DigitSum, LenSum, Swap, LenSum, Increment, DigitSum, DigitSum, DigitSum, LenSum, Call, ];
+   verify_repro(ops, vec![0, 0, 0, 0]);
+}
