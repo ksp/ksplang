@@ -453,3 +453,15 @@ fn fuzz_value_materialization_in_ctr_increment_deopt_bug() {
    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, BulkXor, Jump, Increment, Remainder, ];
    verify_repro(ops, vec![-290271069732865, 2964283004886712319, -347875573761, -6413125852061499357, -6796097142415970305, 7595878676688797947, 7566047376929042281, 251]);
 }
+
+#[test]
+fn fuzz_overflow_in_divisibility_check() {
+   let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, And, Qeq, ];
+   verify_repro(ops, vec![-7061644220011816657, 476710435850919325, -7089369500922937345, -9223372036854775808, -1, 0]);
+}
+
+#[test]
+fn fuzz_overflow_in_curseddiv_div_check() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Increment, Gcd2, Gcd2, Gcd2, Gcd2, Increment, Increment, Universal, ];
+   verify_repro(ops, vec![-8102099357864558841, -8102099357864587377, -16327203, -1, -9223372036854775808, -1, -66991989383495681, -16327203, -1, -9223372036854775808, 0]);
+}

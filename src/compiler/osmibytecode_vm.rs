@@ -164,14 +164,14 @@ fn eval_cond(regs: &RegFile, cond: Condition<RegId>) -> bool {
         Condition::GeqConst(a, c) => regs[a] >= c as i64,
         Condition::Divides(a, b) => {
             let divisor = regs[b];
-            divisor != 0 && regs[a] % divisor == 0
+            divisor != 0 && regs[a].unsigned_abs() % divisor.unsigned_abs() == 0
         }
-        Condition::DividesConst(a, divisor) => regs[a] % divisor as i64 == 0,
+        Condition::DividesConst(a, divisor) => regs[a].unsigned_abs() % divisor as u64 == 0,
         Condition::NotDivides(a, b) => {
             let divisor = regs[b];
-            divisor == 0 || regs[a] % divisor != 0
+            divisor == 0 || regs[a].unsigned_abs() % divisor.unsigned_abs() != 0
         }
-        Condition::NotDividesConst(a, divisor) => regs[a] % divisor as i64 != 0
+        Condition::NotDividesConst(a, divisor) => regs[a].unsigned_abs() % divisor as u64 != 0
     }
 }
 
@@ -340,7 +340,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                     let lhs = regs[a];
                     let rhs = regs[b];
                     let Some(rem) = lhs.checked_rem(rhs) else {
-                        deopt_or_error!(OperationError::DivisionByZero)
+                        deopt_or_error!(if rhs == 0 { OperationError::DivisionByZero } else { OperationError::IntegerOverflow })
                     };
                     if rem == 0 {
                         let Some(val) = lhs.checked_div(rhs) else {

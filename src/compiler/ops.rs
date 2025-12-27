@@ -405,7 +405,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                         let b = inputs[1];
                         if b == 0 {
                             Err(Some(OperationError::DivisionByZero))
-                        } else if a % b == 0 {
+                        } else if a.unsigned_abs() % b.unsigned_abs() == 0 {
                             a.checked_div(b).ok_or(Some(OperationError::IntegerOverflow))
                         } else {
                             a.checked_rem(b).ok_or(Some(OperationError::IntegerOverflow))
