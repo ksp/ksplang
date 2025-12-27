@@ -465,3 +465,9 @@ fn fuzz_overflow_in_curseddiv_div_check() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Increment, Gcd2, Gcd2, Gcd2, Gcd2, Increment, Increment, Universal, ];
    verify_repro(ops, vec![-8102099357864558841, -8102099357864587377, -16327203, -1, -9223372036854775808, -1, -66991989383495681, -16327203, -1, -9223372036854775808, 0]);
 }
+
+#[test]
+fn fuzz_funkcia_broken_range_inferrence_for_zero_arg() {
+   let ops = vec![ Pop, Pop2, Funkcia, LSwap, LenSum, DigitSum, DigitSum, DigitSum, Increment, Gcd2, DigitSum, LSwap, BranchIfZero, ];
+   verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, -35465847065564229, 0, 0, 0, 0]);
+}
