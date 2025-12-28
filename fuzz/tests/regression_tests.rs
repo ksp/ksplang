@@ -489,3 +489,9 @@ fn fuzz_single_value_gcd_is_abs() {
    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Modulo, DigitSum, Increment, DigitSum, Qeq, DigitSum, Increment, LenSum, GcdN, ];
    verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, 1]);
 }
+
+#[test]
+fn fuzz_crash_on_divides_by_i64min() {
+   let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, Praise, Funkcia, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Increment, Increment, Funkcia, Max, Bitshift, DigitSum, LSwap, Remainder, BranchIfZero, Max, Median, Remainder, ];
+   verify_repro(ops, vec![0;20]);
+}

@@ -740,7 +740,11 @@ impl GraphBuilder {
             Condition::Divides(a, other) if *a == val && other.is_constant() => {
                 // round boundaries to multiple
                 let c = self.get_constant_(*other);
-                (false, pure_range.start().div_ceil(&c) * c ..= pure_range.end().div_floor(&c) * c)
+                if c == i64::MIN {
+                    (false, i64::MIN..=0)
+                } else {
+                    (false, pure_range.start().div_ceil(&c) * c ..= pure_range.end().div_floor(&c) * c)
+                }
             }
             Condition::Divides(other, a) if *a == val => {
                 // other % a == 0 implies that |a| is at most |other| (except if other can be 0)
