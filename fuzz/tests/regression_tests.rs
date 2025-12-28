@@ -471,3 +471,21 @@ fn fuzz_funkcia_broken_range_inferrence_for_zero_arg() {
    let ops = vec![ Pop, Pop2, Funkcia, LSwap, LenSum, DigitSum, DigitSum, DigitSum, Increment, Gcd2, DigitSum, LSwap, BranchIfZero, ];
    verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, -35465847065564229, 0, 0, 0, 0]);
 }
+
+#[test]
+fn fuzz_artifact_obc_deopts_earlier_than_necessary() {
+   let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, LenSum, Jump, Increment, Increment, Increment, GcdN, ];
+   verify_repro(ops, vec![434586871141, -9223372036854775808, 0]);
+}
+
+#[test]
+fn fuzz_artifact_obc_deopts_earlier_than_necessary2() {
+   let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, LenSum, Jump, Increment, Increment, Increment, GcdN, ];
+   verify_repro(ops, vec![72056713559500133, -9223372036854775808, 0]);
+}
+
+#[test]
+fn fuzz_single_value_gcd_is_abs() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Modulo, DigitSum, Increment, DigitSum, Qeq, DigitSum, Increment, LenSum, GcdN, ];
+   verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, 1]);
+}

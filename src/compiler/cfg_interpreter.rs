@@ -72,6 +72,7 @@ pub fn interpret_cfg(
                             executed_ksplang += x;
                         }
                     }
+                    continue;
                 }
                 OptOp::Jump(condition, target) => {
                     if eval_condition(g, &values, condition) {
@@ -198,7 +199,11 @@ pub fn interpret_cfg(
                     error = Some((err, instr.id));
                     break 'block;
                 }
-                Err(None) => continue,
+                Err(None) => {
+                    println!("DBG {op:?} returned Err(None)");
+                    deoptimized = Some(instr.id);
+                    break 'block;
+                }
             }
         }
 

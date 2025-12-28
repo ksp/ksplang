@@ -44,7 +44,7 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, Osmibytecod
     let vm_options = VMOptions::new(&input, max_stack, &PI_TEST_VALUES, u64::MAX, vm_ops_limit);
     let vm_res = vm::run(&ops, vm_options);
 
-    if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) && g.conf.should_log(1) {
         println!("    * CFG result: {cfg_res:?} stack: {} {cfg_stack:?}", cfg_stack.len());
         println!("    * OBC result: {obc_res:?} stack: {} {obc_stack:?}", obc_stack.len());
         println!("    * Interpreter result: {:?}", vm_res);

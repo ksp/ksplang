@@ -416,8 +416,8 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::Tetration => Ok(vm::tetration(inputs[0], inputs[1])?),
             OptOp::Funkcia => Ok(funkcia::funkcia(inputs[0], inputs[1]) as i64),
             OptOp::LenSum => Ok(inputs.iter().map(|x| vm::decimal_len(*x)).sum()),
-            OptOp::Max => inputs.iter().copied().max().ok_or(None),
-            OptOp::Min => inputs.iter().copied().min().ok_or(None),
+            OptOp::Max => Ok(inputs.iter().copied().max().unwrap()),
+            OptOp::Min => Ok(inputs.iter().copied().min().unwrap()),
             OptOp::Sgn => Ok(inputs[0].signum()),
             OptOp::AbsFactorial => Ok(vm::abs_factorial(inputs[0])?),
             OptOp::Universal => todo!(),
@@ -435,7 +435,15 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::BoolNot => Ok(if inputs[0] == 0 { 1 } else { 0 }),
             OptOp::Select(condition) => Ok(if condition.eval(&inputs[0..inputs.len()-2]) { inputs[inputs.len()-2] } else { inputs[inputs.len()-1] }),
             OptOp::DigitSum => Ok(digit_sum::digit_sum(inputs[0])),
-            OptOp::Gcd => inputs.iter().map(|x| x.abs_diff(0)).reduce(|a, b| a.gcd(&b)).unwrap().try_into().map_err(|_| Some(OperationError::IntegerOverflow)),
+            // TODO: re-enable this when we can handle GCDs in OBC equivalently
+            // OptOp::Gcd => inputs.iter().map(|x| x.abs_diff(0)).reduce(|a, b| a.gcd(&b)).unwrap().try_into().map_err(|_| Some(OperationError::IntegerOverflow)),
+            OptOp::Gcd => {
+                let mut x = inputs[0];
+                for i in 1..inputs.len() {
+                    x = x.unsigned_abs().gcd(&inputs[i].unsigned_abs()).try_into().map_err(|_| None)?
+                }
+                x.checked_abs().ok_or(None)
+            }
             OptOp::StackSwap => Err(None),
             OptOp::StackRead => Err(None),
             OptOp::Const(x) => Ok(*x),
