@@ -46,7 +46,7 @@ pub fn range_mod(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> 
         Some(range_mod_u(cmp::max(0, a_lo) as u64..=a_hi as u64, b_abs.clone()))
     } else { None };
     let negative = if a_lo < 0 {
-        Some(range_mod_u(-cmp::min(0, a_hi) as u64..=a_lo.abs_diff(0), b_abs.clone()))
+        Some(range_mod_u(cmp::min(0, a_hi).unsigned_abs() ..= a_lo.unsigned_abs(), b_abs.clone()))
     } else { None };
 
     let positive = positive.map(range_2_i64);
