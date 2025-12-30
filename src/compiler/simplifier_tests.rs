@@ -525,3 +525,28 @@ fn test_add_sub_simplifications() {
     assert!(OptOptPattern::op2(OptOp::Sub, 0, a).try_match(&g, &[b_sub_ab]).is_ok());
 }
 
+#[test]
+fn test_simpl_condition_div_pushdown() {
+    let (mut g, [a, b]) = create_graph([0..=100000, -2000..=0]);
+    // let c15 = g.store_constant(15);
+    let cneg5 = g.store_constant(-5);
+
+    let adiv =    g.value_numbering(OptOp::Div, &[a, ValueId::C_FIVE], None, None);
+    // let anegdiv = g.value_numbering(OptOp::Div, &[a, cneg5], None, None);
+    // let bdiv =    g.value_numbering(OptOp::Div, &[b, ValueId::C_FIVE], None, None);
+    let bnegdiv = g.value_numbering(OptOp::Div, &[b, cneg5], None, None);
+
+
+    assert_eq!(simplify_cond(&mut g, Condition::EqConst(adiv, 0), END_INSTR), Condition::Gt(ValueId::C_FIVE, a));
+    // assert_eq!(simplify_cond(&mut g, Condition::EqConst(anegdiv, 0), END_INSTR), Condition::Gt(ValueId::C_FIVE, a));
+
+    // assert_eq!(simplify_cond(&mut g, Condition::EqConst(bdiv, 0), END_INSTR), Condition::Gt(ValueId::C_FIVE, b));
+    assert_eq!(simplify_cond(&mut g, Condition::EqConst(bnegdiv, 0), END_INSTR), Condition::Lt(cneg5, b));
+
+    assert_eq!(simplify_cond(&mut g, Condition::LtConst(adiv, 2), END_INSTR), Condition::Gt(ValueId::C_TWO, adiv));
+    // assert_eq!(simplify_cond(&mut g, Condition::LtConst(adiv, 2), END_INSTR), Condition::Gt(ValueId::C_TEN, a));
+
+    assert_eq!(simplify_cond(&mut g, Condition::LeqConst(adiv, 2), END_INSTR), Condition::Geq(ValueId::C_TWO, adiv));
+    // assert_eq!(simplify_cond(&mut g, Condition::LeqConst(adiv, 2), END_INSTR), Condition::Gt(c15, a));
+}
+

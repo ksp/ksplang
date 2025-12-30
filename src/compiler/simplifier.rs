@@ -498,10 +498,13 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                     }
 
                     if let OptOp::Div = def.op && ac == 0 && *br.start() == 0 {
+                        let div_r = cfg.val_range_at(def.inputs[1], at);
                         // simplify (x / y) == 0 -> x < y
                         match condition {
-                            Condition::Eq(_, _) => return Condition::Lt(def.inputs[0], def.inputs[1]),
-                            Condition::Neq(_, _) => return Condition::Geq(def.inputs[0], def.inputs[1]),
+                            Condition::Eq(_, _) if *div_r.start() >= 0 => return Condition::Lt(def.inputs[0], def.inputs[1]),
+                            Condition::Eq(_, _) if *div_r.end() <= 0 => return Condition::Gt(def.inputs[0], def.inputs[1]),
+                            Condition::Neq(_, _) if *div_r.start() >= 0 => return Condition::Geq(def.inputs[0], def.inputs[1]),
+                            Condition::Neq(_, _) if *div_r.end() <= 0 => return Condition::Geq(def.inputs[0], def.inputs[1]),
                             _ => {}
                         }
                     }

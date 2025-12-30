@@ -507,3 +507,9 @@ fn fuzz_bitshift_negative_range() {
    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, DigitSum, LenSum, Increment, Increment, Increment, Increment, DigitSum, DigitSum, Remainder, Qeq, Bitshift, ];
    verify_repro(ops, vec![4455748147947192641, -69242844287401985, -57983845218765633, 5570194071739171000, 3026269155315731789, 8604979239799224071, 9212068884851457911, 1978051483820414, 506381572169269247, 8608480567731124075, 565191891875397495, -2882304347923322105, 20480]);
 }
+
+#[test]
+fn fuzz_bad_div_eq_condition_simplification() {
+   let ops = vec![ DigitSum, DigitSum, LenSum, Jump, Increment, Increment, Increment, Increment, Increment, DigitSum, DigitSum, Funkcia, LSwap, LSwap, Qeq, Swap, LSwap, ];
+   verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 1, 0]);
+}

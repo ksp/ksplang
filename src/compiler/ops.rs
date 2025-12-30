@@ -21,6 +21,9 @@ impl ValueId {
     pub const C_FIVE: ValueId = Self::from_predefined_const(5).unwrap();
     pub const C_SIX: ValueId = Self::from_predefined_const(6).unwrap();
     pub const C_SEVEN: ValueId = Self::from_predefined_const(7).unwrap();
+    pub const C_EIGHT: ValueId = Self::from_predefined_const(8).unwrap();
+    pub const C_NINE: ValueId = Self::from_predefined_const(9).unwrap();
+    pub const C_TEN: ValueId = Self::from_predefined_const(10).unwrap();
     pub const C_IMIN: ValueId = Self::from_predefined_const(i64::MIN).unwrap();
     pub const C_IMAX: ValueId = Self::from_predefined_const(i64::MAX).unwrap();
     pub const NEW_PLACEHOLDER: ValueId = ValueId(i32::MAX);
