@@ -121,12 +121,12 @@ pub fn range_mod_euclid(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i6
     assert!(a_lo < 0 && a_hi < 0);
 
     // small hack: better range if max is zero
-    if *b_abs.end() == *b_abs.start() && a_lo != a_hi && -a_lo as u64 % *b_abs.end() == 0 {
+    if *b_abs.end() == *b_abs.start() && a_lo != a_hi && a_lo.unsigned_abs() % *b_abs.end() == 0 {
         let r = range_mod_euclid(a_lo + 1..=a_hi, b_range);
         return 0..=*r.end();
     }
 
-    let mod_result = range_mod_u(-a_hi as u64..=-a_lo as u64, b_abs.clone());
+    let mod_result = range_mod_u(a_hi.unsigned_abs()..=a_lo.unsigned_abs(), b_abs.clone());
     let (mod_lo, mod_hi) = mod_result.into_inner();
     let (b_lo, b_hi) = b_abs.into_inner();
 
