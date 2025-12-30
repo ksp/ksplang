@@ -1256,14 +1256,17 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 continue;
             }
 
+            OptOp::ShiftL | OptOp::ShiftR if *ranges[1].end() < 0 => {
+                let bits = i.inputs[0];
+                return (i.with_op(OptOp::Assert(Condition::False, OperationError::NegativeBitCount { bits: 0 }), &[bits], OpEffect::MayFail), None);
+            }
+
+            OptOp::ShiftL | OptOp::ShiftR if ranges[1] == (0..=0) => return result_val!(i.inputs[0]),
+
+            OptOp::ShiftL | OptOp::ShiftR if *ranges[1].start() >= 64 => return result_const!(0),
+
             OptOp::ShiftL if i.inputs[1].is_constant() => {
                 let shift = cfg.get_constant_(i.inputs[1]);
-                if shift < 0 {
-                    break 'main;
-                }
-                if shift >= 64 {
-                    return result_const!(0);
-                }
                 let Some(mul) = 1i64.checked_shl(shift as u32) else {
                     break 'main;
                 };

@@ -48,6 +48,7 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
 
         'candidate: for (op, inputs, instr_ids) in candidate_instr.iter() {
             assert_eq!(instr_ids.len(), successors.len(), "common instruction must exist in every successor block");
+            if matches!(op, OptOp::Jump(_, _)) { continue }
 
             let mut aggregated_effect = OpEffect::None;
             let mut program_position = None;
@@ -58,9 +59,6 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                 let instr = &block.instructions[&iid.1];
                 assert_eq!(&instr.op, op);
 
-                if matches!(instr.op, OptOp::Jump(..)) {
-                    continue 'candidate;
-                }
                 if !can_hoist_from_block(g, block, iid.1, instr) {
                     continue 'candidate;
                 }

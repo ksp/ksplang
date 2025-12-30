@@ -642,7 +642,7 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
             assert!(performing_deopt.is_none(), "auto-deopt is not supported when in a deopt (IP is ambiguous). Deopt instructions must not fail");
             // println!("deopt_auto at {ip}");
             match prog.ip2deopt.binary_search_by_key(&ip, |x| x.0) {
-                Err(ix) => panic!("Operation {ip} auto-deopts, but corresponding deopt is not recorded? (next deopt is {ix} {:?}", prog.ip2deopt.get(ix)),
+                Err(ix) => panic!("Operation {ip} {:?} auto-deopts, but corresponding deopt is not recorded? (next deopt is {ix} {:?}; regs: {regs:?})", prog.program[ip as usize], prog.ip2deopt.get(ix)),
                 Ok(ix) => deopt_info = Some(prog.ip2deopt[ix].1)
             }
         }
