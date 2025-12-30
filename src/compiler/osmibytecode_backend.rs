@@ -200,7 +200,10 @@ impl<'a> Compiler<'a> {
 
         let spec = self.prepare_output(instr.out);
         let dest = spec.target_reg();
-        let tmp_inter = if instr.inputs.iter().skip(2).any(|i| self.register_allocation.location(*i) == Some(ValueLocation::Register(dest))) {
+        let tmp_inter = if instr.inputs.len() > 2 && (
+            instr.effect != OpEffect::None || // may deopt -> must not overwrite input registers
+            instr.inputs.iter().skip(2).any(|i| self.register_allocation.location(*i) == Some(ValueLocation::Register(dest)))
+        ) {
             self.temp_regs.alloc().unwrap()
         } else {
             dest
@@ -234,6 +237,7 @@ impl<'a> Compiler<'a> {
         }
         let fixup = self.program.last().unwrap().replace_regs(|&r, w| if (r, w) == (tmp_inter, true) { dest } else { r });
         *self.program.last_mut().unwrap() = fixup;
+        self.temp_regs.release(tmp_inter);
 
         self.finalize_output(spec);
     }

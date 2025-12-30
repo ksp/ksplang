@@ -513,3 +513,9 @@ fn fuzz_bad_div_eq_condition_simplification() {
    let ops = vec![ DigitSum, DigitSum, LenSum, Jump, Increment, Increment, Increment, Increment, Increment, DigitSum, DigitSum, Funkcia, LSwap, LSwap, Qeq, Swap, LSwap, ];
    verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 1, 0]);
 }
+
+#[test]
+fn fuzz_variadic_op_deopt_input_reg_overwrite() {
+   let ops = vec![ LenSum, Increment, DigitSum, Increment, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal, ];
+   verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 49733868826177713, 8608393193207168768, 65405]);
+}
