@@ -525,3 +525,9 @@ fn fuzz_mod_range_ops_overflow2() {
    let ops = vec![ DigitSum, DigitSum, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Call, Increment, Increment, Increment, Max, Increment, Increment, Increment, Increment, Bitshift, Modulo, ];
    verify_repro(ops, vec![-1, -5787224822168083515, 4557525817606123439, 4557430888798830399, -5787213827046133841, -6842197495944951377, -5342947728991, -1281, -5787308985970982913, -7668198946217414737, 0]);
 }
+
+#[test]
+fn fuzz_crash_on_late_deopt_unreachable() {
+   let ops = vec![ DigitSum, Increment, DigitSum, LenSum, DigitSum, DigitSum, Increment, Increment, DigitSum, DigitSum, Remainder, Qeq, DigitSum, Remainder, Gcd2, Increment, Increment, Increment, ];
+   verify_repro(ops, vec![72339069014638591, -22606306925871105, -1347440641, -1, -5773051772335554561, -81, -1, -344944811521, -1, 0]);
+}

@@ -1086,7 +1086,11 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                         println!("Well, we found out that {input} has empty range -> i.e. this branch is just unreachable");
                     }
                     cfg.push_assert(Condition::False, OperationError::Unreachable, None);
-                    return (i.with_op(OptOp::Nop, &[], OpEffect::None), None);
+                    if i.op.has_output() {
+                        return result_const!(0);
+                    } else {
+                        return (i.with_op(OptOp::Nop, &[], OpEffect::None), None);
+                    }
                 }
                 ranges.push(range);
                 if val_norm != *input {
