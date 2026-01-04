@@ -629,6 +629,12 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                 } else {
                     OpEffect::None
                 },
+            OptOp::ShiftL | OptOp::ShiftR =>
+                if *inputs[0].start() < 0 {
+                    OpEffect::MayFail
+                } else {
+                    OpEffect::None
+                }
             OptOp::Tetration => OpEffect::MayFail, // TODO
             OptOp::AbsFactorial =>
                 if *abs_range(inputs[0].clone()).end() <= 20 {
@@ -642,7 +648,17 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                 } else {
                     OpEffect::None
                 }
-            },
+            }
+            OptOp::MedianCursed => {
+                let control = &inputs[0];
+                if *control.end() > inputs.len() as i64 {
+                    OpEffect::MayDeopt
+                } else if *control.start() <= 0 {
+                    OpEffect::MayFail
+                } else {
+                    OpEffect::None
+                }
+            }
             _ => self.worst_case_effect() // do not depend on ranges
         }
     }
