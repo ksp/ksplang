@@ -223,17 +223,56 @@ fn choose_insert_position(
 }
 
 fn can_hoist_from_block(
-    _g: &GraphBuilder,
+    g: &GraphBuilder,
     block: &BasicBlock,
     instr_idx: u32,
     instr: &OptInstr,
 ) -> bool {
-    if matches!(instr.op, OptOp::Checkpoint) || instr.effect != OpEffect::None {
-        return !block.instructions.range(..instr_idx)
-            .any(|(_, prior)| prior.effect != OpEffect::None || matches!(prior.op, OptOp::Checkpoint));
+    if !matches!(instr.op, OptOp::Checkpoint) && instr.op.worst_case_effect() == OpEffect::None {
+        return true
     }
 
-    true
+    let mut prior_checkpoint = false;
+    let mut prior_effect = false;
+    for (_, prior) in block.instructions.range(..instr_idx) {
+        prior_effect = prior_effect || prior.effect != OpEffect::None;
+        prior_checkpoint = prior_checkpoint || matches!(prior.op, OptOp::Checkpoint);
+    }
+
+    if !prior_effect && !prior_checkpoint {
+        return true
+    }
+    if matches!(instr.op, OptOp::KsplangOpsIncrement(_)) {
+        return !prior_checkpoint
+    }
+    if matches!(instr.op, OptOp::Checkpoint) {
+        return !prior_checkpoint && !prior_effect
+    }
+    if !matches!(instr.effect, OpEffect::None | OpEffect::MayFail) {
+        return !prior_effect && !prior_checkpoint
+    }
+
+
+    // check the effect at start of the block
+    //  - we need to be sure that the effect wasn't just masked by a preceeding
+    //  - even though we move it into the previous block, checking start of the current block is sufficient
+    //    For example:
+    //      if (a != 0) { StackWrite(0, a); b / a } else { b / a }
+    //    We can safely hoist (b / a), because:
+    //      in block1: it cannot have an effect
+    //      in block2: it's the first instruction, so moving the effect before branch does not change anything
+    let op_ranges: Vec<_> = instr.inputs.iter().map(|&v| g.val_range_at(v, InstrId(block.id, 0))).collect();
+    let effect_hoisted = instr.op.effect_based_on_ranges(&op_ranges);
+    // println!("Judged {}  : {op_ranges:?}, result: {effect_hoisted:?}", instr);
+
+    match effect_hoisted {
+        OpEffect::None => true,
+        // ok to swap error and checkpoint, since error is very unlikely
+        // OpEffect::MayFail => !prior_effect,
+        // TODO: should be valid, but is it actually a good idea?
+        OpEffect::MayFail => if g.conf.error_as_deopt { true } else { !prior_effect },
+        _ => false
+    }
 }
 
 #[cfg(test)]
