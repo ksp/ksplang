@@ -4,7 +4,7 @@ use arrayvec::ArrayVec;
 use num_integer::Integer;
 use smallvec::{SmallVec, ToSmallVec, smallvec};
 
-use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::Condition, pattern::OptOptPattern, range_ops::{IRange, mod_split_ranges, range_signum}, utils::{FULL_RANGE, abs_range, intersect_range, range_is_signless, union_range}}, vm::{self, OperationError}};
+use crate::{compiler::{analyzer::cond_implies, cfg::GraphBuilder, ops::{InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::Condition, pattern::OptOptPattern, range_ops::{IRange, mod_split_ranges, range_signum}, utils::{FULL_RANGE, abs_range, intersect_range, range_is_signless, union_range}}, digit_sum::digit_sum_u64, vm::{self, OperationError}};
 
 use super::pattern::{OptOptPattern as P};
 
@@ -1554,6 +1554,32 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 return result_const!(1);
             }
 
+            OptOp::DigitSum if *ranges[0].start() >= 0 && *ranges[0].end() < 10 => {
+                return result_val!(i.inputs[0])
+            }
+            OptOp::DigitSum if *ranges[0].start() > -10 && *ranges[0].end() < 10 => {
+                i.op = OptOp::AbsSub;
+                i.inputs.insert(0, ValueId::C_ZERO);
+            }
+            OptOp::DigitSum if *abs_range(&ranges[0]).start() / 10 * 10 + 9 >= *abs_range(&ranges[0]).end() => {
+                // CS(x) if x >= 120 and x <= 129
+                //     -> x - 120 + CS(120)
+                // CS(x) if x >= -129 and x <= -120
+                //     -> -120 - x + CS(120)
+                let offset = abs_range(&ranges[0]).start() / 10 * 10;
+                assert_eq!(ranges[0].start().signum(), ranges[0].end().signum());
+                let x = i.inputs[0];
+                let cs_offset = digit_sum_u64(offset);
+                let c = cs_offset.strict_sub_unsigned(offset);
+                let c = cfg.store_constant(c);
+                i.inputs = smallvec![c, x];
+                if *ranges[0].start() < 0 {
+                    i.op = OptOp::Sub;
+                } else {
+                    i.op = OptOp::Add;
+                }
+            }
+
             _ => { }
         }
 
@@ -1828,6 +1854,18 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 } else if *ranges[0].end() <= 0 {
                     i.op = OptOp::Select(Condition::Eq(x, ValueId::C_ZERO));
                     i.inputs = smallvec![ValueId::C_ZERO, ValueId::C_NEG_ONE];
+                    continue;
+                }
+            }
+        }
+
+        if OptOp::DigitSum == i.op {
+            let x = i.inputs[0];
+            if let Some(nested) = cfg.get_defined_at(x) {
+                // CS(|x|) = CS(x)
+                // CS(-x) = CS(x)
+                if matches!(nested.op, OptOp::AbsSub | OptOp::Sub) && nested.inputs[0] == ValueId::C_ZERO {
+                    i.inputs = smallvec![nested.inputs[1]];
                     continue;
                 }
             }

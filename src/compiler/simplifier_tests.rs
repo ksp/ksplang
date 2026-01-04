@@ -550,3 +550,15 @@ fn test_simpl_condition_div_pushdown() {
     // assert_eq!(simplify_cond(&mut g, Condition::LeqConst(adiv, 2), END_INSTR), Condition::Gt(c15, a));
 }
 
+#[test]
+fn test_cs_const_offset() {
+    let (mut g, [a, b, c]) = create_graph([10..=19, 1000_113..=1000_118, -129..=-120]);
+    let a_cs = g.value_numbering(OptOp::DigitSum, &[a], None, None);
+    let b_cs = g.value_numbering(OptOp::DigitSum, &[b], None, None);
+    let c_cs = g.value_numbering(OptOp::DigitSum, &[c], None, None);
+
+    assert!(OptOptPattern::op2(OptOp::Add, a, -9).try_match(&g, &[a_cs]).is_ok());
+    assert!(OptOptPattern::op2(OptOp::Add, b, -1000_107).try_match(&g, &[b_cs]).is_ok());
+    assert!(OptOptPattern::op2(OptOp::Sub, -117, c).try_match(&g, &[c_cs]).is_ok());
+}
+
