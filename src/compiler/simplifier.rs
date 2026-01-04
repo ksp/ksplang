@@ -504,7 +504,7 @@ fn simplify_cond_core(cfg: &mut GraphBuilder, condition: &Condition<ValueId>, at
                             Condition::Eq(_, _) if *div_r.start() >= 0 => return Condition::Lt(def.inputs[0], def.inputs[1]),
                             Condition::Eq(_, _) if *div_r.end() <= 0 => return Condition::Gt(def.inputs[0], def.inputs[1]),
                             Condition::Neq(_, _) if *div_r.start() >= 0 => return Condition::Geq(def.inputs[0], def.inputs[1]),
-                            Condition::Neq(_, _) if *div_r.end() <= 0 => return Condition::Geq(def.inputs[0], def.inputs[1]),
+                            Condition::Neq(_, _) if *div_r.end() <= 0 => return Condition::Leq(def.inputs[0], def.inputs[1]),
                             _ => {}
                         }
                     }
@@ -1218,7 +1218,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                 // a % a -> 0
                 let br = &ranges[1];
                 if br.contains(&0) {
-                    cfg.push_assert(Condition::NeqConst(i.inputs[1], 0), OperationError::DivisionByZero, None);
+                    cfg.push_assert(Condition::Neq(ValueId::C_ZERO, i.inputs[1]), OperationError::DivisionByZero, None);
                 }
                 return result_const!(0);
             }

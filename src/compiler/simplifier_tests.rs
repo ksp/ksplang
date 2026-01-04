@@ -542,6 +542,7 @@ fn test_simpl_condition_div_pushdown() {
 
     // assert_eq!(simplify_cond(&mut g, Condition::EqConst(bdiv, 0), END_INSTR), Condition::Gt(ValueId::C_FIVE, b));
     assert_eq!(simplify_cond(&mut g, Condition::EqConst(bnegdiv, 0), END_INSTR), Condition::Lt(cneg5, b));
+    assert_eq!(simplify_cond(&mut g, Condition::NeqConst(bnegdiv, 0), END_INSTR), Condition::Geq(cneg5, b));
 
     assert_eq!(simplify_cond(&mut g, Condition::LtConst(adiv, 2), END_INSTR), Condition::Gt(ValueId::C_TWO, adiv));
     // assert_eq!(simplify_cond(&mut g, Condition::LtConst(adiv, 2), END_INSTR), Condition::Gt(ValueId::C_TEN, a));

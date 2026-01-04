@@ -531,3 +531,9 @@ fn fuzz_crash_on_late_deopt_unreachable() {
    let ops = vec![ DigitSum, Increment, DigitSum, LenSum, DigitSum, DigitSum, Increment, Increment, DigitSum, DigitSum, Remainder, Qeq, DigitSum, Remainder, Gcd2, Increment, Increment, Increment, ];
    verify_repro(ops, vec![72339069014638591, -22606306925871105, -1347440641, -1, -5773051772335554561, -81, -1, -344944811521, -1, 0]);
 }
+
+#[test]
+fn fuzz_invalid_div_eq_0_pushdown() {
+   let ops = vec![ Increment, DigitSum, DigitSum, Remainder, DigitSum, Increment, DigitSum, DigitSum, Remainder, Qeq, DigitSum, Increment, DigitSum, LenSum, DigitSum, DigitSum, Remainder, Qeq, DigitSum, Remainder, ];
+   verify_repro(ops, vec![-5188146770730811465, -1, -1, -5188146770730811393, -5208412970261938177, -73, -5188147079968456705, 0]);
+}
