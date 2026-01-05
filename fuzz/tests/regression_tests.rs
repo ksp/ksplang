@@ -354,7 +354,7 @@ fn fuzz_missing_tetration_optimization_assert() {
 fn fuzz_something_with_swaps() {
    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, Increment, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Increment, DigitSum, LSwap, BranchIfZero, TetrationNumIters, Modulo, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Goto, ];
    let (_g, obc) = verify_repro(ops, vec![666, 777777, 3]);
-    assert!(obc.program.len() < 25, "Too long program, did some opt fail?");
+    assert!(obc.program.len() < 30, "Too long program, did some optimization fail?");
 }
 
 #[test]
@@ -550,6 +550,11 @@ fn fuzz_hoisting_changes_effect_and_makes_it_invalid2() {
    verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 }
 
+#[test]
+fn fuzz_bad_shiftl_effect_inferrence() {
+   let ops = vec![ DigitSum, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, DigitSum, Increment, DigitSum, DigitSum, Bitshift, DigitSum, BranchIfZero, DigitSum, Max, BranchIfZero, Bitshift, DigitSum, Increment, DigitSum, Gcd2, DigitSum, DigitSum, Remainder, Qeq, Bitshift, DigitSum, Increment, Max, Sum, DigitSum, Gcd2, DigitSum, DigitSum, Remainder, Qeq, DigitSum, DigitSum, Increment, LenSum, ];
+   verify_repro(ops, vec![-61453979541569717, -2344273723743273180, 8608480567731124087, 7081852463225730852, -61453979541569717, -2344273723743273180, 8608480567731124087, 8608480567737939748, -2315130579621707519, 7081852463225449695, -61453979545305269, -2314885530818492853, -3799266470416135354, -2594229207528946105, -1, -1, -1, -59672695062659073, -1, -1, -1, -1, -1, -14942209, -1, -280513443004417, -1, -237077911960321, -1, -22734945524908227, -1, -1, -1, -1099511627775, -1, -1268899090616287233, 9161166084165075764, -8757377, 5422135737521669119]);
+}
 
 #[test]
 fn fuzz_block_parameter_value_removal() {

@@ -1111,7 +1111,6 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             if let Some(new_inputs) = flatten_variadic(cfg, &mut i, dedup, /* limit */ 32) {
                 // save original range, since flattening might break some specific heuristics
                 let prev_range = i.op.evaluate_range_quick(&i.inputs.iter().map(|&v| cfg.val_range_at(v, i.id)).collect::<Vec<_>>()).unwrap_or(FULL_RANGE);
-                println!("DBG wtf {prev_range:?} {i} ({new_inputs:?})");
                 narrow_out_range!(prev_range);
                 i.inputs = new_inputs;
                 continue;

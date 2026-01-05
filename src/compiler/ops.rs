@@ -630,7 +630,7 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                     OpEffect::None
                 },
             OptOp::ShiftL | OptOp::ShiftR =>
-                if *inputs[0].start() < 0 {
+                if *inputs[1].start() < 0 {
                     OpEffect::MayFail
                 } else {
                     OpEffect::None
