@@ -1437,7 +1437,7 @@ impl GraphBuilder {
 
     fn remove_block_parameter(&mut self, block_id: BlockId, p: ValueId) {
         let block = self.block_mut(block_id).unwrap();
-        let index = block.parameters.iter().position(|&v| v == p).unwrap();
+        let Some(index) = block.parameters.iter().position(|&v| v == p) else { unreachable!("Cannot find parameter {p} in {block_id}:\n{self}") };
         block.parameters.remove(index);
         for &jump_id in &block.incoming_jumps.clone() {
             let jump = self.instr_mut(jump_id).unwrap();
@@ -1446,6 +1446,7 @@ impl GraphBuilder {
                 self.remove_used_at(removed_value, jump_id);
             }
         }
+        self.values.remove(&p);
     }
 
     pub fn clean_value(&mut self, val: ValueId) {

@@ -550,3 +550,9 @@ fn fuzz_hoisting_changes_effect_and_makes_it_invalid2() {
    verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
 }
 
+
+#[test]
+fn fuzz_block_parameter_value_removal() {
+   let ops = vec![ Gcd2, Increment, LSwap, DigitSum, LenSum, DigitSum, LSwap, DigitSum, LenSum, DigitSum, LSwap, DigitSum, DigitSum, Remainder, Qeq, DigitSum, LSwap, DigitSum, LenSum, Praise, LSwap, DigitSum, DigitSum, Remainder, Qeq, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, ];
+   verify_repro(ops, vec![0; 4]);
+}
