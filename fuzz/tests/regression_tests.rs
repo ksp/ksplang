@@ -567,3 +567,11 @@ fn fuzz_block_parameter_value_removal() {
    let ops = vec![ Gcd2, Increment, LSwap, DigitSum, LenSum, DigitSum, LSwap, DigitSum, LenSum, DigitSum, LSwap, DigitSum, DigitSum, Remainder, Qeq, DigitSum, LSwap, DigitSum, LenSum, Praise, LSwap, DigitSum, DigitSum, Remainder, Qeq, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, ];
    verify_repro(ops, vec![0; 4]);
 }
+
+#[test]
+fn fuzz_value_only_used_in_deopt_got_smashed_by_regalloc() {
+   let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, Increment, DigitSum, DigitSum, LenSum, Pop2, DigitSum, DigitSum, Funkcia, Qeq, Pop2,
+                   DigitSum, DigitSum, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Funkcia, Qeq,
+                   Pop2, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Funkcia, Qeq ];
+   verify_repro(ops, vec![0, 120, 0]);
+}

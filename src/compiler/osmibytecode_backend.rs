@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap}, mem, u32};
+use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap}, mem};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use smallvec::{SmallVec, smallvec};
 
@@ -677,6 +677,7 @@ impl<'a> Compiler<'a> {
                         Some(ValueLocation::Register(src)) if src == dest_reg => {}
                         Some(ValueLocation::Register(src)) => register_moves.push((src, dest_reg)),
                         Some(ValueLocation::Spill(src_spill)) => unspills.push((src_spill, dest_reg)),
+                        Some(ValueLocation::Nowhere) => unreachable!(),
                         None => panic!()
                     }
                 }
@@ -685,6 +686,7 @@ impl<'a> Compiler<'a> {
                         spills.push((*arg, slot))
                     }
                 },
+                Some(ValueLocation::Nowhere) => {}
                 None => {}
             }
         }
@@ -987,7 +989,8 @@ impl<'a> Compiler<'a> {
                     self.program.push(OsmibyteOp::Unspill(reg, slot));
                     self.temp_regs.insert_cache(value, reg);
                     reg
-                }
+                },
+                ValueLocation::Nowhere => RegId(255)
             }
         } else {
             panic!("value {:?} has no register allocation", value);
@@ -1016,7 +1019,8 @@ impl<'a> Compiler<'a> {
                     smallvec![]
                 }
                 ValueLocation::Spill(slot) =>
-                    smallvec![OsmibyteOp::Unspill(reg, slot)]
+                    smallvec![OsmibyteOp::Unspill(reg, slot)],
+                ValueLocation::Nowhere => smallvec![]
             }
         } else {
             panic!("value {:?} has no register allocation", value)
@@ -1067,6 +1071,15 @@ impl<'a> Compiler<'a> {
             Some(ValueLocation::Spill(slot)) => {
                 let reg = self.temp_regs.alloc().expect("ran out of scratch registers for spill dest");
                 OutputSpec::Spill { reg, slot }
+            }
+            Some(ValueLocation::Nowhere) => {
+                if let Some(reg) = self.temp_regs.get_cached(ValueId(0)) {
+                    OutputSpec::Register(reg)
+                } else {
+                    let reg = self.temp_regs.alloc().expect("ran out of scratch register for unused output");
+                    self.temp_regs.insert_cache(ValueId(0), reg);
+                    OutputSpec::Register(reg)
+                }
             }
             None => panic!("no register allocation for output value {value}\n{allocation}", allocation = &self.register_allocation),
         }
@@ -1350,6 +1363,7 @@ impl fmt::Display for RegisterAllocation {
             match location {
                 ValueLocation::Register(reg) => { regs.entry(reg).or_default().insert(value); },
                 ValueLocation::Spill(slot) => spills.push((slot, value)),
+                ValueLocation::Nowhere => { }
             }
         }
 
@@ -1382,6 +1396,7 @@ impl fmt::Display for RegisterAllocation {
 enum ValueLocation {
     Register(RegId),
     Spill(u32),
+    Nowhere,
 }
 
 const RESERVED_REG_COUNT: u32 = 8;
@@ -1486,9 +1501,15 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
     let lifetimes = analyze_value_lifetimes(g, error_will_deopt);
     if g.conf.should_log(16) {
         println!("{lifetimes}");
+
+        // println!("Use lists:");
+        // for v in g.values.values() {
+        //     println!("  - {}: {:?}  {:?}", v.id, v.assigned_at, v.used_at);
+        // }
     }
 
     let mut value_segments: HashMap<ValueId, HashMap<BlockId, ValueSegment>> = Default::default();
+    let mut allocation = RegisterAllocation::default();
     let mut candidates: Vec<ValueCandidate> = lifetimes
         .ranges
         .iter()
@@ -1498,6 +1519,11 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
                 blocks.iter().map(|(&block, &(from, to))| (block, ValueSegment::new(g.block_(block), from.1, to.1)))
                              .collect();
             if segments.is_empty() {
+                return None;
+            }
+            if segments.values().all(|s| s.from == s.to) {
+                // only assigned, never read
+                allocation.locations.insert(*val, ValueLocation::Nowhere);
                 return None;
             }
             value_segments.insert(*val, segments.clone());
@@ -1515,7 +1541,6 @@ pub fn allocate_registers(g: &GraphBuilder, reg_count: u32, error_will_deopt: bo
 
     let mut register_segments: Vec<HashMap<BlockId, Vec<ValueSegment>>> = (0..reg_count).map(|_| Default::default()).collect();
     let mut register_values: Vec<HashSet<ValueId>> = (0..reg_count).map(|_| Default::default()).collect();
-    let mut allocation = RegisterAllocation::default();
     let mut next_spill_slot: u32 = 0;
 
     for candidate in candidates {
