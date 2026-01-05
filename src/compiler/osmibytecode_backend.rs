@@ -3,7 +3,7 @@ use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap}, mem, u32};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use smallvec::{SmallVec, smallvec};
 
-use crate::compiler::{analyzer::dataflow, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{AssertInto, SaturatingInto}};
+use crate::compiler::{analyzer::{dataflow, reverse_postorder}, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{AssertInto, SaturatingInto}};
 use crate::vm::OperationError;
 
 #[allow(dead_code)]
@@ -64,11 +64,12 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn compile(&mut self) {
-        for block in &self.g.blocks {
+        let block_ids = reverse_postorder(self.g);
+        for bid in block_ids {
             let start = self.program.len();
             let start_u16: u16 = start.try_into().expect("precompiled program exceeds 65535 ops");
-            self.block_starts.insert(block.id, start_u16);
-            self.compile_block(block);
+            self.block_starts.insert(bid, start_u16);
+            self.compile_block(self.g.block_(bid));
         }
     }
 
@@ -1832,7 +1833,7 @@ fn get_value_usage_info(g: &GraphBuilder, block: &BasicBlock, error_will_deopt: 
                 }
                 let b = g.block_(block_id);
                 if g.block_(block_id).incoming_jumps.len() != 1 {
-                    panic!("Cannot determine deopt stack of {}, the {} block has multiple incoming jumps:\n\n{g}", i.id, block_id)
+                    panic!("Cannot determine deopt stack of {}, the {} block has multiple incoming jumps {:?}:\n\n{g}", i.id, block_id, g.block_(block_id).incoming_jumps)
                 }
                 block_id = b.incoming_jumps[0].block_id();
                 for i in g.block_(block_id).instructions.values().rev() {
@@ -1868,6 +1869,8 @@ fn analyze_value_lifetimes(g: &GraphBuilder, error_will_deopt: bool) -> LiveRang
     //  defined values -> used values
     let blocks: Vec<(HashSet<ValueId>, HashSet<ValueId>)> =
         g.blocks.iter().map(|b| {
+            if !b.is_reachable { return Default::default() }
+
             let (defined, require) = get_value_usage_info(g, b, error_will_deopt);
             (defined.keys().copied().collect(),
              require.keys().copied().filter(|v| !defined.contains_key(v)).collect())
@@ -1891,7 +1894,7 @@ fn analyze_value_lifetimes(g: &GraphBuilder, error_will_deopt: bool) -> LiveRang
 
     let mut ranges = HashMap::default();
     let mut live_vars = HashMap::default();
-    for block in &g.blocks {
+    for block in g.blocks.iter().filter(|b| b.is_reachable) {
         let (defined_at, last_use) = get_value_usage_info(g, block, error_will_deopt);
 
         let mut result = vec![];

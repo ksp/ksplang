@@ -557,6 +557,12 @@ fn fuzz_bad_shiftl_effect_inferrence() {
 }
 
 #[test]
+fn fuzz_unreachable_block_causes_crashes() {
+   let ops = vec![ DigitSum, DigitSum, DigitSum, Increment, LSwap, DigitSum, DigitSum, LSwap, DigitSum, LSwap, DigitSum, DigitSum, Remainder, Qeq, Remainder, LSwap, DigitSum, LenSum, Praise, Universal, ];
+   verify_repro(ops, vec![-1012762419733073423, -1012762423789014735, 0]);
+}
+
+#[test]
 fn fuzz_block_parameter_value_removal() {
    let ops = vec![ Gcd2, Increment, LSwap, DigitSum, LenSum, DigitSum, LSwap, DigitSum, LenSum, DigitSum, LSwap, DigitSum, DigitSum, Remainder, Qeq, DigitSum, LSwap, DigitSum, LenSum, Praise, LSwap, DigitSum, DigitSum, Remainder, Qeq, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, Max, ];
    verify_repro(ops, vec![0; 4]);
