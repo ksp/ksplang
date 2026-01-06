@@ -593,3 +593,9 @@ fn fuzz_yet_another_way_the_iterated_binary_gcd_does_not_work() {
    let ops = vec![ Modulo, DigitSum, Bitshift, DigitSum, Increment, DigitSum, And, DigitSum, DigitSum, DigitSum, Increment, Gcd2, Universal, DigitSum, Increment, Gcd2, Gcd2, ];
    verify_repro(ops, vec![1085102592571150095, 1085102592571198463, -1034834473201, 1099511566095]);
 }
+
+#[test]
+fn fuzz_cyclical_phis_stack_smashing() {
+   let ops = vec![ Modulo, And, Max, LSwap, LenSum, DigitSum, DigitSum, DigitSum, Increment, Gcd2, DigitSum, LSwap, BranchIfZero, ];
+   verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0]);
+}

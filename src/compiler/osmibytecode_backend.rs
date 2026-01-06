@@ -812,6 +812,14 @@ impl<'a> Compiler<'a> {
             *inputs.get_mut(&mv.0).unwrap() -= 1;
             sequential_moves.push(mv);
         }
+        for chunk in sequential_moves.chunks(3) {
+            match chunk {
+                [a, b, c] => self.program.push(OsmibyteOp::Mov3(a.1, a.0, b.1, b.0, c.1, c.0)),
+                [a, b] => self.program.push(OsmibyteOp::Mov2(a.1, a.0, b.1, b.0)),
+                [a] => self.program.push(OsmibyteOp::OrConst(a.1, a.0, 0)),
+                wtf => unreachable!("{wtf:?}")
+            }
+        }
         let mut atomic_moves = moves; // rest has some cycles, we need to be careful
         assert_ne!(1, atomic_moves.len());
         // sequence of swaps
@@ -829,14 +837,6 @@ impl<'a> Compiler<'a> {
 
             reg_remap.insert(from, to);
             reg_remap.insert(to, from);
-        }
-        for chunk in sequential_moves.chunks(3) {
-            match chunk {
-                [a, b, c] => self.program.push(OsmibyteOp::Mov3(a.1, a.0, b.1, b.0, c.1, c.0)),
-                [a, b] => self.program.push(OsmibyteOp::Mov2(a.1, a.0, b.1, b.0)),
-                [a] => self.program.push(OsmibyteOp::OrConst(a.1, a.0, 0)),
-                wtf => unreachable!("{wtf:?}")
-            }
         }
     }
 
