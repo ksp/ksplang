@@ -4,7 +4,7 @@ use std::fmt;
 
 use libfuzzer_sys::fuzz_target;
 use arbitrary::Arbitrary;
-use ksplang::{compiler::test_utils::verify_repro, ops::Op};
+use ksplang::{compiler::test_utils::ReproData, ops::Op};
 
 const ALLOWED_OPS: &[Op] = &[
     Op::Praise,
@@ -51,10 +51,6 @@ impl<'a> Arbitrary<'a> for ArbitraryOp {
     }
 }
 
-impl fmt::Debug for ArbitraryOp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { fmt::Debug::fmt(&self.0, f) }
-}
-
 #[derive(Arbitrary)]
 struct FuzzInput {
     program: Vec<ArbitraryOp>,
@@ -63,30 +59,17 @@ struct FuzzInput {
 
 impl std::fmt::Debug for FuzzInput {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "FuzzInput {{")?;
-        writeln!(f, "    program: {:?},", self.program)?;
-        writeln!(f, "    input: {:?},", self.input)?;
-        write!(f, "}}")?;
-        writeln!(f, "Reproduce with:")?;
-        writeln!(f, "#[test]")?;
-        writeln!(f, "fn fuzz_repro() {{")?;
-        writeln!(f, "    let ops = vec![")?;
-        for op in &self.program {
-            writeln!(f, "        {:?},", op.0)?;
-        }
-        writeln!(f, "    ];")?;
-        writeln!(f, "    verify_repro(ops, vec!{:?});", self.input)?;
-        writeln!(f, "}}")?;
-        Ok(())
+        fmt::Display::fmt(&to_repro(&self), f)
     }
 }
 
+fn to_repro(i: &FuzzInput) -> ReproData {
+    ReproData::new(i.program.iter().map(|op| op.0).collect::<Vec<_>>(), i.input.clone())
+}
+
 fuzz_target!(|data: FuzzInput| {
-    let FuzzInput { program, input } = data;
-    let ops: Vec<Op> = program.iter().map(|op| op.0).collect();
+    let r = to_repro(&data);
 
-    if ops.is_empty() || input.is_empty() { return } // uninteresting edge case
-
-    verify_repro(ops, input);
+    r.verify();
 });
 

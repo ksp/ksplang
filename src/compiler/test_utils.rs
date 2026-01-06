@@ -1,4 +1,4 @@
-use std::cmp;
+use std::{cmp, fmt};
 
 use crate::compiler::{
     cfg::GraphBuilder, cfg_interpreter, osmibytecode::OsmibytecodeBlock, osmibytecode_vm::{self, ExitPointId, RegFile}, precompiler::{NoTrace, Precompiler}
@@ -11,11 +11,108 @@ const PI_TEST_VALUES: [i8; 42] = [
     0, 2, 8, 8, 4, 1, 9, 7, 1, 6,
 ];
 
+#[derive(Clone, Default, PartialEq, Eq, Debug)]
+pub struct ReproData {
+    ops: Vec<Op>,
+    input: Vec<i64>,
+    // trace_input: Vec<i64>,
+    const_input: Vec<i64>,
+    soften_limits: bool,
+    max_interpret: Option<usize>,
+}
+
+impl ReproData {
+    pub fn new(ops: impl Into<Vec<Op>>, input: impl Into<Vec<i64>>) -> Self {
+        Self {
+            ops: ops.into(),
+            input: input.into(),
+            ..Default::default()
+        }
+    }
+
+    pub fn with_constin(mut self, const_input: impl Into<Vec<i64>>) -> Self {
+        self.const_input = const_input.into();
+        self
+    }
+
+    pub fn with_soften_limits(mut self, soften_limits: bool) -> Self {
+        self.soften_limits = false;
+        self
+    }
+
+    pub fn with_max_interpret(mut self, max_interpret: usize) -> Self {
+        self.max_interpret = Some(max_interpret);
+        self
+    }
+
+    pub fn verify(self) -> (GraphBuilder, OsmibytecodeBlock) {
+        verify_repro_core(self)
+    }
+}
+
+impl fmt::Display for ReproData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let def = Self::default();
+        writeln!(f, "#[test]")?;
+        writeln!(f, "fn fuzz_repro() {{")?;
+        write!(f,   "    let ops = vec![ ")?;
+        for (i, op) in self.ops.iter().enumerate() {
+            if i > 0 { write!(f, ", ")?; }
+            write!(f, "{:?}", op)?;
+        }
+        writeln!(f, " ];")?;
+        if self.soften_limits == def.soften_limits && self.max_interpret.is_none() {
+            if self.const_input.is_empty() {
+                writeln!(f, "    verify_repro(ops, vec!{:?});", self.input)?;
+            } else {
+                writeln!(f, "    verify_repro_const(ops, vec!{:?}, vec!{:?})", self.input, self.const_input)?;
+            }
+        } else {
+            writeln!(f, "    let r = ReproData::new(ops, {:?})", self.input)?;
+
+            if !self.const_input.is_empty() {
+                writeln!(f, "        .with_constin({:?})", self.const_input)?;
+            }
+            write!(f, "        ")?;
+            if self.soften_limits != def.soften_limits {
+                write!(f, ".with_soften_limits({:?})", self.soften_limits)?;
+            }
+            if self.max_interpret != def.max_interpret {
+                write!(f, ".with_max_interpret({:?})", self.max_interpret)?;
+            }
+            writeln!(f, ";")?;
+            writeln!(f, "    r.verify();")?;
+        }
+        writeln!(f, "}}")
+    }
+}
+
+// pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, OsmibytecodeBlock) {
+// }
 pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, OsmibytecodeBlock) {
-    let g = GraphBuilder::new(0);
-    let mut precompiler = Precompiler::new(&ops, input.len(), false, 0, 2_000, true, None, g, NoTrace());
+    let r = ReproData::new(ops, input);
+    r.verify()
+}
+pub fn verify_const(ops: Vec<Op>, input: Vec<i64>, constin: Vec<i64>) -> (GraphBuilder, OsmibytecodeBlock) {
+    let r = ReproData::new(ops, input).with_constin(constin);
+    r.verify()
+}
+fn verify_repro_core(r: ReproData) -> (GraphBuilder, OsmibytecodeBlock) {
+    let full_input = r.input.iter().copied().chain(r.const_input.iter().copied()).collect::<Vec<i64>>();
+
+    let mut g = GraphBuilder::new(0);
+    for c in &r.const_input {
+        let c = g.store_constant(*c);
+        g.stack.push(c);
+    }
+    if r.const_input.len() > 0 {
+        g.push_checkpoint();
+    }
+    let max_interpret = r.max_interpret.unwrap_or(r.ops.len() + 2000);
+    let mut precompiler = Precompiler::new(&r.ops, full_input.len(), false, 0, max_interpret, true, None, g, NoTrace());
     precompiler.bb_limit = 32;
     precompiler.instr_limit = 500;
+    precompiler.soften_limits = r.soften_limits;
     precompiler.interpret();
     let g = precompiler.g;
     // if is_trivial(&g) { return; }
@@ -24,7 +121,7 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, Osmibytecod
     let obc_block = OsmibytecodeBlock::from_cfg(&g);
     println!("{obc_block}");
 
-    let mut obc_stack = input.clone();
+    let mut obc_stack = r.input.clone();
     let mut regs = RegFile::new();
     let obc_res = osmibytecode_vm::interpret_block::<true>(&obc_block, &mut obc_stack, &mut regs);
 
@@ -34,17 +131,18 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, Osmibytecod
         Err(_) => 0,
     };
 
-    let mut cfg_stack = input.clone();
+    let mut cfg_stack = r.input.clone();
     let cfg_res = cfg_interpreter::interpret_cfg(&g, &mut cfg_stack, true);
 
     let vm_ops_limit = if obc_res.is_ok() { executed_ops } else { 500_000 };
     let max_stack = cmp::max(1000, obc_stack.len() + 100);
 
     // use stop_after to get success, not error result
-    let vm_options = VMOptions::new(&input, max_stack, &PI_TEST_VALUES, u64::MAX, vm_ops_limit);
-    let vm_res = vm::run(&ops, vm_options);
+    let vm_options = VMOptions::new(&full_input, max_stack, &PI_TEST_VALUES, u64::MAX, vm_ops_limit);
+    let vm_res = vm::run(&r.ops, vm_options);
 
     if cfg!(debug_assertions) && g.conf.should_log(1) {
+        println!("{r}");
         println!("    * CFG result: {cfg_res:?} stack: {} {cfg_stack:?}", cfg_stack.len());
         println!("    * OBC result: {obc_res:?} stack: {} {obc_stack:?}", obc_stack.len());
         println!("    * Interpreter result: {:?}", vm_res);
@@ -52,10 +150,13 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, Osmibytecod
 
     match (obc_res, cfg_res, vm_res) {
         (Ok(obc_run), Ok(cfg_run), Ok(vm_run)) => {
-            assert_eq!(cfg_run.executed_ksplang, obc_run.ksplang_interpreted, "CFG vs Osmibyte op count mismatch");
+            // if obc_run.exit_point == ExitPointId::Start || (obc_run.ksplang_interpreted == 0 && obc_stack == input) {
+            //    return (g, obc_block)
+            // }
 
-            assert_eq!(cfg_stack, vm_run.stack, "CFG vs VM stack mismatch. Program: {:?}, Input: {:?}", ops, input);
-            assert_eq!(obc_stack, vm_run.stack, "Osmibyte vs VM stack mismatch. Program: {:?}, Input: {:?}", ops, input);
+            assert_eq!(cfg_stack, vm_run.stack, "CFG vs VM stack mismatch");
+            assert_eq!(cfg_run.executed_ksplang, obc_run.ksplang_interpreted, "CFG vs Osmibyte op count mismatch");
+            assert_eq!(obc_stack, vm_run.stack, "Osmibyte vs VM stack mismatch.");
         },
         (Err(obc_err), Err(cfg_err), Err(vm_err)) => {
             if let RunError::InstructionFailed { error: vm_op_err, .. } = vm_err {
@@ -64,14 +165,14 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, Osmibytecod
             }
         },
         (Ok(obc_run), Err(e), _) => {
-             if obc_run.exit_point == ExitPointId::Start || (obc_run.ksplang_interpreted == 0 && obc_stack == input) {
+             if obc_run.exit_point == ExitPointId::Start || (obc_run.ksplang_interpreted == 0 && obc_stack == r.input) {
                 return (g, obc_block)
              }
              panic!("Osmibyte OK, CFG Err: {:?}", e)
         },
         (Err(e), Ok(_), _) => panic!("Osmibyte Err: {:?}, CFG OK", e),
         (Ok(obc_run), _, Err(e)) => {
-             if obc_run.exit_point == ExitPointId::Start || (obc_run.ksplang_interpreted == 0 && obc_stack == input) {
+             if obc_run.exit_point == ExitPointId::Start || (obc_run.ksplang_interpreted == 0 && obc_stack == r.input) {
                 return (g, obc_block)
              }
              panic!("Osmibyte OK, VM Err: {:?}", e)

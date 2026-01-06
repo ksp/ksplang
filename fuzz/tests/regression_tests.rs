@@ -1,4 +1,4 @@
-use ksplang::{compiler::test_utils::verify_repro, ops::Op::{self, *}};
+use ksplang::{compiler::test_utils::{ReproData, verify_repro}, ops::Op::{self, *}};
 
 fn run_fuzz_case(ops: Vec<Op>, input: Vec<i64>) {
     verify_repro(ops, input);
@@ -598,4 +598,12 @@ fn fuzz_yet_another_way_the_iterated_binary_gcd_does_not_work() {
 fn fuzz_cyclical_phis_stack_smashing() {
    let ops = vec![ Modulo, And, Max, LSwap, LenSum, DigitSum, DigitSum, DigitSum, Increment, Gcd2, DigitSum, LSwap, BranchIfZero, ];
    verify_repro(ops, vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0]);
+}
+
+#[test]
+fn sanity_check_const_input() {
+    let ops = vec![ Roll, Universal, DigitSum, Increment, And ];
+    let r = ReproData::new(ops, [1000, 1001, 1002, 1003, 1004])
+            .with_constin([0, 123, 124, 2, 5]);
+    r.verify();
 }
