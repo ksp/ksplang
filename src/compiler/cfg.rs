@@ -823,6 +823,9 @@ impl GraphBuilder {
         }
 
         let (mut instr, simplifier_range) = simplifier::simplify_instr(self, instr);
+        if self.current_block_ref().is_terminated {
+            return (ValueId(0), None);
+        }
         instr.id = InstrId(self.current_block, self.current_block_ref().next_instr_id);
         if instr.op.is_terminal() {
             assert_ne!(effect2, OpEffect::None, "Effect inferrence is broken {op:?} {args:?} -> {instr}");

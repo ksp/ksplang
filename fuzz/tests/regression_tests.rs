@@ -575,3 +575,9 @@ fn fuzz_value_only_used_in_deopt_got_smashed_by_regalloc() {
                    Pop2, DigitSum, Increment, DigitSum, DigitSum, DigitSum, Funkcia, Qeq ];
    verify_repro(ops, vec![0, 120, 0]);
 }
+
+#[test]
+fn fuzz_block_terminated_by_simplifier_optimization() {
+   let ops = vec![ DigitSum, Increment, Increment, Increment, DigitSum, DigitSum, Increment, DigitSum, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, TetrationNumIters, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, DigitSum, Bitshift, Max, DigitSum, Increment, DigitSum, Gcd2, Universal, ];
+   verify_repro(ops, vec![-185, 5424383215664581631, 0]);
+}
