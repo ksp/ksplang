@@ -596,7 +596,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             crate::ops::Op::Universal => {
                 let control = self.g.peek_stack();
-                let mut control_range = self.g.val_range(control);
+                let mut control_range = self.g.val_range_at(control, self.g.next_instr_id());
                 if *control_range.end() != *control_range.start() {
                     // TODO: fucking hack
                     let info = self.g.val_info(control);
@@ -695,7 +695,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             crate::ops::Op::Median => {
                 let n = self.g.peek_stack();
-                let n_range = self.g.val_range(n);
+                let n_range = self.g.val_range_at(n, self.g.next_instr_id());
 
                 if *n_range.end() <= 0 {
                     self.g.push_assert(Condition::False, OperationError::NonpositiveLength { value: 0 }, Some(n));
