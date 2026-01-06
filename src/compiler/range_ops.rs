@@ -4,7 +4,7 @@ use arrayvec::ArrayVec;
 use num_integer::Integer;
 use num_traits::{CheckedAdd, CheckedMul, CheckedSub};
 
-use crate::{compiler::utils::{abs_range, range_2_i64, u64neg, union_range}, vm};
+use crate::{compiler::utils::{FULL_RANGE, abs_range, range_2_i64, u64neg, union_range}, vm};
 
 pub type IRange = RangeInclusive<i64>;
 pub type URange = RangeInclusive<u64>;
@@ -58,30 +58,33 @@ pub fn range_mod(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> 
 
 /// Returns input-range -> output-range pairs, inside the range the mod is a fixed offset
 pub fn mod_split_ranges(x_range: IRange, m: i64, euclid: bool) -> Vec<(IRange, IRange)> {
+    assert!(m > 1);
     let (x_start, x_end) = x_range.into_inner();
-    let (k_start, k_end) = if true   { (x_start.div_euclid(m), x_end.div_euclid(m)) }
+    let (k_start, k_end) = if euclid { (x_start.div_euclid(m), x_end.div_euclid(m)) }
                            else      { (x_start / m, x_end / m) };
 
     let mut result: Vec<(IRange, IRange)> = vec![];
+
     for k in k_start..=k_end {
-        let (chunk_start, chunk_end) = if euclid || k >= 0 {
-            (k * m, k * m + m - 1)
+        let km = k * m;
+
+        let (chunk_start, chunk_end) = if euclid || k > 0 {
+            (km, km.saturating_add(m - 1))
+        } else if k == 0 {
+            (-m + 1, m - 1)
         } else {
-            // non-euclidean for m=10 will be split as:
-            // -19..-10, -9..-1, 0..9, 10..19
-            (k * m + 1, cmp::min(-1, k * m + m))
+            (km.saturating_sub(m - 1), km)
         };
 
-        let chunk_start = chunk_start.max(x_start);
-        let chunk_end = chunk_end.min(x_end);
+        let chunk_start = cmp::max(x_start, chunk_start);
+        let chunk_end = cmp::min(x_end, chunk_end);
 
         let (result_start, result_end) = if euclid {
             (chunk_start.rem_euclid(m), chunk_end.rem_euclid(m))
         } else {
             (chunk_start % m, chunk_end % m)
         };
-        println!("{chunk_start} {chunk_end} {result_start} {result_end}");
-        assert_eq!(chunk_start - chunk_end, result_start - result_end);
+        assert_eq!(chunk_start.abs_diff(chunk_end), result_start.abs_diff(result_end));
 
         if let Some(last) = result.last_mut() &&
             *last.1.end() + 1 == result_start
@@ -602,4 +605,23 @@ fn test_mod_split_range() {
     assert_eq!(mod_split_ranges(-15..=15, 7, false).as_slice(), [(-15..=-14, -1..=0), (-13..=-7, -6..=0), (-6..=6, -6..=6), (7..=13, 0..=6), (14..=15, 0..=1)]);
     assert_eq!(mod_split_ranges(-15..=15, 7, true).as_slice(), [(-15..=-15, 6..=6), (-14..=-8, 0..=6), (-7..=-1, 0..=6), (0..=6, 0..=6), (7..=13, 0..=6), (14..=15, 0..=1)]);
     assert_eq!(mod_split_ranges(-1..=15, 7, false).as_slice(), [(-1..=6, -1..=6), (7..=13, 0..=6), (14..=15, 0..=1)]);
+    assert_eq!(mod_split_ranges(FULL_RANGE, i64::MAX, false).as_slice(), [
+        (i64::MIN..=i64::MIN+1, -1..=0),
+        (i64::MIN+2..=i64::MAX-1, i64::MIN+2..=i64::MAX-1),
+        (i64::MAX..=i64::MAX, 0..=0)
+    ]);
+    assert_eq!(mod_split_ranges(FULL_RANGE, i64::MAX - 1, false).as_slice(), [
+        (i64::MIN..=i64::MIN+2, -2..=0),
+        (i64::MIN+3..=i64::MAX-2, i64::MIN+3..=i64::MAX-2),
+        (i64::MAX-1..=i64::MAX, 0..=1)
+    ]);
+    assert_eq!(mod_split_ranges(i64::MIN..=i64::MIN+2, 2, false).as_slice(),
+        [(i64::MIN..=i64::MIN, 0..=0), (i64::MIN+1..=i64::MIN+2, -1..=0)]);
+    assert_eq!(mod_split_ranges(i64::MIN..=i64::MIN+2, 2, true).as_slice(),
+        [(i64::MIN..=i64::MIN+1, 0..=1), (i64::MIN+2..=i64::MIN+2, 0..=0)]);
+    assert_eq!(mod_split_ranges(i64::MAX-1..=i64::MAX, 2, false).as_slice(), 
+        [(i64::MAX-1..=i64::MAX, 0..=1)]);
+    assert_eq!(mod_split_ranges(-45..=-32, 114, false).as_slice(), [(-45..=-32, -45..=-32)]);
+    assert_eq!(mod_split_ranges(-32..=-32, 32, false).as_slice(), [(-32..=-32, 0..=0)]);
+    assert_eq!(mod_split_ranges(-33..=33, 32, false).as_slice(), [(-33..=-32, -1..=0), (-31..=31, -31..=31), (32..=33, 0..=1)]);
 }

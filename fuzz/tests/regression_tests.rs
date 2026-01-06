@@ -581,3 +581,9 @@ fn fuzz_block_terminated_by_simplifier_optimization() {
    let ops = vec![ DigitSum, Increment, Increment, Increment, DigitSum, DigitSum, Increment, DigitSum, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, TetrationNumIters, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, DigitSum, Bitshift, Max, DigitSum, Increment, DigitSum, Gcd2, Universal, ];
    verify_repro(ops, vec![-185, 5424383215664581631, 0]);
 }
+
+#[test]
+fn fuzz_crash_in_range_ops_mod_noneuclidean() {
+   let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, DigitSum, LenSum, Praise, Pop, Funkcia, DigitSum, LSwap, Modulo, Max, LenSum, DigitSum, DigitSum, Remainder, Qeq, Remainder, Remainder, Increment, Swap, ];
+   verify_repro(ops, vec![-5908722711413264915, -1012762419733090899, 0]);
+}

@@ -1,4 +1,4 @@
-use std::{cmp, collections::BTreeSet, mem, ops::RangeInclusive, sync::LazyLock};
+use std::{cmp, collections::BTreeSet, ops::RangeInclusive, sync::LazyLock};
 
 use arrayvec::ArrayVec;
 use num_integer::Integer;
@@ -972,7 +972,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             if i.iter_inputs().all(|a| a.is_constant()) {
                 let all_args: SmallVec<[i64; 8]> = i.iter_inputs().map(|a| cfg.get_constant_(a)).collect();
                 match i.op.evaluate(&all_args) {
-                    Ok(v) if !i.op.has_output() => return (i.with_op(OptOp::Nop, &[], OpEffect::None), None),
+                    Ok(_) if !i.op.has_output() => return (i.with_op(OptOp::Nop, &[], OpEffect::None), None),
                     Ok(v) => return result_const!(v),
                     Err(Some(error)) =>
                         // will always fail
