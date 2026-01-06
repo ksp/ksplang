@@ -1,5 +1,5 @@
 use core::fmt;
-use std::{fmt::Debug, u32};
+use std::{fmt::Debug, process::Output, u32};
 use arrayvec::ArrayVec;
 use smallvec::SmallVec;
 
@@ -118,6 +118,11 @@ pub enum OsmibyteOp<TReg: Debug + Clone> {
     KsplangOpsIncrementVar(TReg, i8), // ksplang_interpreted += a * b
     KsplangOpsIncrementCond(Condition<TReg>, i16), // ksplang_interpreted += c if condition
     KsplangOpsIncrementCondVar(Condition<TReg>, TReg, i8, i8), // ksplang_interpreted += a * b + c if condition
+
+    ArrayOp(TReg, OsmibyteArrayOp, u16, bool), // out, op, count, pop : out <- op(stack[..count]); if (pop) stack.pop(count)
+    ArrayOp3(TReg, OsmibyteArrayOp, TReg, TReg, TReg), // out <- op([a, b, c])
+    ArrayOp4(TReg, OsmibyteArrayOp, TReg, TReg, TReg, TReg), // out <- op([a, b, c, d]);
+    ArrayOp5(TReg, OsmibyteArrayOp, TReg, TReg, TReg, TReg, TReg), // out <- op([a, b, c, d, e]);
 
     Spill(u32, TReg), // somewhere[ix] <- a move to a larger register file, should not really happen but easier to implement this than a proper register allocator...
     Unspill(TReg, u32), // a <- somewhere[ix]
@@ -247,6 +252,11 @@ impl<TReg: Debug + Clone> OsmibyteOp<TReg> {
             OsmibyteOp::KsplangOpsIncrementCond(cond, inc) => OsmibyteOp::KsplangOpsIncrementCond(cond.replace_regs(|r| f(r, false)), *inc),
             OsmibyteOp::KsplangOpsIncrementCondVar(cond, a, b, c) => OsmibyteOp::KsplangOpsIncrementCondVar(cond.replace_regs(|r| f(r, false)), f(a, false), *b, *c),
 
+            OsmibyteOp::ArrayOp(out, op, count, pop) => OsmibyteOp::ArrayOp(f(out, true), *op, *count, *pop),
+            OsmibyteOp::ArrayOp3(out, op, a, b, c) => OsmibyteOp::ArrayOp3(f(out, true), *op, f(a, false), f(b, false), f(c, false)),
+            OsmibyteOp::ArrayOp4(out, op, a, b, c, d) => OsmibyteOp::ArrayOp4(f(out, true), *op, f(a, false), f(b, false), f(c, false), f(d, false)),
+            OsmibyteOp::ArrayOp5(out, op, a, b, c, d, e) => OsmibyteOp::ArrayOp5(f(out, true), *op, f(a, false), f(b, false), f(c, false), f(d, false), f(e, false)),
+
             OsmibyteOp::Spill(value, a) => OsmibyteOp::Spill(*value, f(a, false)),
             OsmibyteOp::Unspill(a, value) => OsmibyteOp::Unspill(f(a, true), *value),
         }
@@ -273,6 +283,22 @@ impl<TReg: Debug + Clone> OsmibyteOp<TReg> {
         });
         out
     }
+}
+
+#[derive(Clone, Copy, Hash, Eq, PartialEq, PartialOrd, Ord, Debug)]
+pub enum OsmibyteArrayOp {
+    Nothing, // just pop or verify stack size >= x
+    Add,
+    AddWrapping,
+    Mul,
+    Xor,
+    And,
+    Or,
+    Median,
+    MedianCursed,
+    Max,
+    Min,
+    Gcd,
 }
 
 

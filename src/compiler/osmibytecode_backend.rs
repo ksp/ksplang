@@ -3,7 +3,7 @@ use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap}, mem};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use smallvec::{SmallVec, smallvec};
 
-use crate::compiler::{analyzer::{dataflow, reverse_postorder}, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{AssertInto, SaturatingInto}};
+use crate::compiler::{analyzer::{dataflow, reverse_postorder}, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteArrayOp, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{AssertInto, SaturatingInto}};
 use crate::vm::OperationError;
 
 #[allow(dead_code)]
@@ -186,7 +186,8 @@ impl<'a> Compiler<'a> {
             KsplangOpsIncrement(condition) => self.lower_ops_increment(instr, condition.clone()),
             Checkpoint => self.lower_checkpoint(instr),
             Nop => { },
-            MedianCursed | Universal => todo!("{instr:?}"),
+            MedianCursed => self.lower_array_op(&instr.inputs, instr.out, OsmibyteArrayOp::MedianCursed, true, true, true),
+            Universal => todo!("{instr:?}"),
         }
         self.temp_regs.clear();
         consumed
@@ -527,7 +528,38 @@ impl<'a> Compiler<'a> {
                 let [a, b, c, d] = xs.as_slice() else { unreachable!("{xs:?} {instr}") };
                 self.program.push(OsmibyteOp::MedianCursed5(spec.target_reg(), *a, *b, *c, *d));
             }
-            _ => todo!("Median {instr}\n\n{}", self.g)
+            _ => self.lower_array_op(&instr.inputs, instr.out, OsmibyteArrayOp::Median, false, true, true),
+        }
+    }
+
+    fn lower_array_op(&mut self, inputs: &[ValueId], output: ValueId, op: OsmibyteArrayOp, may_deopt: bool, pop: bool, _is_commutative: bool) {
+        assert!(inputs.len() < u16::MAX as usize);
+        if inputs.len() >= 3 && inputs.len() <= 5 && pop {
+            if may_deopt {
+                _ = self.save_deopt();
+            }
+            let out = self.prepare_output(output);
+            let ins = self.materialize_values(inputs.iter().copied());
+            self.program.push(match ins.as_slice() {
+                &[a, b, c] => OsmibyteOp::ArrayOp3(out.target_reg(), op, a, b, c),
+                &[a, b, c, d] => OsmibyteOp::ArrayOp4(out.target_reg(), op, a, b, c, d),
+                &[a, b, c, d, e] => OsmibyteOp::ArrayOp5(out.target_reg(), op, a, b, c, d, e),
+                _ => unreachable!()
+            });
+            self.finalize_output(out);
+            return
+        }
+        let deopt_backup = self.current_deopt.clone();
+        self.lower_push(inputs, true);
+        if may_deopt {
+            _ = self.save_deopt();
+        }
+
+        let out = self.prepare_output(output);
+        self.program.push(OsmibyteOp::ArrayOp(out.target_reg(), op, inputs.len() as u16, pop));
+        self.finalize_output(out);
+        if pop {
+            self.current_deopt = deopt_backup;
         }
     }
 
@@ -562,7 +594,13 @@ impl<'a> Compiler<'a> {
                 if deopt.stack_reconstruction.starts_with(&regs) {
                     deopt.stack_reconstruction.drain(0..regs.len());
                 } else {
-                    todo!()
+                    if let Some(OsmibyteOp::ArrayOp(_, OsmibyteArrayOp::Nothing, count, true)) = deopt.opcodes.get_mut(0) {
+                        *count += regs.len() as u16;
+                    } else {
+                        deopt.opcodes =
+                            [OsmibyteOp::ArrayOp(RegId(255), OsmibyteArrayOp::Nothing, regs.len() as u16, true)]
+                            .into_iter().chain(deopt.opcodes.clone()).collect();
+                    }
                 }
             }
         }

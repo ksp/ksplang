@@ -702,8 +702,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     return Continue
                 }
 
-                if *n_range.end() > 64 {
-                    return if *n_range.start() <= 60 {
+                if *n_range.end() > 25 {
+                    return if *n_range.start() <= 3 {
                         NevimJakChteloByToKonstantu(vec![n])
                     } else {
                         NevimJak
@@ -714,18 +714,11 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 assert_eq!(n, vals[0]);
 
                 if n_range.start() == n_range.end() {
-                    if self.g.conf.allow_osmibyte_backend {
-                        if !matches!(vals.len(), 0 | 1 | 2 | 3 | 5) { return NevimJak } // TODO: median hack
-                    }
                     let out = self.g.value_numbering(OptOp::Median, &vals, None, None);
                     self.g.stack.push(out);
                 } else {
-                    if self.g.conf.allow_osmibyte_backend {
-                        return NevimJakChteloByToKonstantu(vec![n]); // TODO
-                    } else {
-                        let out = self.g.value_numbering(OptOp::MedianCursed, &vals, None, None);
-                        self.g.stack.push(out);
-                    }
+                    let out = self.g.value_numbering(OptOp::MedianCursed, &vals, None, None);
+                    self.g.stack.push(out);
                 }
                 Continue
             }

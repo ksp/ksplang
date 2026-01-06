@@ -2,7 +2,7 @@ use std::{cmp, fmt, hint::select_unpredictable, ops::{Index, IndexMut}, u32};
 
 use num_integer::Integer;
 
-use crate::{compiler::{osmibytecode::{Condition, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{SaturatingInto, sort_tuple}}, digit_sum, funkcia, vm::{self, OperationError}};
+use crate::{compiler::{osmibytecode::{Condition, OsmibyteArrayOp, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{SaturatingInto, sort_tuple}}, digit_sum, funkcia, vm::{self, OperationError}};
 
 
 
@@ -612,6 +612,39 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                         ksplang_ops_done = ksplang_ops_done.wrapping_add_signed(val);
                     }
                 },
+                &OsmibyteOp::ArrayOp(out, op, count, pop) => {
+                    if stack.len() < count as usize {
+                        deopt_or_error!(OperationError::PopFailed);
+                    }
+
+                    match apply_array_op(op, &stack[stack.len() - count as usize..]) {
+                        Err(err) => deopt_or_error!(err),
+                        Ok(result) => {
+                            regs[out] = result;
+                            if pop {
+                                stack.drain(stack.len() - count as usize..);
+                            }
+                        }
+                    }
+                }
+                &OsmibyteOp::ArrayOp3(out, op, a, b, c) => {
+                    match apply_array_op(op, &[regs[a], regs[b], regs[c]]) {
+                        Err(err) => deopt_or_error!(err),
+                        Ok(result) => regs[out] = result,
+                    }
+                }
+                &OsmibyteOp::ArrayOp4(out, op, a, b, c, d) => {
+                    match apply_array_op(op, &[regs[a], regs[b], regs[c], regs[d]]) {
+                        Err(err) => deopt_or_error!(err),
+                        Ok(result) => regs[out] = result,
+                    }
+                }
+                &OsmibyteOp::ArrayOp5(out, op, a, b, c, d, e) => {
+                    match apply_array_op(op, &[regs[a], regs[b], regs[c], regs[d], regs[e]]) {
+                        Err(err) => deopt_or_error!(err),
+                        Ok(result) => regs[out] = result,
+                    }
+                }
                 OsmibyteOp::Spill(ix, a) => {
                     while spill.len() <= *ix as usize {
                         spill.push(0);
@@ -678,4 +711,67 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
         bytecode_interpreted: bytecode_ops_done,
         exit_point: exit_point.unwrap()
     })
+}
+
+fn apply_array_op(op: OsmibyteArrayOp, arr: &[i64]) -> Result<i64, OperationError> {
+    // TODO: will arr: impl trait improve perf for inline arrays?
+    match op {
+        OsmibyteArrayOp::Nothing => Ok(0),
+        OsmibyteArrayOp::Add => {
+            let mut acc = 0i128;
+            for &x in arr {
+                acc += x as i128;
+            }
+            acc.try_into().map_err(|_| OperationError::IntegerOverflow)
+        }
+        OsmibyteArrayOp::AddWrapping => {
+            Ok(arr.iter().copied().reduce(|a, b| a.wrapping_add(b)).unwrap_or(0))
+        }
+        OsmibyteArrayOp::Mul => {
+            let mut acc = 1;
+            let mut negative = false;
+            for &x in arr {
+                acc *= x.unsigned_abs();
+                negative ^= x < 0;
+            }
+            if negative {
+                0i64.checked_sub_unsigned(acc)
+            } else {
+                0i64.checked_add_unsigned(acc)
+            }.ok_or(OperationError::IntegerOverflow)
+        },
+        OsmibyteArrayOp::Xor => {
+            Ok(arr.iter().copied().reduce(|a, b| a ^ b).unwrap_or(0))
+        }
+        OsmibyteArrayOp::And => {
+            Ok(arr.iter().copied().reduce(|a, b| a & b).unwrap_or(-1))
+        }
+        OsmibyteArrayOp::Or => {
+            Ok(arr.iter().copied().reduce(|a, b| a | b).unwrap_or(0))
+        }
+        OsmibyteArrayOp::Median => {
+            let mut copy = arr.to_vec();
+            Ok(vm::median(&mut copy))
+        },
+        OsmibyteArrayOp::MedianCursed => {
+            if arr[0] <= 0 || arr[0] > arr.len() as i64 {
+                return Err(OperationError::Unreachable);
+            }
+            let mut copy = arr.to_vec();
+            Ok(vm::median(&mut copy[0..arr[0] as usize]))
+        }
+        OsmibyteArrayOp::Max => {
+            Ok(*arr.iter().max().unwrap())
+        }
+        OsmibyteArrayOp::Min => {
+            Ok(*arr.iter().min().unwrap())
+        }
+        OsmibyteArrayOp::Gcd => {
+            let mut gcd = arr[0].unsigned_abs();
+            for i in 1..arr.len() {
+                gcd = gcd.gcd(&arr[i].unsigned_abs())
+            }
+            gcd.try_into().map_err(|_| OperationError::IntegerOverflow)
+        }
+    }
 }
