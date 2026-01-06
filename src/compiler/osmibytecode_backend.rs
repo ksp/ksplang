@@ -3,7 +3,7 @@ use std::{cmp, collections::{BTreeMap, BTreeSet, BinaryHeap}, mem};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 use smallvec::{SmallVec, smallvec};
 
-use crate::compiler::{analyzer::{dataflow, reverse_postorder}, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteArrayOp, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{AssertInto, SaturatingInto}};
+use crate::compiler::{analyzer::{dataflow, reverse_postorder}, cfg::{BasicBlock, GraphBuilder}, ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::{Condition, DeoptInfo, OsmibyteArrayOp, OsmibyteOp, OsmibytecodeBlock, RegId}, utils::{AssertInto, SaturatingInto, abs_range}};
 use crate::vm::OperationError;
 
 #[allow(dead_code)]
@@ -114,12 +114,16 @@ impl<'a> Compiler<'a> {
             return false
         }
 
+
         match &instr.op {
             Const(_) => panic!("Special op, should not be in CfG"),
-            Add => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Add(out, a, b), |out, a, c| Some(OsmibyteOp::AddConst(out, a, c.try_into().ok()?))),
+            Add => {
+                let aop = Some(if instr.effect == OpEffect::None { OsmibyteArrayOp::AddWrapping } else { OsmibyteArrayOp::Add });
+                self.lower_variadic(instr, aop, |out, a, b| OsmibyteOp::Add(out, a, b), |out, a, c| Some(OsmibyteOp::AddConst(out, a, c.try_into().ok()?)))
+            }
             Mul => self.lower_mul(instr),
             Sub => self.lower_binary(instr, |out, a, b| OsmibyteOp::Sub(out, a, b), |_, _, _| None, |out, c, b| Some(OsmibyteOp::SubConst(out, c.try_into().ok()?, b))),
-            AbsSub => self.lower_variadic(instr, |out, a, b| OsmibyteOp::AbsSub(out, a, b), |out, a, c| Some(OsmibyteOp::AbsSubConst(out, a, c.try_into().ok()?))),
+            AbsSub => self.lower_variadic(instr, None, |out, a, b| OsmibyteOp::AbsSub(out, a, b), |out, a, c| Some(OsmibyteOp::AbsSubConst(out, a, c.try_into().ok()?))),
             Div => return self.lower_div(instrs),
             CursedDiv => self.lower_binary(instr, |out, a, b| OsmibyteOp::CursedDiv(out, a, b), |_, _, _| None, |_, _, _| None),
             Mod => {
@@ -153,9 +157,15 @@ impl<'a> Compiler<'a> {
             Sgn => self.lower_unary(instr, |out, a| OsmibyteOp::Sgn(out, a)),
             AbsFactorial => self.lower_unary(instr, |out, a| OsmibyteOp::AbsFactorial(out, a)),
             LenSum => self.lower_binary(instr, |out, a, b| OsmibyteOp::Lensum(out, a, b), |_, _, _| None, |_, _, _| None),
-            And => self.lower_variadic(instr, |out, a, b| OsmibyteOp::And(out, a, b), |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::AndConst(out, a, mask))),
-            Or => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Or(out, a, b), |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::OrConst(out, a, mask))),
-            Xor => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Xor(out, a, b), |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::XorConst(out, a, mask))),
+            And => self.lower_variadic(instr, Some(OsmibyteArrayOp::And),
+                                              |out, a, b| OsmibyteOp::And(out, a, b),
+                                              |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::AndConst(out, a, mask))),
+            Or => self.lower_variadic(instr, Some(OsmibyteArrayOp::Or),
+                                             |out, a, b| OsmibyteOp::Or(out, a, b),
+                                             |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::OrConst(out, a, mask))),
+            Xor => self.lower_variadic(instr, Some(OsmibyteArrayOp::Xor),
+                                              |out, a, b| OsmibyteOp::Xor(out, a, b),
+                                              |out, a, c| c.try_into().ok().map(|mask| OsmibyteOp::XorConst(out, a, mask))),
             ShiftL => self.lower_binary(instr,
                 |out, a, b| OsmibyteOp::ShiftL(out, a, b),
                 |out, a, c| { assert!(c > 0); Some(OsmibyteOp::ShiftConst(out, a, c.try_into().ok()?)) },
@@ -168,7 +178,14 @@ impl<'a> Compiler<'a> {
             BoolNot => self.lower_unary(instr, |out, a| OsmibyteOp::BoolNot(out, a)),
             Select(condition) => self.lower_select(instr, condition.clone()),
             DigitSum => consumed = self.lower_digit_sum(instrs),
-            Gcd => self.lower_variadic(instr, |out, a, b| OsmibyteOp::Gcd(out, a, b), |_, _, _| None),
+            Gcd if instr.inputs.len() == 1 => unreachable!(),
+            Gcd if instr.inputs.len() == 2 => self.lower_binary(instr, |out, a, b| OsmibyteOp::Gcd(out, a, b), |_, _, _| None, |_, _, _| None),
+            Gcd => {
+                let mut inputs = instr.inputs.clone();
+                // smaller values first, it will make gcd faster
+                inputs.sort_by_cached_key(|&v| *abs_range(self.g.val_range(v)).end());
+                self.lower_array_op(&inputs, instr.out, OsmibyteArrayOp::Gcd, instr.effect != OpEffect::None, true, true)
+            },
             Median => self.lower_median(instr),
             Push => self.lower_push(&instr.inputs, false),
             Pop => return self.lower_pop(instrs),
@@ -193,12 +210,22 @@ impl<'a> Compiler<'a> {
         consumed
     }
 
-    fn lower_variadic<F, FC>(&mut self, instr: &OptInstr, op: F, op_const: FC)
+    fn variadic_better_than_array(&self, instr: &OptInstr) -> bool {
+        instr.inputs.len() <= 2 || instr.inputs.len() <= 4 && instr.inputs[0].is_constant() && instr.effect == OpEffect::None
+    }
+
+    fn lower_variadic<F, FC>(&mut self, instr: &OptInstr, array_op: Option<OsmibyteArrayOp>, op: F, op_const: FC)
     where
         F: Fn(RegId, RegId, RegId) -> OsmibyteOp<RegId>,
         FC: Fn(RegId, RegId, i64) -> Option<OsmibyteOp<RegId>>,
     {
         assert!(!instr.inputs.is_empty());
+
+        if let Some(array_op) = array_op && !self.variadic_better_than_array(instr) {
+            let may_deopt = instr.effect != OpEffect::None && (instr.effect != OpEffect::MayFail || self.g.conf.error_as_deopt);
+            let is_commutative = instr.op.is_commutative(instr.inputs.len()) == (0..instr.inputs.len());
+            return self.lower_array_op(&instr.inputs, instr.out, array_op, may_deopt, true, is_commutative);
+        }
 
         let spec = self.prepare_output(instr.out);
         let dest = spec.target_reg();
@@ -306,12 +333,16 @@ impl<'a> Compiler<'a> {
             }
         }
 
-        self.lower_variadic(max, |out, a, b| OsmibyteOp::Max(out, a, b), |out, a, c| Some(OsmibyteOp::MaxConst(out, a, c.try_into().ok()?)));
+        self.lower_variadic(max, Some(OsmibyteArrayOp::Max),
+                                 |out, a, b| OsmibyteOp::Max(out, a, b),
+                                 |out, a, c| Some(OsmibyteOp::MaxConst(out, a, c.try_into().ok()?)));
         1
     }
 
     fn lower_min(&mut self, instr: &OptInstr) {
-        self.lower_variadic(instr, |out, a, b| OsmibyteOp::Min(out, a, b), |out, a, c| Some(OsmibyteOp::MinConst(out, a, c.try_into().ok()?)));
+        self.lower_variadic(instr, Some(OsmibyteArrayOp::Min),
+                                   |out, a, b| OsmibyteOp::Min(out, a, b),
+                                   |out, a, c| Some(OsmibyteOp::MinConst(out, a, c.try_into().ok()?)));
     }
 
     fn lower_div(&mut self, instrs: &[&OptInstr]) -> usize {
@@ -348,7 +379,8 @@ impl<'a> Compiler<'a> {
     }
 
     fn lower_mul(&mut self, instr: &OptInstr) {
-        self.lower_variadic(instr, |out, a, b| OsmibyteOp::Mul(out, a, b), |out, a, c| {
+        let aop = Some(OsmibyteArrayOp::Mul);
+        self.lower_variadic(instr, aop, |out, a, b| OsmibyteOp::Mul(out, a, b), |out, a, c| {
             if c > 0 && (c as u64).is_power_of_two() && instr.effect == OpEffect::None {
                 let shift_amount = c.trailing_zeros() as i8;
                 return Some(OsmibyteOp::ShiftConst(out, a, shift_amount));

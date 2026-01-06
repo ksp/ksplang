@@ -438,15 +438,9 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
             OptOp::BoolNot => Ok(if inputs[0] == 0 { 1 } else { 0 }),
             OptOp::Select(condition) => Ok(if condition.eval(&inputs[0..inputs.len()-2]) { inputs[inputs.len()-2] } else { inputs[inputs.len()-1] }),
             OptOp::DigitSum => Ok(digit_sum::digit_sum(inputs[0])),
-            // TODO: re-enable this when we can handle GCDs in OBC equivalently
-            // OptOp::Gcd => inputs.iter().map(|x| x.abs_diff(0)).reduce(|a, b| a.gcd(&b)).unwrap().try_into().map_err(|_| Some(OperationError::IntegerOverflow)),
-            OptOp::Gcd => {
-                let mut x = inputs[0];
-                for i in 1..inputs.len() {
-                    x = x.unsigned_abs().gcd(&inputs[i].unsigned_abs()).try_into().map_err(|_| None)?
-                }
-                x.checked_abs().ok_or(None)
-            }
+            OptOp::Gcd => inputs.iter().map(|x| x.unsigned_abs())
+                                       .reduce(|a, b| a.gcd(&b)).unwrap()
+                                       .try_into().map_err(|_| Some(OperationError::IntegerOverflow)),
             OptOp::StackSwap => Err(None),
             OptOp::StackRead => Err(None),
             OptOp::Const(x) => Ok(*x),
