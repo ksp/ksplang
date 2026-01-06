@@ -607,3 +607,10 @@ fn sanity_check_const_input() {
             .with_constin([0, 123, 124, 2, 5]);
     r.verify();
 }
+
+#[test]
+fn fuzz_obc_arrayop_incorred_deopt_and_const_load() {
+   let ops = vec![ DigitSum, DigitSum, LenSum, DigitSum, Funkcia, DigitSum, Increment, Increment, Increment, Median, Median ];
+   verify_repro(ops, vec![-1052266987521, -68961369294110966, 0]);
+}
+

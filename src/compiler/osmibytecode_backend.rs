@@ -567,11 +567,11 @@ impl<'a> Compiler<'a> {
     fn lower_array_op(&mut self, inputs: &[ValueId], output: ValueId, op: OsmibyteArrayOp, may_deopt: bool, pop: bool, _is_commutative: bool) {
         assert!(inputs.len() < u16::MAX as usize);
         if inputs.len() >= 3 && inputs.len() <= 5 && pop {
+            let out = self.prepare_output(output);
+            let ins = self.materialize_values(inputs.iter().copied());
             if may_deopt {
                 _ = self.save_deopt();
             }
-            let out = self.prepare_output(output);
-            let ins = self.materialize_values(inputs.iter().copied());
             self.program.push(match ins.as_slice() {
                 &[a, b, c] => OsmibyteOp::ArrayOp3(out.target_reg(), op, a, b, c),
                 &[a, b, c, d] => OsmibyteOp::ArrayOp4(out.target_reg(), op, a, b, c, d),
