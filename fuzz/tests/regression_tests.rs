@@ -614,3 +614,9 @@ fn fuzz_obc_arrayop_incorred_deopt_and_const_load() {
    verify_repro(ops, vec![-1052266987521, -68961369294110966, 0]);
 }
 
+#[test]
+fn fuzz_median_cursed_simplification_to_deopt() {
+   let ops = vec![ DigitSum, LenSum, DigitSum, DigitSum, DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, BulkXor, BranchIfZero, Roll, Median ];
+   verify_repro(ops, vec![506382253224885243, -1, 0]);
+}
+
