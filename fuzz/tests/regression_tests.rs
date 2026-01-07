@@ -620,3 +620,8 @@ fn fuzz_median_cursed_simplification_to_deopt() {
    verify_repro(ops, vec![506382253224885243, -1, 0]);
 }
 
+#[test]
+fn fuzz_variadic_mul_const_propagation() {
+    let ops = vec![ DigitSum, DigitSum, Increment, DigitSum, DigitSum, LenSum, Universal, Increment, Increment, DigitSum, DigitSum, Increment, Increment, Increment, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, Universal, DigitSum, Increment, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal ];
+    verify_repro(ops, vec![2531906053038088995, 3684827553939530531, 0]);
+}

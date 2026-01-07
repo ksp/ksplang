@@ -36,7 +36,7 @@ impl ReproData {
     }
 
     pub fn with_soften_limits(mut self, soften_limits: bool) -> Self {
-        self.soften_limits = false;
+        self.soften_limits = soften_limits;
         self
     }
 

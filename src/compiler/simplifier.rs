@@ -1711,7 +1711,8 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     let c2 = cfg.get_constant_(def.inputs[0]);
                     if let Some(new_const) = c.checked_mul(c2) {
                         i.effect = OpEffect::worse_of(i.effect, def.effect);
-                        i.inputs[1] = def.inputs[1];
+                        i.inputs.remove(1);
+                        i.inputs.extend(def.inputs.iter().skip(1).copied());
                         i.inputs[0] = cfg.store_constant(new_const);
                         continue;
                     } else {
