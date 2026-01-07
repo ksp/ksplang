@@ -937,7 +937,8 @@ impl GraphBuilder {
         }
     }
 
-    pub fn push_checkpoint(&mut self) -> &mut OptInstr {
+    /// Returns None if block got terminated by the Checkpoint (happens when optimizer realizes this is unreachable)
+    pub fn push_checkpoint(&mut self) -> Option<&mut OptInstr> {
         assert!(!self.current_block_ref().is_terminated);
         // try to replace previous redundant checkpoint
         let current_block = self.current_block_ref();
@@ -961,7 +962,7 @@ impl GraphBuilder {
         let mut checkpoint_args: SmallVec<[ValueId; 16]> = smallvec![stack_depth_const];
         checkpoint_args.extend_from_slice(&self.stack.stack);
 
-        self.push_instr(OptOp::Checkpoint, &checkpoint_args, false, None, None).1.unwrap()
+        self.push_instr(OptOp::Checkpoint, &checkpoint_args, false, None, None).1
     }
 
     pub fn push_instr_may_deopt(&mut self, op: OptOp<ValueId>, args: &[ValueId]) -> &mut OptInstr {

@@ -932,9 +932,6 @@ fn merge_constants(cfg: &mut GraphBuilder, i: &mut OptInstr, merge: impl FnMut(i
 
 /// Returns (changed, new instruction)
 pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Option<RangeInclusive<i64>>) {
-    if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::StackRead | OptOp::Const(_) | OptOp::Checkpoint) {
-        return (i, None);
-    }
 
     macro_rules! result_val {
         ($val: expr) => { {
@@ -1109,6 +1106,10 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
         };
 
         i.effect = OpEffect::better_of(i.effect, i.op.effect_based_on_ranges(&ranges));
+
+        if matches!(i.op, OptOp::Nop | OptOp::Pop | OptOp::Push | OptOp::StackSwap | OptOp::StackRead | OptOp::Const(_) | OptOp::Checkpoint) {
+            return (i, None);
+        }
 
         // Generic flattening for associative non-overflowing ops
         if matches!(i.op, OptOp::Max | OptOp::Min | OptOp::Gcd | OptOp::And | OptOp::Or | OptOp::Xor | OptOp::Add | OptOp::Mul) && i.inputs.len() >= 2 {

@@ -522,9 +522,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.stack.push(out);
 
                 let next_pos = self.next_position();
-                let d = self.g.push_checkpoint();
-                d.program_position = next_pos;
-                d.ksp_instr_count += 1;
+                if let Some(d) = self.g.push_checkpoint() {
+                    d.program_position = next_pos;
+                    d.ksp_instr_count += 1;
+                }
                 Continue
             }
             crate::ops::Op::Swap => {
@@ -535,9 +536,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 self.g.stack.push(out);
 
                 let next_pos = self.next_position();
-                let d = self.g.push_checkpoint();
-                d.program_position = next_pos;
-                d.ksp_instr_count += 1;
+                if let Some(d) = self.g.push_checkpoint() {
+                    d.program_position = next_pos;
+                    d.ksp_instr_count += 1;
+                }
                 Continue
             }
             crate::ops::Op::Roll => {
