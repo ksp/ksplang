@@ -286,6 +286,28 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         Some(branches)
     }
 
+    fn can_elide_stack_read(&mut self, instr: InstrId) -> bool {
+        // we need to make sure the read does not have the function of deopt
+        // i.e., there is already another read of the same variable in the same block
+        let i = self.g.get_instruction_(instr);
+        assert!(matches!(i.op, OptOp::StackRead | OptOp::StackSwap));
+        let addr = i.inputs[0];
+
+        for (_, prev) in self.g.block_(instr.0).instructions.range(0..instr.1).rev() {
+            if matches!(prev.op, OptOp::StackRead | OptOp::StackSwap) &&
+                prev.inputs[0] == addr
+            {
+                return true;
+            }
+
+            if matches!(prev.op, OptOp::Pop) {
+                return false;
+            }
+        }
+
+        false
+    }
+
     pub fn push_swap(&mut self, ix: ValueId, val: ValueId) -> ValueId {
         assert!(!self.g.current_block_ref().is_terminated);
         let (val, _) = self.g.analyze_val_at(val, self.g.next_instr_id());
@@ -373,7 +395,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                             }
                         }
                     }
-                    if prev_out != prev_out_raw && !has_pops {
+                    if prev_out != prev_out_raw &&
+                        self.can_elide_stack_read(anti_swap)
+                    {
                         // we don't even need the read, it's just shadowing a previous one
                         if self.conf.should_log(15) {
                             println!("Removing {anti_swap} (replace {prev_out_raw} with {prev_out})");
