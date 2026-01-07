@@ -637,3 +637,9 @@ fn fuzz_hoisting_common_instruction_fix() {
     let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, Increment, DigitSum, DigitSum, Remainder, Qeq, Increment, DigitSum, Increment, DigitSum, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, DigitSum, Gcd2, DigitSum, DigitSum, Remainder, Qeq, Increment, DigitSum, Increment, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment ];
     verify_repro(ops, vec![-3906369333256179659, -1, 0]);
 }
+
+#[test]
+fn fuzz_empty_range_in_osmibyte_compiler() {
+    let ops = vec![ Modulo, Funkcia, DigitSum, DigitSum, Increment, DigitSum, Increment, DigitSum, Gcd2, Gcd2, Gcd2, DigitSum, LenSum, DigitSum, BranchIfZero, DigitSum, LenSum, DigitSum, Max, Praise, Max, Max, Max, Modulo, Funkcia, Max, DigitSum, Bitshift, DigitSum, Bitshift, DigitSum, LSwap, Modulo, DigitSum, LSwap, BranchIfZero, Increment, Remainder, LSwap, BranchIfZero, LSwap, BranchIfZero, Increment, Jump, Max, Gcd2, Gcd2, Increment, BulkXor, BulkXor, BulkXor, BulkXor, BulkXor, Increment, And, And ];
+    verify_repro(ops, vec![2531906049341864879, 9, 4051332257732442615, -144681187489743559, 0]);
+}
