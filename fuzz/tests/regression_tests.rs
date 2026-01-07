@@ -631,3 +631,9 @@ fn fuzz_one_more_jump_cyclical_phi_bug() {
     let ops = vec![ DigitSum, DigitSum, DigitSum, LenSum, DigitSum, Funkcia, Pop2, Increment, DigitSum, DigitSum, Bitshift, Increment, DigitSum, LSwap, LSwap, Increment, Roll, BranchIfZero, Max, Modulo, Swap, Increment, Max, LSwap, Max, Modulo, Swap, Swap, Increment, Increment, Praise, LenSum, Max, Increment, Increment, Max ];
     verify_repro(ops, vec![4557430892032626447, 1080933451445567232, -178120883765489, 1085102528955105087, 0]);
 }
+
+#[test]
+fn fuzz_hoisting_common_instruction_fix() {
+    let ops = vec![ DigitSum, Increment, DigitSum, DigitSum, Increment, DigitSum, DigitSum, Remainder, Qeq, Increment, DigitSum, Increment, DigitSum, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, DigitSum, Gcd2, DigitSum, DigitSum, Remainder, Qeq, Increment, DigitSum, Increment, Jump, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment ];
+    verify_repro(ops, vec![-3906369333256179659, -1, 0]);
+}

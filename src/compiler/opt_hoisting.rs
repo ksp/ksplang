@@ -159,48 +159,43 @@ fn get_common_instructions(
 ) -> Vec<(OptOp<ValueId>, SmallVec<[ValueId; 4]>, SmallVec<[InstrId; 4]>)> {
     assert!(!blocks.is_empty());
 
-    // let mut blocks = blocks.to_vec();
-    // blocks.sort_by_cached_key(|b| g.block_(*b).instructions.len());
-
-    // Find the smallest block (fewest instructions) to use as the starting point
+    // find smallest block
     let starter_block = blocks.iter()
         .enumerate()
         .min_by_key(|&(_, &block_id)| g.block_(block_id).instructions.len())
         .map(|(idx, _)| idx)
         .unwrap();
 
-    // Initialize hashmap with instructions from the smallest block
-    // Map: (op, inputs) -> SmallVec of InstrIds (one per block)
-    let mut instruction_map: HashMap<(OptOp<ValueId>, SmallVec<[ValueId; 4]>), SmallVec<[InstrId; 4]>> = HashMap::default();
+    // Map: (op, inputs) -> SmallVec of Option<InstrIds> (one per block)
+    let mut instruction_map: HashMap<(OptOp<ValueId>, SmallVec<[ValueId; 4]>), SmallVec<[Option<u32>; 4]>> = HashMap::default();
 
     let smallest_block = g.block_(blocks[starter_block]);
     for (_instr_idx, instr) in smallest_block.instructions.iter() {
         let key = (instr.op.clone(), instr.inputs.clone());
-        instruction_map.insert(key, smallvec![]);
+        instruction_map.insert(key, smallvec![None; blocks.len()]);
     }
 
-    // For block, only check instructions that are already in the map
-    for &block_id in blocks.iter() {
+    for (ix, &block_id) in blocks.iter().enumerate() {
         let block = g.block_(block_id);
         for (&instr_idx, instr) in block.instructions.iter() {
             let key = (instr.op.clone(), instr.inputs.clone());
 
-            // Only update if this instruction is in the map (i.e., was in smallest block)
             if let Some(entry) = instruction_map.get_mut(&key) {
-                entry.push(InstrId(block_id, instr_idx));
+                entry[ix].get_or_insert(instr_idx);
             }
         }
     }
 
-    // Filter to only instructions that appear in ALL blocks
+    println!("DBG {:?}", instruction_map);
+
+    // filter instructions that appear in ALL blocks
     instruction_map.into_iter()
         .filter_map(|((op, inputs), instr_indices)| {
-            // Check if instruction appears in all blocks
-            if instr_indices.len() == blocks.len() {
-                Some((op, inputs, instr_indices))
-            } else {
-                None
-            }
+            let res: Option<SmallVec<[InstrId; _]>> =
+                instr_indices.into_iter().enumerate()
+                    .map(|(ix, instr)| instr.map(|instr| InstrId(blocks[ix], instr)))
+                    .collect();
+            res.map(|instr_indices| (op, inputs, instr_indices))
         })
         .collect()
 }
