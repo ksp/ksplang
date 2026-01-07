@@ -65,7 +65,7 @@ impl fmt::Display for ReproData {
             if self.const_input.is_empty() {
                 writeln!(f, "    verify_repro(ops, vec!{:?});", self.input)?;
             } else {
-                writeln!(f, "    verify_repro_const(ops, vec!{:?}, vec!{:?})", self.input, self.const_input)?;
+                writeln!(f, "    verify_repro_const(ops, vec!{:?}, vec!{:?});", self.input, self.const_input)?;
             }
         } else {
             writeln!(f, "    let r = ReproData::new(ops, {:?})", self.input)?;
@@ -93,7 +93,7 @@ pub fn verify_repro(ops: Vec<Op>, input: Vec<i64>) -> (GraphBuilder, Osmibytecod
     let r = ReproData::new(ops, input);
     r.verify()
 }
-pub fn verify_const(ops: Vec<Op>, input: Vec<i64>, constin: Vec<i64>) -> (GraphBuilder, OsmibytecodeBlock) {
+pub fn verify_repro_const(ops: Vec<Op>, input: Vec<i64>, constin: Vec<i64>) -> (GraphBuilder, OsmibytecodeBlock) {
     let r = ReproData::new(ops, input).with_constin(constin);
     r.verify()
 }
@@ -124,6 +124,9 @@ fn verify_repro_core(r: ReproData) -> (GraphBuilder, OsmibytecodeBlock) {
     let mut obc_stack = r.input.clone();
     let mut regs = RegFile::new();
     let obc_res = osmibytecode_vm::interpret_block::<true>(&obc_block, &mut obc_stack, &mut regs);
+    if obc_res.as_ref().is_ok_and(|r| r.exit_point == ExitPointId::Start) {
+        obc_stack.extend_from_slice(&r.const_input);
+    }
 
     let executed_ops = match &obc_res {
         // Ok(res) if res.ksplang_interpreted == 0 => return,

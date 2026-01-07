@@ -1,4 +1,4 @@
-use ksplang::{compiler::test_utils::{ReproData, verify_repro}, ops::Op::{self, *}};
+use ksplang::{compiler::test_utils::{ReproData, verify_repro, verify_repro_const}, ops::Op::{self, *}};
 
 fn run_fuzz_case(ops: Vec<Op>, input: Vec<i64>) {
     verify_repro(ops, input);
@@ -605,6 +605,15 @@ fn sanity_check_const_input() {
     let ops = vec![ Roll, Universal, DigitSum, Increment, And ];
     let r = ReproData::new(ops, [1000, 1001, 1002, 1003, 1004])
             .with_constin([0, 123, 124, 2, 5]);
+    r.verify();
+    let r = ReproData::new([], [])
+            .with_constin([0]);
+    r.verify();
+    let r = ReproData::new([], [])
+            .with_constin([]);
+    r.verify();
+    let r = ReproData::new([], [0])
+            .with_constin([]);
     r.verify();
 }
 
