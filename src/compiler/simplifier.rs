@@ -861,8 +861,13 @@ pub fn get_values_offset(g: &GraphBuilder, val1: ValueId, val2: ValueId) -> Opti
                 let mut a_i = def1.inputs.clone();
                 let mut b_i = def2.inputs.clone();
                 for c in common_part.iter() {
-                    a_i.swap_remove(a_i.iter().position(|x| *x == *c).unwrap());
-                    b_i.swap_remove(b_i.iter().position(|x| *x == *c).unwrap());
+                    // there might be duplicates common_part, we didn't do proper multiset intersect
+                    if let Some(a_rem) = a_i.iter().position(|x| *x == *c) &&
+                       let Some(b_rem) = b_i.iter().position(|x| *x == *c)
+                    {
+                        a_i.swap_remove(a_rem);
+                        b_i.swap_remove(b_rem);
+                    }
                 }
                 return Some(make_result(g, &b_i, &a_i));
             }
