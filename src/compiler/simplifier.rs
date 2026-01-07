@@ -1338,18 +1338,9 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
             OptOp::Median if i.inputs.len() == 2 && i.inputs[0].is_constant() => {
                 let c = cfg.get_constant_(i.inputs[0]);
                 let a = if c % 2 == 1 {
-                    todo!("should not happen, right?");
-                    // let ar = &ranges[1];
-                    // // we could optimize to (a + c) / 2, but we'll rather try (a + 1) / 2 + c / 2 and (a - 1) / 2 + c / 2
-                    // if *ar.start() != i64::MIN {
-                    //     c += 1;
-                    //     cfg.value_numbering(OptOp::Add, &[i.inputs[1], ValueId::C_NEG_ONE], None, Some(OpEffect::None))
-                    // } else if *ar.end() != i64::MAX {
-                    //     c -= 1;
-                    //     cfg.value_numbering(OptOp::Add, &[i.inputs[1], ValueId::C_ONE], None, Some(OpEffect::None))
-                    // } else {
-                    //     break 'main;
-                    // }
+                    // this can happen, i.e. when optimized from Median(4, 103, 101, x[-10..10]) -> Median(101, x)
+                    // but that should be super rare, so I'm not interested in making it optimal
+                    break 'main;
                 } else {
                     // for 2: -1 will get rounded differently in (a + 2) / 2 than in a / 2 + 1
                     // we prefer the second form, so we need to make sure -1 cannot be an input

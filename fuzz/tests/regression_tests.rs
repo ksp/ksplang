@@ -676,3 +676,8 @@ fn fuzz_invalid_deopt_for_arrayop() {
     let ops = vec![ DigitSum, DigitSum, DigitSum, Median, Median ];
     verify_repro_const(ops, vec![0], vec![9, -1, -1, -1, -9]);
 }
+#[test]
+fn fuzz_median_4_with_many_constants_did_run_into_some_should_not_happen_assert() {
+    let ops = vec![ DigitSum, DigitSum, DigitSum, LSwap, Gcd2, Funkcia, DigitSum, LSwap, Median ];
+    verify_repro_const(ops, vec![0], vec![6101267679832641267, 6896745891131031553]);
+}
