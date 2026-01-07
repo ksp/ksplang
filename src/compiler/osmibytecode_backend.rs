@@ -822,21 +822,26 @@ impl<'a> Compiler<'a> {
         }
         let mut atomic_moves = moves; // rest has some cycles, we need to be careful
         assert_ne!(1, atomic_moves.len());
-        // sequence of swaps
-        let mut reg_remap = BTreeMap::new();
+
+        let mut reg_location = BTreeMap::new();
+        let mut reg_owner = BTreeMap::new();
         while let Some((from, to)) = atomic_moves.pop() {
             // TODO: test this properly
             // println!("{from} -> {to}   in {atomic_moves:?}  | {reg_remap:?}");
-            let from = *reg_remap.get(&from).unwrap_or(&from);
+            let from_remapped = *reg_location.get(&from).unwrap_or(&from);
             // println!("{from_loc} -> {to}");
-            if from == to {
+            if from_remapped == to {
                 continue
             }
-            self.program.push(OsmibyteOp::Mov2(to, from, from, to));
-            // `from` is now temporarily swapped with `to`
+            self.program.push(OsmibyteOp::Mov2(to, from_remapped, from_remapped, to));
 
-            reg_remap.insert(from, to);
-            reg_remap.insert(to, from);
+            let owner_to = *reg_owner.get(&to).unwrap_or(&to);
+
+            reg_location.insert(from, to);
+            reg_owner.insert(to, from);
+
+            reg_location.insert(owner_to, from_remapped);
+            reg_owner.insert(from_remapped, owner_to);
         }
     }
 
