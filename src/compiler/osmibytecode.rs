@@ -262,6 +262,15 @@ impl<TReg: Debug + Clone> OsmibyteOp<TReg> {
         }
     }
 
+    pub fn modifies_stack(&self) -> bool {
+        matches!(self,
+            OsmibyteOp::Push(_) | OsmibyteOp::Push2(_, _) | OsmibyteOp::Push3(_, _, _) | OsmibyteOp::Push4(_, _, _, _)
+            | OsmibyteOp::Push5(_, _, _, _, _) | OsmibyteOp::Push6(_, _, _, _, _, _) | OsmibyteOp::Push7(_, _, _, _, _, _, _)
+            | OsmibyteOp::Pop(_) | OsmibyteOp::Pop2(_, _) | OsmibyteOp::Pop3(_, _, _) | OsmibyteOp::Pop4(_, _, _, _)
+            | OsmibyteOp::PopSecond(_)
+            | OsmibyteOp::ArrayOp(_, _, _, _))
+    }
+
     pub fn read_regs(&self) -> ArrayVec<TReg, 8> {
         let mut out = ArrayVec::<TReg, 8>::new();
         self.replace_regs(|r, write| {

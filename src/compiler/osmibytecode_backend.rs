@@ -623,7 +623,9 @@ impl<'a> Compiler<'a> {
             self.temp_regs.clear();
 
             if let Some(deopt) = &mut self.current_deopt {
-                if deopt.stack_reconstruction.starts_with(&regs) {
+                if deopt.stack_reconstruction.starts_with(&regs) &&
+                    !deopt.opcodes.iter().any(|i| i.modifies_stack())
+                {
                     deopt.stack_reconstruction.drain(0..regs.len());
                 } else {
                     if let Some(OsmibyteOp::ArrayOp(_, OsmibyteArrayOp::Nothing, count, true)) = deopt.opcodes.get_mut(0) {

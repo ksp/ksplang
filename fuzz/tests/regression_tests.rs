@@ -671,3 +671,8 @@ fn fuzz_swap_read_removal_removes_deopt() {
     verify_repro(ops, vec![-50753800347340881, 648799821239136175, -5764607523034234881, -198257032560821, -198257032606801, 5453771187815402415, -5787125524196249601, -5787125524196249601, 0]);
 }
 
+#[test]
+fn fuzz_invalid_deopt_for_arrayop() {
+    let ops = vec![ DigitSum, DigitSum, DigitSum, Median, Median ];
+    verify_repro_const(ops, vec![0], vec![9, -1, -1, -1, -9]);
+}
