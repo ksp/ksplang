@@ -526,7 +526,6 @@ impl<'a> Compiler<'a> {
     }
 
     fn lower_median(&mut self, instr: &OptInstr) {
-        let spec = self.prepare_output(instr.out);
         macro_rules! vals_without {
             ($x:expr) => { {
                 let mut first = true;
@@ -536,29 +535,39 @@ impl<'a> Compiler<'a> {
         match instr.inputs.len() {
             0 | 1 => unreachable!("wtf {instr}"),
             2 if instr.inputs.contains(&ValueId::C_TWO) => {
+                let spec = self.prepare_output(instr.out);
                 let xs = vals_without!(ValueId::C_TWO);
                 let [a] = xs.as_slice() else { unreachable!() };
                 self.program.push(OsmibyteOp::MedianCursed2(spec.target_reg(), *a));
+                self.finalize_output(spec);
             }
             2 => {
+                let spec = self.prepare_output(instr.out);
                 let xs = self.materialize_values(instr.inputs.iter().copied());
                 let [a, b] = xs.as_slice() else { unreachable!() };
                 self.program.push(OsmibyteOp::Median2(spec.target_reg(), *a, *b));
+                self.finalize_output(spec);
             }
             3 if instr.inputs.contains(&ValueId::C_THREE) => {
+                let spec = self.prepare_output(instr.out);
                 let xs = vals_without!(ValueId::C_THREE);
                 let [a, b] = xs.as_slice() else { unreachable!() };
                 self.program.push(OsmibyteOp::MedianCursed3(spec.target_reg(), *a, *b));
+                self.finalize_output(spec);
             }
             3 => {
+                let spec = self.prepare_output(instr.out);
                 let xs = self.materialize_values(instr.inputs.iter().copied());
                 let [a, b, c] = xs.as_slice() else { unreachable!() };
                 self.program.push(OsmibyteOp::Median3(spec.target_reg(), *a, *b, *c));
+                self.finalize_output(spec);
             }
             5 if instr.inputs.contains(&ValueId::C_FIVE) => {
+                let spec = self.prepare_output(instr.out);
                 let xs = vals_without!(ValueId::C_FIVE);
                 let [a, b, c, d] = xs.as_slice() else { unreachable!("{xs:?} {instr}") };
                 self.program.push(OsmibyteOp::MedianCursed5(spec.target_reg(), *a, *b, *c, *d));
+                self.finalize_output(spec);
             }
             _ => self.lower_array_op(&instr.inputs, instr.out, OsmibyteArrayOp::Median, false, true, true),
         }

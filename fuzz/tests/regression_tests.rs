@@ -723,3 +723,16 @@ fn fuzz_median_simplification_to_div_with_non2_value() {
     let ops = vec![ LSwap, Modulo, DigitSum, LSwap, DigitSum, LenSum, Median ];
     verify_repro_const(ops, vec![53713], vec![-1219009850024132609, -66088542984596172, 3, 91]);
 }
+
+#[test]
+fn fuzz_median_spilled_output_handling() {
+    let ops = vec![ Praise, Roll, Max, Remainder, Increment, LSwap, DigitSum, LSwap, Median, LSwap, LSwap, Max, Max, LenSum, Max, BulkXor ];
+    verify_repro_const(ops, vec![0], vec![0, 8]);
+}
+
+#[test]
+fn fuzz_some_swap_problem_TODO() {
+    let ops = vec![ Max, DigitSum, Increment, LenSum, DigitSum, DigitSum, LenSum, Median, LSwap, DigitSum, LSwap, Remainder, BranchIfZero, Pop, Call ];
+    verify_repro_const(ops, vec![-5714873315750497025, 0], vec![272339441856688]);
+}
+

@@ -651,7 +651,10 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                     }
                     spill[*ix as usize] = regs[a]
                 },
-                OsmibyteOp::Unspill(a, ix) => { regs[a] = spill[*ix as usize] }
+                OsmibyteOp::Unspill(a, ix) => {
+                    debug_assert!((*ix as usize) < spill.len(), "Invalid Unspill({a}, {ix}) at IP={ip}[{performing_deopt:?}], len={}. Current spills={spill:?}", spill.len());
+                    regs[a] = spill[*ix as usize]
+                }
             }
 
             // println!("{bytecode_ops_done}: {ip}: -> {}",
