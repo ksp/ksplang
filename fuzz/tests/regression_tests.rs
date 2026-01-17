@@ -699,3 +699,9 @@ fn fuzz_rem_wrapping() {
     let ops = vec![ DigitSum, DigitSum, LSwap, Modulo, Bitshift, Modulo ];
     verify_repro_const(ops, vec![255], vec![-1, 9220557287087669247]);
 }
+
+#[test]
+fn fuzz_block_get_terminated_in_push_swap() {
+    let ops = vec![ DigitSum, DigitSum, LSwap, Remainder, DigitSum, Increment, LSwap, Remainder, DigitSum, DigitSum, Remainder, DigitSum, Call ];
+    verify_repro_const(ops, vec![0], vec![-576741896551463425]);
+}

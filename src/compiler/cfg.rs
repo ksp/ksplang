@@ -682,7 +682,7 @@ impl GraphBuilder {
         }
     }
     pub fn add_assumption(&mut self, val: ValueId, at: InstrId, cond: Condition<ValueId>, range: RangeInclusive<i64>) {
-        if cond == Condition::False || range.is_empty() || val.is_constant() {
+        if cond == Condition::False || range.is_empty() || val.is_constant() || self.current_block_ref().is_terminated {
             // we are doing deopt false, no reason to add the "void" assumption
             return
         }
@@ -965,9 +965,10 @@ impl GraphBuilder {
         self.push_instr(OptOp::Checkpoint, &checkpoint_args, false, None, None).1
     }
 
-    pub fn push_instr_may_deopt(&mut self, op: OptOp<ValueId>, args: &[ValueId]) -> &mut OptInstr {
+    /// Returns None if block got terminated
+    pub fn push_instr_may_deopt(&mut self, op: OptOp<ValueId>, args: &[ValueId]) -> Option<&mut OptInstr> {
         self.push_checkpoint();
-        self.push_instr(op, args, false, None, None).1.unwrap()
+        self.push_instr(op, args, false, None, None).1
     }
 
     pub fn push_assert(&mut self, c: Condition<ValueId>, error: OperationError, val: Option<ValueId>) -> Option<&mut OptInstr> {

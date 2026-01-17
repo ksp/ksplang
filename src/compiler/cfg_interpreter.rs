@@ -428,9 +428,9 @@ mod test {
         g.set_program_position(Some(10));
         g.push_instr(OptOp::Pop, &[], false, None, None).1.unwrap().program_position = 10;
         g.set_program_position(Some(20));
-        g.push_instr_may_deopt(OptOp::StackSwap, &[ValueId::C_ZERO, ValueId::C_ZERO]).program_position = 20;
+        g.push_instr_may_deopt(OptOp::StackSwap, &[ValueId::C_ZERO, ValueId::C_ZERO]).unwrap().program_position = 20;
         g.set_program_position(Some(30));
-        g.push_instr_may_deopt(OptOp::StackSwap, &[index, replacement]).program_position = 30;
+        g.push_instr_may_deopt(OptOp::StackSwap, &[index, replacement]).unwrap().program_position = 30;
 
         let mut stack = vec![1, 2, 3, 10, 13];
         let deopt = interpret_cfg(&g, &mut stack, false).unwrap();

@@ -485,7 +485,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         // else
         {
             let instr = self.g.push_instr_may_deopt(OptOp::StackSwap, &[ix, val]);
-            instr.out
+            instr.map(|i| i.out).unwrap_or(ValueId(0))
         }
     }
 
@@ -540,8 +540,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             crate::ops::Op::LSwap => {
                 let x = self.g.peek_stack();
-                // TODO: try finding anti-swap
                 let out = self.push_swap(ValueId::C_ZERO, x);
+                if self.g.current_block_ref().is_terminated { return Continue }
                 self.g.pop_stack();
                 self.g.stack.push(out);
 
@@ -555,6 +555,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             crate::ops::Op::Swap => {
                 let (i, x) = self.g.peek_stack_2();
                 let out = self.push_swap(i, x);
+                if self.g.current_block_ref().is_terminated { return Continue }
                 self.g.pop_stack();
                 self.g.pop_stack();
                 self.g.stack.push(out);
