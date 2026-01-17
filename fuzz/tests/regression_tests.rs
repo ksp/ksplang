@@ -705,3 +705,9 @@ fn fuzz_block_get_terminated_in_push_swap() {
     let ops = vec![ DigitSum, DigitSum, LSwap, Remainder, DigitSum, Increment, LSwap, Remainder, DigitSum, DigitSum, Remainder, DigitSum, Call ];
     verify_repro_const(ops, vec![0], vec![-576741896551463425]);
 }
+
+#[test]
+fn fuzz_invalid_add_sub_optimization() {
+    let ops = vec![ Universal, Increment ];
+    verify_repro_const(ops, vec![0], vec![9223372036854775807, 1]);
+}
