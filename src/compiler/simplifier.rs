@@ -1337,7 +1337,7 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
 
             OptOp::Median if i.inputs.len() == 2 && i.inputs[0].is_constant() => {
                 let c = cfg.get_constant_(i.inputs[0]);
-                let a = if c % 2 == 1 {
+                let a = if c != 2 && c != 0 { // TODO: fix for other divisors, but we need to check more than one bug value if c % 2 != 0 {
                     // this can happen, i.e. when optimized from Median(4, 103, 101, x[-10..10]) -> Median(101, x)
                     // but that should be super rare, so I'm not interested in making it optimal
                     break 'main;
@@ -1347,7 +1347,8 @@ pub fn simplify_instr(cfg: &mut GraphBuilder, mut i: OptInstr) -> (OptInstr, Opt
                     // for N (divisible by 2), problem value is -N + sgn(N)
                     let rounding_bug_value = -(c - c.signum());
                     debug_assert!(c != 2 || rounding_bug_value == -1);
-                    let is_safe = simplify_cond(cfg, Condition::NeqConst(i.inputs[1], -1), i.id);
+                    let rounding_bug_value_c = cfg.store_constant(rounding_bug_value);
+                    let is_safe = simplify_cond(cfg, Condition::Neq(rounding_bug_value_c, i.inputs[1]), i.id);
                     if is_safe == Condition::True {
                         i.inputs[1]
                     } else {

@@ -711,3 +711,15 @@ fn fuzz_invalid_add_sub_optimization() {
     let ops = vec![ Universal, Increment ];
     verify_repro_const(ops, vec![0], vec![9223372036854775807, 1]);
 }
+
+#[test]
+fn fuzz_invalid_median_to_div_optimization() {
+    let ops = vec![ DigitSum, DigitSum, Median, LenSum, Gcd2, DigitSum, DigitSum, Increment, LenSum, Call, Max, Gcd2, Gcd2, Gcd2, Gcd2, Gcd2, Gcd2, Max ];
+    verify_repro_const(ops, vec![0], vec![-280654637957121, -1, -8193, -1, -1, 2559 ]);
+}
+
+#[test]
+fn fuzz_median_simplification_to_div_with_non2_value() {
+    let ops = vec![ LSwap, Modulo, DigitSum, LSwap, DigitSum, LenSum, Median ];
+    verify_repro_const(ops, vec![53713], vec![-1219009850024132609, -66088542984596172, 3, 91]);
+}
