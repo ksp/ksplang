@@ -354,21 +354,21 @@ pub fn interpret_block<const DEOPT_ON_ERROR: bool>(prog: &OsmibytecodeBlock, sta
                 OsmibyteOp::Mod(out, a, b) => {
                     let lhs = regs[a];
                     let rhs = regs[b];
-                    let Some(val) = lhs.checked_rem(rhs) else {
+                    if rhs == 0 {
                         deopt_or_error!(OperationError::DivisionByZero)
-                    };
-                    regs[out] = val;
+                    }
+                    regs[out] = lhs.wrapping_rem(rhs);
                 },
-                OsmibyteOp::ModConst(out, a, c) => { regs[out] = regs[a] % *c as i64 },
+                OsmibyteOp::ModConst(out, a, c) => { regs[out] = regs[a].wrapping_rem(*c as i64) },
                 OsmibyteOp::ModEuclid(out, a, b) => {
                     let lhs = regs[a];
                     let rhs = regs[b];
-                    let Some(val) = lhs.checked_rem_euclid(rhs) else {
+                    if rhs == 0 {
                         deopt_or_error!(OperationError::DivisionByZero)
-                    };
-                    regs[out] = val;
+                    }
+                    regs[out] = lhs.wrapping_rem_euclid(rhs);
                 },
-                OsmibyteOp::ModEuclidConst(out, a, c) => { regs[out] = regs[a].rem_euclid(*c as i64); },
+                OsmibyteOp::ModEuclidConst(out, a, c) => { regs[out] = regs[a].wrapping_rem_euclid(*c as i64); },
                 OsmibyteOp::Tetration(out, a, b) => {
                     match vm::tetration(regs[a], regs[b]) {
                         Ok(val) => regs[out] = val,

@@ -693,3 +693,9 @@ fn fuzz_unchecked_rem_in_qeq() {
     let ops = vec![ Qeq ];
     verify_repro_const(ops, vec![0], vec![i64::MIN, -1, 0]);
 }
+
+#[test]
+fn fuzz_rem_wrapping() {
+    let ops = vec![ DigitSum, DigitSum, LSwap, Modulo, Bitshift, Modulo ];
+    verify_repro_const(ops, vec![255], vec![-1, 9220557287087669247]);
+}

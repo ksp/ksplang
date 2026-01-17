@@ -615,25 +615,19 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
             Op::Remainder => {
                 let a = self.pop()?;
                 let b = self.pop()?;
-                let rem = a.checked_rem(b).ok_or_else(|| {
-                    if b == 0 {
-                        OperationError::DivisionByZero
-                    } else {
-                        OperationError::IntegerOverflow
-                    }
-                })?;
+                if b == 0 {
+                    return Err(OperationError::DivisionByZero)
+                }
+                let rem = a.wrapping_rem(b);
                 self.push(rem)?;
             }
             Op::Modulo => {
                 let a = self.pop()?;
                 let b = self.pop()?;
-                let rem = a.checked_rem_euclid(b).ok_or_else(|| {
-                    if b == 0 {
-                        OperationError::DivisionByZero
-                    } else {
-                        OperationError::IntegerOverflow
-                    }
-                })?;
+                if b == 0 {
+                    return Err(OperationError::DivisionByZero)
+                }
+                let rem = a.wrapping_rem_euclid(b);
                 self.push(rem)?;
             }
             Op::TetrationNumIters => {

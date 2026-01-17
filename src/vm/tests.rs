@@ -287,10 +287,10 @@ fn test_remainder() {
     assert!(!run_op_is_ok(&[], Op::Remainder));
     assert!(!run_op_is_ok(&[1], Op::Remainder));
     assert!(!run_op_is_ok(&[0, 1], Op::Remainder)); // Division by zero
-    assert!(!run_op_is_ok(&[-1, i64::MIN], Op::Remainder)); // Integer overflow
 
     assert_eq!(run_op(&[1, 2, 3, 3, 1], Op::Remainder), [1, 2, 3, 1]);
 
+    assert_eq!(run_op(&[-1, i64::MIN], Op::Remainder), [0]);
     assert_eq!(run_op(&[1, i64::MIN], Op::Remainder), [0]);
     assert_eq!(run_op(&[3, 1], Op::Remainder), [1]);
     assert_eq!(run_op(&[-3, 1], Op::Remainder), [1]);
@@ -303,10 +303,10 @@ fn test_modulo() {
     assert!(!run_op_is_ok(&[], Op::Modulo));
     assert!(!run_op_is_ok(&[1], Op::Modulo));
     assert!(!run_op_is_ok(&[0, 1], Op::Modulo)); // Division by zero
-    assert!(!run_op_is_ok(&[-1, i64::MIN], Op::Modulo)); // Integer overflow
 
     assert_eq!(run_op(&[1, 2, 3, 3, 1], Op::Modulo), [1, 2, 3, 1]);
 
+    assert_eq!(run_op(&[-1, i64::MIN], Op::Remainder), [0]);
     assert_eq!(run_op(&[1, i64::MIN], Op::Modulo), [0]);
     assert_eq!(run_op(&[3, 1], Op::Modulo), [1]);
     assert_eq!(run_op(&[-3, 1], Op::Modulo), [1]);

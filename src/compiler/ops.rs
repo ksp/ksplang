@@ -414,8 +414,9 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                             a.checked_rem(b).ok_or(Some(OperationError::IntegerOverflow))
                         }
                     }
-            OptOp::Mod => inputs[0].checked_rem(inputs[1]).ok_or(Some(OperationError::DivisionByZero)),
-            OptOp::ModEuclid => inputs[0].checked_rem_euclid(inputs[1]).ok_or(Some(OperationError::DivisionByZero)),
+            OptOp::ModEuclid | OptOp::Mod if inputs[1] == 0 => return Err(Some(OperationError::DivisionByZero)),
+            OptOp::Mod => Ok(inputs[0].wrapping_rem(inputs[1])),
+            OptOp::ModEuclid => Ok(inputs[0].wrapping_rem_euclid(inputs[1])),
             OptOp::Tetration => Ok(vm::tetration(inputs[0], inputs[1])?),
             OptOp::Funkcia => Ok(funkcia::funkcia(inputs[0], inputs[1]) as i64),
             OptOp::LenSum => Ok(inputs.iter().map(|x| vm::decimal_len(*x)).sum()),
