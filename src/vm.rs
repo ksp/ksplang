@@ -750,7 +750,7 @@ impl<'a, TTracer: Tracer> State<'a, TTracer> {
                 }
                 // If a is zero, this is a linear equation and we need to calculate it differently.
                 if a == 0 {
-                    if c % b == 0 {
+                    if c.checked_rem(b) == Some(0) {
                         let result =
                             (c / b).checked_neg().ok_or(OperationError::IntegerOverflow)?;
                         self.push(result)?;

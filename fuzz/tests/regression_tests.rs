@@ -681,3 +681,15 @@ fn fuzz_median_4_with_many_constants_did_run_into_some_should_not_happen_assert(
     let ops = vec![ DigitSum, DigitSum, DigitSum, LSwap, Gcd2, Funkcia, DigitSum, LSwap, Median ];
     verify_repro_const(ops, vec![0], vec![6101267679832641267, 6896745891131031553]);
 }
+
+#[test]
+fn fuzz_qeq_int_min_neg_one_division_edge_case() {
+    let ops = vec![ Qeq ];
+    verify_repro_const(ops, vec![-9223372036854775808], vec![-1, 0]);
+}
+
+#[test]
+fn fuzz_unchecked_rem_in_qeq() {
+    let ops = vec![ Qeq ];
+    verify_repro_const(ops, vec![0], vec![i64::MIN, -1, 0]);
+}

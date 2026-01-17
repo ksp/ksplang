@@ -1000,11 +1000,16 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         self.g.push_deopt_assert(Condition::Neq(ValueId::C_ZERO, b), false);
                     }
 
+                    if b_start <= -1 && b_end >= -1 && c_start == i64::MIN {
+                        // it's not clear what happens when we do -(i64::MIN / -1), the result is in range but intermediate isn't
+                        self.g.push_deopt_assert(Condition::Neq(ValueId::C_IMIN, c), false);
+                    }
+
                     // result = -(c / b) assuming b divides c
                     let can_overflow = c_start == i64::MIN && b_start <= 1 && b_end >= 1;
                     let mut must_assert_divisibility = false;
                     let bruteforced_div_range = eval_combi(c_start..=c_end, b_start..=b_end, 256, |c, b| {
-                            if b != 0 && c % b == 0 { Some(c / b) }
+                            if c.checked_rem(b) == Some(0) { Some(c / b) }
                             else { must_assert_divisibility = true; None }
                     });
 
