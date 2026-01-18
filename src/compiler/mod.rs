@@ -17,4 +17,6 @@ pub mod test_utils;
 pub mod tests;
 #[cfg(test)]
 pub mod simplifier_tests;
+#[cfg(test)]
+pub mod cfg_tests;
 

@@ -1,6 +1,6 @@
 use core::{fmt};
 use std::{
-    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet, hash_map::Entry}, i32, ops::{Range, RangeInclusive}, u32
+    borrow::Cow, cmp, collections::{BTreeMap, BTreeSet, VecDeque, hash_map::Entry}, i32, ops::{Range, RangeInclusive}, u32
 };
 use rustc_hash::{FxHashMap as HashMap};
 
@@ -1494,6 +1494,129 @@ impl GraphBuilder {
                 todo!("probably should not happen?");
             }
         }
+    }
+
+    pub fn replay_cfg(&mut self, other: &GraphBuilder, params: &[ValueId]) -> (Map<ValueId, ValueId>, Map<BlockId, BlockId>) {
+        let mut val_mapping: Map<ValueId, ValueId> = Map::default();
+        for &param in params {
+            let argument = self.pop_stack();
+            debug_assert!(other.val_info(param).is_some_and(|v| v.range == union_range(&v.range, &self.val_info_(argument).range)), "{argument} has wider accepted range than {param}");
+            val_mapping.insert(param, argument);
+        }
+        macro_rules! translate_val {
+            ($val:expr) => {{
+                let v: ValueId = *$val;
+                if v.is_computed() {
+                    let Some(replace) = val_mapping.get(&v) else {
+                        panic!("replay_cfg: Could not translate value {}, what is going on in {other}", v)
+                    };
+                    *replace
+                } else if v.is_constant() && v.to_predefined_const().is_none() {
+                    self.store_constant(other.get_constant_(v))
+                } else {
+                    v
+                }
+            }};
+        }
+        let mut bb_mapping: Map<BlockId, BlockId> = Map::default();
+        bb_mapping.insert(BlockId(0), self.current_block);
+        // let mut instr_mapping: Map<InstrId, InstrId> = Map::default();
+
+        assert_eq!(other.block_(BlockId(0)).incoming_jumps, []);
+        let mut visited_blocks: BTreeSet<BlockId> = BTreeSet::new();
+        let mut bb_queue: VecDeque<BlockId> = [BlockId(0)].into();
+        while let Some(other_bb) = bb_queue.pop_front() {
+            if !visited_blocks.insert(other_bb) {
+                continue;
+            }
+            let block = other.block_(other_bb);
+            let this_bb = bb_mapping[&other_bb];
+            self.current_block = this_bb;
+            let start_kspop_count = self.current_block_ref().ksplang_instr_count;
+            let mut branches = vec![];
+            for i in block.instructions.values() {
+                self.assumed_program_position = (i.program_position != usize::MAX).then_some(i.program_position);
+                let args: SmallVec<[ValueId; 8]> = i.inputs.iter().map(|i| translate_val!(i)).collect();
+                let mut op = i.op.clone();
+                if let Some(cond) = op.condition_mut() {
+                    *cond = cond.replace_regs(|val| translate_val!(val));
+                }
+                let out_val = i.out.is_computed().then(|| other.val_info_(i.out));
+                match op {
+                    OptOp::Push => panic!("replay_cfg: Push should not be present in replayable CFG"),
+                    OptOp::Pop => {
+                        let popped = self.pop_stack();
+                        val_mapping.insert(i.out, popped);
+                    }
+                    OptOp::Checkpoint => {
+                        // reconstruct [stack_depth, ...stack values]
+                        let other_stack_depth: i64 = other.get_constant_(i.inputs[0]);
+                        let new_stack_depth = self.store_constant(self.stack.stack_depth as i64 + other_stack_depth);
+                        let mut checkpoint_args: SmallVec<[ValueId; 16]> = smallvec![new_stack_depth];
+                        checkpoint_args.extend_from_slice(&self.stack.stack);
+                        checkpoint_args.extend_from_slice(&args[1..]);
+
+                        let (_out_val, new_instr) = self.push_instr(OptOp::Checkpoint, &checkpoint_args, false, None, Some(i.effect));
+                        if let Some(new_instr) = new_instr {
+                            new_instr.ksp_instr_count = start_kspop_count.strict_add(i.ksp_instr_count);
+                        }
+                    }
+                    OptOp::Jump(condition, target_bb) => {
+                        let condition = simplify_cond(self, condition, self.next_instr_id());
+                        if condition == Condition::False { continue; }
+                        branches.push((condition.clone(), target_bb, args, i.ksp_instr_count, i.effect, i.program_position));
+
+                        if condition == Condition::True { break; }
+                    }
+                    _ => {
+                        let (out_val, new_instr) = self.push_instr(op, &args, true, out_val.map(|v| v.range.clone()), Some(i.effect));
+                        if i.out.is_computed() {
+                            assert!(!out_val.is_null());
+                            val_mapping.insert(i.out, out_val);
+                        }
+                        if let Some(new_instr) = new_instr {
+                            new_instr.ksp_instr_count = start_kspop_count.strict_add(i.ksp_instr_count);
+                        }
+                    }
+                }
+                if self.current_block_ref().is_terminated { break; }
+            }
+            if branches.len() > 0 {
+                for (condition, target_bb, args, ksp_count, effect, program_position) in branches {
+                    let target_this_bb = *bb_mapping.entry(target_bb).or_insert_with(|| {
+                        let other_block = other.block_(target_bb);
+                        let new_params: Vec<ValueId> = other_block.parameters.iter().map(|p_other| {
+                            debug_assert!(!val_mapping.contains_key(p_other), "probably?");
+                            if let Some(mapped) = val_mapping.get(p_other) {
+                                *mapped
+                            } else {
+                                let info = self.new_value();
+                                info.range = other.val_info_(*p_other).range.clone();
+                                val_mapping.insert(*p_other, info.id);
+                                info.id
+                            }
+                        }).collect();
+                        let new_block = self.new_block(other_block.ksplang_start_ip, other_block.is_sealed, new_params);
+                        new_block.id
+                    });
+
+                    self.assumed_program_position = (program_position != usize::MAX).then_some(program_position);
+                    let (_out, new_instr) = self.push_instr(OptOp::Jump(condition.clone(), target_this_bb), &args, false, None, Some(effect));
+                    let Some(new_instr) = new_instr else { continue }; // TODO: continue block when only 1 jump is true
+                    new_instr.ksp_instr_count = start_kspop_count.strict_add(ksp_count);
+                    let new_jump_id = new_instr.id;
+                    let target_block = self.block_mut(target_this_bb).unwrap();
+                    target_block.incoming_jumps.push(new_jump_id);
+                    target_block.predecessors.insert(this_bb);
+
+                    if !visited_blocks.contains(&target_bb) && !bb_queue.contains(&target_bb) {
+                        bb_queue.push_back(target_bb);
+                    }
+                }
+            }
+        }
+
+        (val_mapping, bb_mapping)
     }
 
     pub fn clean_poped_values(&mut self) {
