@@ -748,3 +748,8 @@ fn fuzz_bug_mul_overflow_in_cfg_interpreter() {
     verify_repro_const(ops, vec![10009], vec![16325548649466666, 87, 15]);
 }
 
+#[test]
+fn fuzz_euclidean_modulo_range_ops_mul_overflow() {
+    let ops = vec![ Swap, Modulo, Swap ];
+    verify_repro_const(ops, vec![0], vec![9223372036854775807, -4671077238513065943, 2325686995071728639]);
+}

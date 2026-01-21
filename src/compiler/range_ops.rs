@@ -58,6 +58,7 @@ pub fn range_mod(a_range: RangeInclusive<i64>, b_range: RangeInclusive<i64>) -> 
 
 /// Returns input-range -> output-range pairs, inside the range the mod is a fixed offset
 pub fn mod_split_ranges(x_range: IRange, m: i64, euclid: bool) -> Vec<(IRange, IRange)> {
+    // println!("{x_range:?} {m} {euclid}");
     assert!(m > 1);
     let (x_start, x_end) = x_range.into_inner();
     let (k_start, k_end) = if euclid { (x_start.div_euclid(m), x_end.div_euclid(m)) }
@@ -66,14 +67,14 @@ pub fn mod_split_ranges(x_range: IRange, m: i64, euclid: bool) -> Vec<(IRange, I
     let mut result: Vec<(IRange, IRange)> = vec![];
 
     for k in k_start..=k_end {
-        let km = k * m;
+        let km = k.saturating_mul(m);
 
         let (chunk_start, chunk_end) = if euclid || k > 0 {
-            (km, km.saturating_add(m - 1))
+            (km, m.checked_mul(k + 1).map(|x| x - 1).unwrap_or(i64::MAX))
         } else if k == 0 {
             (-m + 1, m - 1)
         } else {
-            (km.saturating_sub(m - 1), km)
+            (m.checked_mul(k - 1).map(|x| x + 1).unwrap_or(i64::MIN), km)
         };
 
         let chunk_start = cmp::max(x_start, chunk_start);
@@ -608,6 +609,12 @@ fn test_mod_split_range() {
     assert_eq!(mod_split_ranges(FULL_RANGE, i64::MAX, false).as_slice(), [
         (i64::MIN..=i64::MIN+1, -1..=0),
         (i64::MIN+2..=i64::MAX-1, i64::MIN+2..=i64::MAX-1),
+        (i64::MAX..=i64::MAX, 0..=0)
+    ]);
+    assert_eq!(mod_split_ranges(FULL_RANGE, i64::MAX, true).as_slice(), [
+        (i64::MIN..=i64::MIN, i64::MAX-1..=i64::MAX-1),
+        (i64::MIN+1..=-1, 0..=i64::MAX-1),
+        (0..=i64::MAX-1, 0..=i64::MAX-1),
         (i64::MAX..=i64::MAX, 0..=0)
     ]);
     assert_eq!(mod_split_ranges(FULL_RANGE, i64::MAX - 1, false).as_slice(), [
