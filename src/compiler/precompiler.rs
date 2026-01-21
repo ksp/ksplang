@@ -387,7 +387,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     prev_swap.effect = OpEffect::StackRead;
                     let prev_out_raw = prev_swap.out;
                     let (prev_out, _) = self.g.analyze_val_at(prev_out_raw, self.g.next_instr_id());
-                    if prev_val.is_computed() {
+                    if prev_val.is_computed() && prev_val != prev_ix {
                         if let Some(info) = self.g.values.get_mut(&prev_val) {
                             info.used_at.remove(&anti_swap);
                             if info.used_at.is_empty() {
