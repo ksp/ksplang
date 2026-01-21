@@ -731,10 +731,12 @@ fn apply_array_op(op: OsmibyteArrayOp, arr: &[i64]) -> Result<i64, OperationErro
             Ok(arr.iter().copied().reduce(|a, b| a.wrapping_add(b)).unwrap_or(0))
         }
         OsmibyteArrayOp::Mul => {
-            let mut acc = 1;
+            let mut acc = 1u64;
             let mut negative = false;
             for &x in arr {
-                acc *= x.unsigned_abs();
+                if x == 0 { return Ok(0) }
+                // we can't bail immediately on overflow, it might get fixed by ×0 in next step
+                acc = acc.saturating_mul(x.unsigned_abs());
                 negative ^= x < 0;
             }
             if negative {

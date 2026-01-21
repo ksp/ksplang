@@ -200,7 +200,6 @@ pub fn interpret_cfg(
                     break 'block;
                 }
                 Err(None) => {
-                    println!("DBG {op:?} returned Err(None)");
                     deoptimized = Some(instr.id);
                     break 'block;
                 }

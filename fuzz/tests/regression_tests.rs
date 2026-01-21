@@ -736,3 +736,15 @@ fn fuzz_some_swap_problem_TODO() {
     verify_repro_const(ops, vec![-5714873315750497025, 0], vec![272339441856688]);
 }
 
+#[test]
+fn fuzz_obc_multiplication_with_overflow() {
+    let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Swap, Modulo, Increment, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal ];
+    verify_repro_const(ops, vec![-1027579379729, 255], vec![-6781891201990876]);
+}
+
+#[test]
+fn fuzz_bug_mul_overflow_in_cfg_interpreter() {
+    let ops = vec![ LSwap, DigitSum, LenSum, Increment, Increment, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, And, DigitSum, Increment, DigitSum, LenSum, Universal, Increment, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal ];
+    verify_repro_const(ops, vec![10009], vec![16325548649466666, 87, 15]);
+}
+

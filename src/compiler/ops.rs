@@ -382,7 +382,8 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
         debug_assert!(self.arity().contains(&(inputs.len() - cond_count)), "Invalid number of inputs for {:?}: {}", self, inputs.len());
         match self {
             OptOp::Push | OptOp::Pop | OptOp::Nop | OptOp::Checkpoint | OptOp::KsplangOpsIncrement(_) => Err(None),
-            OptOp::Add => inputs.iter().try_fold(0i64, |a, b| a.checked_add(*b)).ok_or(Some(OperationError::IntegerOverflow)),
+            OptOp::Add if inputs.len() == 2 => inputs[0].checked_add(inputs[1]).ok_or(Some(OperationError::IntegerOverflow)),
+            OptOp::Add => inputs.iter().map(|&x| x as i128).sum::<i128>().try_into().map_err(|_| Some(OperationError::IntegerOverflow)),
             OptOp::Sub => {
                         assert_eq!(inputs.len(), 2);
                         inputs[0].checked_sub(inputs[1]).ok_or(Some(OperationError::IntegerOverflow))
@@ -397,7 +398,22 @@ impl<TVal: Clone + PartialEq + Eq + Display + Debug> OptOp<TVal> {
                             b.checked_sub(a).ok_or(Some(OperationError::IntegerOverflow))
                         }
                     }
-            OptOp::Mul => inputs.iter().try_fold(1i64, |a, b| a.checked_mul(*b)).ok_or(Some(OperationError::IntegerOverflow)),
+            OptOp::Mul if inputs.len() == 2 => inputs[0].checked_mul(inputs[1]).ok_or(Some(OperationError::IntegerOverflow)),
+            OptOp::Mul => {
+                let mut acc = 1u64;
+                let mut negative = false;
+                for &x in inputs {
+                    if x == 0 { return Ok(0) }
+                    // we can't bail immediately on overflow, it might get fixed by ×0 in next step
+                    acc = acc.saturating_mul(x.unsigned_abs());
+                    negative ^= x < 0;
+                }
+                if negative {
+                    0i64.checked_sub_unsigned(acc)
+                } else {
+                    0i64.checked_add_unsigned(acc)
+                }.ok_or(Some(OperationError::IntegerOverflow))
+            }
             OptOp::Div => {
                         let a = inputs[0];
                         let b = inputs[1];
