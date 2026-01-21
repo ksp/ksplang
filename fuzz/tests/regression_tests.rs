@@ -753,3 +753,9 @@ fn fuzz_euclidean_modulo_range_ops_mul_overflow() {
     let ops = vec![ Swap, Modulo, Swap ];
     verify_repro_const(ops, vec![0], vec![9223372036854775807, -4671077238513065943, 2325686995071728639]);
 }
+
+#[test]
+fn fuzz_obc_temp_register_allocation_pollution() {
+    let ops = vec![ DigitSum, DigitSum, Praise, Max, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Roll, DigitSum, DigitSum, DigitSum, Swap, BranchIfZero, Max, Max, Max, Max, Max, Max, Pop, Max, Max, Max, BulkXor, LSwap, Modulo, Jump, Praise, Funkcia, Median, Max, Roll, Max, Sum, Modulo, BulkXor, Funkcia ];
+    verify_repro_const(ops, vec![-1089724887719042, -577867611791490817, 0], vec![4107282509986059614]);
+}

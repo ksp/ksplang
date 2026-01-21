@@ -1515,6 +1515,7 @@ impl TempRegPool {
     fn release(&mut self, reg: RegId) {
         if reg.0 >= FIRST_TEMP_REG && !self.available.contains(&reg) {
             self.available.push(reg);
+            self.cache.clear(); // TODO: fix the cache properly
         }
     }
 
