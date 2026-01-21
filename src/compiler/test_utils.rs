@@ -118,6 +118,9 @@ fn verify_repro_core(r: ReproData) -> (GraphBuilder, OsmibytecodeBlock) {
     // if is_trivial(&g) { return; }
     println!("{g}");
 
+    let mut cfg_stack = r.input.clone();
+    let cfg_res = cfg_interpreter::interpret_cfg(&g, &mut cfg_stack, true);
+
     let obc_block = OsmibytecodeBlock::from_cfg(&g);
     println!("{obc_block}");
 
@@ -134,8 +137,6 @@ fn verify_repro_core(r: ReproData) -> (GraphBuilder, OsmibytecodeBlock) {
         Err(_) => 0,
     };
 
-    let mut cfg_stack = r.input.clone();
-    let cfg_res = cfg_interpreter::interpret_cfg(&g, &mut cfg_stack, true);
 
     let vm_ops_limit = if obc_res.is_ok() { executed_ops } else { 500_000 };
     let max_stack = cmp::max(1000, obc_stack.len() + 100);

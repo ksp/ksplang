@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use crate::compiler::{
     cfg::GraphBuilder,
-    ops::{BlockId, InstrId, OptInstr, OptOp, ValueId},
+    ops::{BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId},
     osmibytecode::Condition,
 };
 use crate::vm::OperationError;
@@ -196,10 +196,12 @@ pub fn interpret_cfg(
                     save_val!(instr.out, value);
                 }
                 Err(Some(err)) => {
+                    debug_assert!(matches!(instr.effect, OpEffect::MayFail | OpEffect::MayDeopt), "Instruction was not supposed to deopt/error({err:?}): {instr}");
                     error = Some((err, instr.id));
                     break 'block;
                 }
                 Err(None) => {
+                    debug_assert!(matches!(instr.effect, OpEffect::MayDeopt), "Instruction was not supposed to deopt: {instr}");
                     deoptimized = Some(instr.id);
                     break 'block;
                 }

@@ -789,3 +789,9 @@ fn fuzz_invalid_phi_parameter_deduplication_probably3() {
     let ops = vec![ Max, DigitSum, Increment, LenSum, DigitSum, DigitSum, LenSum, Median, LSwap, DigitSum, LSwap, Remainder, BranchIfZero, Pop, Call ];
     verify_repro_const(ops, vec![-5714873315750497025, 0], vec![272339441856688]);
 }
+
+#[test]
+fn fuzz_i_forgot2() {
+    let ops = vec![ DigitSum, Praise, LenSum, DigitSum, Funkcia, LSwap, Modulo, DigitSum, LSwap, Qeq, Max, Max, DigitSum, DigitSum, LSwap, And, DigitSum, LSwap, Remainder, LSwap, Modulo ];
+    verify_repro_const(ops, vec![249], vec![305]);
+}

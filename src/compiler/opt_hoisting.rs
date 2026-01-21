@@ -258,14 +258,17 @@ fn can_hoist_from_block(
     //      in block2: it's the first instruction, so moving the effect before branch does not change anything
     let op_ranges: Vec<_> = instr.inputs.iter().map(|&v| g.val_range_at(v, InstrId(block.id, 0))).collect();
     let effect_hoisted = instr.op.effect_based_on_ranges(&op_ranges);
-    // println!("Judged {}  : {op_ranges:?}, result: {effect_hoisted:?}", instr);
+    println!("Judged {}  : {op_ranges:?}, result: {effect_hoisted:?}", instr);
 
     match effect_hoisted {
         OpEffect::None => true,
-        // ok to swap error and checkpoint, since error is very unlikely
-        // OpEffect::MayFail => !prior_effect,
         // TODO: should be valid, but is it actually a good idea?
-        OpEffect::MayFail => if g.conf.error_as_deopt { true } else { !prior_effect },
+        //  2 weeks later: no, it's not (for now), because the instruction didn't have any effect previously
+        //                 and we will not correctly assign it the correct effect=OpEffect::MayFail
+        // OpEffect::MayFail => if g.conf.error_as_deopt { true } else { !prior_effect },
+        OpEffect::MayFail if g.conf.error_as_deopt && instr.effect == OpEffect::MayFail => true,
+        // always ok to swap error and checkpoint, since error is very unlikely
+        OpEffect::MayFail => !prior_effect,
         _ => false
     }
 }
