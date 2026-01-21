@@ -731,12 +731,6 @@ fn fuzz_median_spilled_output_handling() {
 }
 
 #[test]
-fn fuzz_some_swap_problem_TODO() {
-    let ops = vec![ Max, DigitSum, Increment, LenSum, DigitSum, DigitSum, LenSum, Median, LSwap, DigitSum, LSwap, Remainder, BranchIfZero, Pop, Call ];
-    verify_repro_const(ops, vec![-5714873315750497025, 0], vec![272339441856688]);
-}
-
-#[test]
 fn fuzz_obc_multiplication_with_overflow() {
     let ops = vec![ DigitSum, DigitSum, DigitSum, DigitSum, Swap, Modulo, Increment, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, DigitSum, LenSum, Universal, DigitSum, DigitSum, LenSum, DigitSum, LenSum, Universal ];
     verify_repro_const(ops, vec![-1027579379729, 255], vec![-6781891201990876]);
@@ -770,4 +764,28 @@ fn fuzz_swap_to_read_invalid_used_at_modification() {
 fn fuzz_push_swap_invalid_handling_of_checkpoint_induced_block_termination() {
     let ops = vec![ LSwap, DigitSum, DigitSum, DigitSum, DigitSum, LenSum, DigitSum, DigitSum, DigitSum, Increment, DigitSum, DigitSum, LSwap, Remainder, Swap, Swap, Remainder, Max, Increment, LSwap ];
     verify_repro_const(ops, vec![0], vec![-1]);
+}
+
+#[test]
+fn fuzz_invalid_phi_parameter_deduplication() {
+    let ops = vec![ DigitSum, DigitSum, Praise, DigitSum, DigitSum, Call, Call, LenSum, Call, Call, LenSum, Roll, DigitSum, Call, DigitSum, LSwap, Modulo, BranchIfZero, BranchIfZero, LenSum, Roll, DigitSum, Call, Goto, Max, Max, Max, Praise, Call, Max, Max, DigitSum, Call, Increment, Roll, Call, Max, DigitSum, Call, DigitSum, Praise, DigitSum, DigitSum, Call, Call, LenSum, Call, Call, LenSum, Roll, DigitSum, Call, DigitSum, LSwap, Remainder, BranchIfZero, BranchIfZero, Max, Roll, Call, Max, Max, Qeq, Max, DigitSum, Max, Max, Max, Max, BulkXor, Remainder, Praise ];
+    verify_repro_const(ops, vec![1], vec![1]);
+}
+
+#[test]
+fn fuzz_invalid_phi_parameter_deduplication_probably1() {
+    let ops = vec![ DigitSum, DigitSum, Praise, LenSum, DigitSum, Funkcia, LSwap, DigitSum, Modulo, DigitSum, LSwap, Qeq, Max, Remainder, And, Roll, DigitSum, Praise, Pop2, LenSum, DigitSum, DigitSum, Funkcia, LSwap, Modulo, DigitSum, LSwap, Qeq, Max, Qeq, DigitSum, Roll, Roll, DigitSum, Swap, Pop2, Swap, Pop, LenSum, LenSum, LenSum, LenSum, Jump ];
+    verify_repro_const(ops, vec![9187201950427450286, 191159060798603135, 1513742581136165806, 394651989858516741], vec![-6403512657797890755]);
+}
+//
+#[test]
+fn fuzz_invalid_phi_parameter_deduplication_probably2() {
+    let ops = vec![ DigitSum, DigitSum, Praise, LenSum, DigitSum, Funkcia, LSwap, DigitSum, Modulo, DigitSum, LSwap, Qeq, Max, DigitSum, Praise, Pop2, LenSum, DigitSum, DigitSum, Funkcia, LSwap, Modulo, DigitSum, LSwap, Qeq, Max, Qeq, Roll, DigitSum, Swap, Pop2, Pop2, Max, Qeq, Roll, Roll, Remainder ];
+    verify_repro_const(ops, vec![5377], vec![1577394565579538432]);
+}
+
+#[test]
+fn fuzz_invalid_phi_parameter_deduplication_probably3() {
+    let ops = vec![ Max, DigitSum, Increment, LenSum, DigitSum, DigitSum, LenSum, Median, LSwap, DigitSum, LSwap, Remainder, BranchIfZero, Pop, Call ];
+    verify_repro_const(ops, vec![-5714873315750497025, 0], vec![272339441856688]);
 }

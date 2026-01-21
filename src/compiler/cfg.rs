@@ -393,8 +393,7 @@ impl GraphBuilder {
             let mut phi_dedup = HashMap::default();
             let mut phis_duplicated = HashMap::default();
             for i in 0..arg_count {
-                let val_array: SmallVec<[ValueId; 8]> = jumps.iter().flat_map(|j| self.get_phi_sources(j.inputs[i])).collect();
-                let vals: BTreeSet<ValueId> = val_array.iter().copied().collect();
+                let vals: BTreeSet<ValueId> = jumps.iter().flat_map(|j| self.get_phi_sources(j.inputs[i]).into_iter()).collect();
                 assert!(!vals.is_empty());
                 if vals.len() == 1 {
                     resolved[i] = Some(*vals.iter().next().unwrap());
@@ -404,7 +403,8 @@ impl GraphBuilder {
                         .unwrap();
                     tighten_ranges.insert(i, range);
 
-                    match phi_dedup.entry(val_array) {
+                    let direct_inputs: SmallVec<[ValueId; 8]> = jumps.iter().map(|j| j.inputs[i]).collect();
+                    match phi_dedup.entry(direct_inputs) {
                         Entry::Vacant(vacant_entry) => { vacant_entry.insert(i); }
                         Entry::Occupied(occupied_entry) => { phis_duplicated.insert(i, *occupied_entry.get()); }
                     }

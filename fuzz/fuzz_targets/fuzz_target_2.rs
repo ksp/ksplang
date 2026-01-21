@@ -31,6 +31,8 @@ fuzz_target!(|data: FuzzInput| {
 
     let r = to_repro(&data);
 
+    // println!("{r}");
+
     r.verify();
 });
 
