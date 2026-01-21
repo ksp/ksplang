@@ -872,7 +872,7 @@ impl GraphBuilder {
                 // Guaranteed to fail (somehow). We emit the original Op and then unreachability assert
                 assert!(!matches!(instr.effect, OpEffect::None | OpEffect::CtrIncrement | OpEffect::ControlFlow), "invalid effect {:?} of {instr}", instr.effect);
                 if self.conf.should_log(10) {
-                    println!("Instruction {} proved to be unreachable/failing (empty range), replacing with DeoptAssert(False)", instr.id);
+                    println!("Instruction {} proved to be unreachable/failing (empty range), replacing with Assert(False, Unreachable)", instr.id);
                 }
                 always_fails = true;
             }

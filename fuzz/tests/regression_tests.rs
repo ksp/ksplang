@@ -765,3 +765,9 @@ fn fuzz_swap_to_read_invalid_used_at_modification() {
     let ops = vec![ DigitSum, DigitSum, Praise, LenSum, Median, Gcd2, DigitSum, LSwap, Bitshift, Remainder, BranchIfZero, Increment, BranchIfZero, Increment, BranchIfZero, Increment, Increment, Increment, BranchIfZero, Increment, BranchIfZero, Increment, Increment, BranchIfZero, Increment, BranchIfZero, Increment, Bitshift, Increment, Increment, DigitSum, LSwap, DigitSum, LSwap, Max, DigitSum, LSwap, DigitSum, DigitSum, Swap, LSwap, Increment, And, And, And ];
     verify_repro_const(ops, vec![147], vec![1]);
 }
+
+#[test]
+fn fuzz_push_swap_invalid_handling_of_checkpoint_induced_block_termination() {
+    let ops = vec![ LSwap, DigitSum, DigitSum, DigitSum, DigitSum, LenSum, DigitSum, DigitSum, DigitSum, Increment, DigitSum, DigitSum, LSwap, Remainder, Swap, Swap, Remainder, Max, Increment, LSwap ];
+    verify_repro_const(ops, vec![0], vec![-1]);
+}

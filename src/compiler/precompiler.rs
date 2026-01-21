@@ -441,6 +441,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let next_op = self.ops.get(self.next_position());
                 if interfering_swaps.len() <= 2 && next_op != Some(&Op::Pop) {
                     self.g.push_checkpoint();
+                    if self.g.current_block_ref().is_terminated {
+                        return ValueId(0)
+                    }
                     for (_instr_id, _instr_ix, _, condition) in &interfering_swaps {
                         // let Some(deopt_id) = self.g.make_instr_id_at(
                         //     BeforeOrAfter::Before(*instr_id),
@@ -467,6 +470,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             let next_op = self.ops.get(self.next_position());
             if interfering_swaps.len() <= 2 && next_op != Some(&Op::Pop) {
                 self.g.push_checkpoint();
+                if self.g.current_block_ref().is_terminated {
+                    return ValueId(0)
+                }
                 for (_instr_id, _instr_ix, _, condition) in &interfering_swaps {
                     self.g.push_deopt_assert(condition.clone().neg(), false);
                     assert!(!self.g.current_block_ref().is_terminated, "What is going on: {condition} (all swaps: {interfering_swaps:?})\n{}", self.g);
