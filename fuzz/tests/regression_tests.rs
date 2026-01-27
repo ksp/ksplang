@@ -807,3 +807,9 @@ fn fuzz_oom_too_many_instructions() {
     let ops = vec![ DigitSum, DigitSum, Praise, Gcd2, Modulo, LSwap, BranchIfZero, DigitSum, LSwap, Increment, Increment, Universal, Max, LSwap, Modulo, Increment, Gcd2, Gcd2, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Goto ];
     verify_repro_const(ops, vec![-1610858017288612380, -3038287259199220267, -3038287259199220267, -11868309606246955, 2676598330081482239, -52368242957558002, 395519], vec![-8980035705050397856, 9107787293771309861, -5826106452418281473, 3098212754865389567, 1525312813263016234, -6618701939814521367, -3374604388771201536]);
 }
+
+#[test]
+fn fuzz_push_stack_accidentally_deopts_false() {
+    let ops: Vec<Op> = vec![ DigitSum, DigitSum, Praise, LenSum, DigitSum, Pop2, Increment, Increment, DigitSum, LSwap, Modulo, DigitSum, Increment, DigitSum, Increment, DigitSum, DigitSum, LenSum, BulkXor, Max, DigitSum, Max, DigitSum, DigitSum, LSwap, BranchIfZero, Swap, Pop, DigitSum, Bitshift, Swap, Max, Pop, LenSum, Call ];
+    verify_repro_const(ops, vec![0], vec![-1775725180134663333]);
+}

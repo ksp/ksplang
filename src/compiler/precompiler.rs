@@ -454,7 +454,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                         // self.g.current_block_mut().instructions.insert(deopt_id.1, deopt);
 
                         self.g.push_deopt_assert(condition.clone().neg(), false);
-                        assert!(!self.g.current_block_ref().is_terminated, "What is going on: {condition} (all swaps: {interfering_swaps:?})\n{}", self.g);
+                        if self.g.current_block_ref().is_terminated {
+                            // ahh shit, should not have happened but nevermind. took the fuzzer two weeks to find this edge case
+                            return ValueId(0)
+                        }
                     }
                     let orig_val = self.g.get_instruction_(anti_swap).inputs[1];
                     let (orig_val, _) = self.g.analyze_val_at(orig_val, self.g.next_instr_id());
@@ -475,7 +478,10 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 }
                 for (_instr_id, _instr_ix, _, condition) in &interfering_swaps {
                     self.g.push_deopt_assert(condition.clone().neg(), false);
-                    assert!(!self.g.current_block_ref().is_terminated, "What is going on: {condition} (all swaps: {interfering_swaps:?})\n{}", self.g);
+                    if self.g.current_block_ref().is_terminated {
+                        // ahh shit, should not have happened but nevermind. took the fuzzer two weeks to find this edge case
+                        return ValueId(0)
+                    }
                 }
                 if self.conf.should_log(15) {
                     println!("Found previous read: {}", self.g.get_instruction_(anti_read));
