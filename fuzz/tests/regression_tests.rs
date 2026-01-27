@@ -801,3 +801,9 @@ fn fuzz_hoisting_incorrectly_inferred_range() {
     let ops = vec![ DigitSum, DigitSum, LenSum, Median, LSwap, DigitSum, DigitSum, LenSum, Jump, Increment, Increment, Increment, Increment, Increment, Universal, Increment, BranchIfZero, LSwap, DigitSum, DigitSum, LenSum, Jump, Increment, Increment, Increment, Increment, Increment, Universal, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, LenSum, Max, Call ];
     verify_repro_const(ops, vec![-1, 1728868984595756287, 172], vec![-703790791006338, -2359904895711778879]);
 }
+
+#[test]
+fn fuzz_oom_too_many_instructions() {
+    let ops = vec![ DigitSum, DigitSum, Praise, Gcd2, Modulo, LSwap, BranchIfZero, DigitSum, LSwap, Increment, Increment, Universal, Max, LSwap, Modulo, Increment, Gcd2, Gcd2, Increment, DigitSum, DigitSum, DigitSum, DigitSum, Remainder, Goto ];
+    verify_repro_const(ops, vec![-1610858017288612380, -3038287259199220267, -3038287259199220267, -11868309606246955, 2676598330081482239, -52368242957558002, 395519], vec![-8980035705050397856, 9107787293771309861, -5826106452418281473, 3098212754865389567, 1525312813263016234, -6618701939814521367, -3374604388771201536]);
+}

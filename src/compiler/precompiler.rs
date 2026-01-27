@@ -1299,7 +1299,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 }
                 break;
             }
-            if self.instr_interpreted_count >= self.interpretation_hard_limit() || self.g.stack.stack.len() > 250 {
+            if self.instr_interpreted_count >= self.interpretation_hard_limit() || self.g.stack.stack.len() > 250 || self.g.current_block_ref().instructions.len() / 2 > self.instr_limit {
                 if self.conf.should_log(2) {
                     println!("end interpret_block: Interpretation hard limit reached");
                 }
