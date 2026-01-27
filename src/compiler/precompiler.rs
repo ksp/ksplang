@@ -992,9 +992,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                 let (b_start, b_end) = self.val_range_here(b).into_inner();
                 let (c_start, c_end) = self.val_range_here(c).into_inner();
 
-                if self.g.get_constant(a) == Some(0) {
+                if a_start == 0 && a_end == 0 {
 
-                    if self.g.get_constant(b) == Some(0) {
+                    if b_start == 0 && b_end == 0 {
                         self.g.pop_stack_n(3);
                         // equation is `c == 0`
                         if c_start <= 0 && c_end >= 0 {

@@ -825,3 +825,9 @@ fn fuzz_inconsistent_qeq_range_from_precompiler_and_inferrence() {
     let ops = vec![ DigitSum, DigitSum, Praise, LenSum, LSwap, DigitSum, LSwap, DigitSum, Remainder, Qeq, Max, DigitSum, LSwap, DigitSum, LSwap, DigitSum, Median, Remainder, DigitSum, Remainder, Call ];
     verify_repro_const(ops, vec![0], vec![7277816997854143870]);
 }
+
+#[test]
+fn fuzz_qeq_inconsistent_constant_check() {
+    let ops = vec![ DigitSum, DigitSum, LenSum, Praise, DigitSum, Modulo, Qeq, Modulo, GcdN, Increment, Remainder, DigitSum, DigitSum, DigitSum, Increment, Increment, LSwap, Increment, BranchIfZero, LSwap, Goto, Max, LenSum, Gcd2 ];
+    verify_repro_const(ops, vec![7063622267435941162, 257713831935], vec![8584126269211764550, -159432936290173, -1212885570250866689]);
+}
