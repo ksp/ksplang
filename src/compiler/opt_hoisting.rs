@@ -107,11 +107,14 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                     } else {
                         output_values.iter().map(|(_, range, _)| range.clone()).reduce(union_range).unwrap()
                     };
-                    let out_info = g.new_value();
+                    // TODO: is it better to re-use old value or create new one?
+                    // let out_info = g.new_value();
+                    let out_info = g.values.get_mut(output_values.iter().map(|(v, _, _)| v).min().unwrap()).unwrap();
+                    out_info.assumptions.clear();
                     out_info.range = range.clone();
                     out_info.set_assigned_at(new_iid, op, inputs);
                     let new_out = out_info.id;
-                    g.replace_values(output_values.iter().map(|(v, _, _)| (*v, new_out)).collect());
+                    g.replace_values(output_values.iter().filter(|(v, _, _)| v != &new_out).map(|(v, _, _)| (*v, new_out)).collect());
                     // TODO: copy all assumes or is it invalid?
                     // preserve original value ranges:
                     for (val, orig_range, at) in output_values {
