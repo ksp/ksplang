@@ -1312,7 +1312,13 @@ impl GraphBuilder {
     }
 
     pub fn analyze_val_at(&self, v: ValueId, at: InstrId) -> (ValueId, RangeInclusive<i64>) {
-        // println!("DBG: analyze_val_at {v} {at}");
+        self.analyze_val_at_impl(v, at, 0)
+    }
+
+    // very limited to prevent large performance hit of this
+    const MAX_ANALYZE_DEPTH: u32 = 6;
+    fn analyze_val_at_impl(&self, v: ValueId, at: InstrId, depth: u32) -> (ValueId, RangeInclusive<i64>) {
+        // println!("DBG{depth}: analyze_val_at {v} {at}");
         if v.is_constant() {
             let c = self.get_constant_(v);
             return (v, c..=c);
@@ -1320,11 +1326,16 @@ impl GraphBuilder {
         let Some(info) = self.values.get(&v) else { return (v, FULL_RANGE) };
         if at != InstrId::default() {
             let from_range =
-                if let Some(derived_from) = info.directly_derived_from &&
+                if depth < Self::MAX_ANALYZE_DEPTH &&
+                    let Some(derived_from) = info.directly_derived_from &&
                     self.values.get(&derived_from).is_some_and(|v| !v.assumptions.is_empty()) &&
                     let Some(assigned_at) = info.assigned_at.and_then(|id| self.get_instruction(id))
             {
-                let in_ranges = assigned_at.inputs.iter().map(|v| self.val_range_at(*v, at)).collect::<SmallVec<[IRange; 4]>>();
+                debug_assert!(assigned_at.inputs.contains(&derived_from) &&
+                              assigned_at.inputs.iter().all(|i| i.is_constant() || i == &derived_from),
+                              "directly_derived_from desync: {v} is from {derived_from}, but assigned_at: {assigned_at}");
+
+                let in_ranges = assigned_at.inputs.iter().map(|v| self.analyze_val_at_impl(*v, at, depth + 1).1).collect::<SmallVec<[IRange; 4]>>();
                 if in_ranges.iter().any(|r| r.is_empty()) {
                     1..=0
                 } else {
@@ -1343,7 +1354,7 @@ impl GraphBuilder {
                     assert!(eq_a == v || eq_b == v);
                     let v_canonical = cmp::min(eq_a, eq_b);
                     if v_canonical != v {
-                        return self.analyze_val_at(v_canonical, at)
+                        return self.analyze_val_at_impl(v_canonical, at, depth + 1)
                     }
                 }
                 if range.start() == range.end() && let Some(c) = self.try_store_constant_immut(*range.start()) {
