@@ -820,3 +820,8 @@ fn fuzz_stack_overflow_in_val_range_at() {
     verify_repro_const(ops, vec![-2318523612778201025, 0], vec![272496077033988]);
 }
 
+#[test]
+fn fuzz_inconsistent_qeq_range_from_precompiler_and_inferrence() {
+    let ops = vec![ DigitSum, DigitSum, Praise, LenSum, LSwap, DigitSum, LSwap, DigitSum, Remainder, Qeq, Max, DigitSum, LSwap, DigitSum, LSwap, DigitSum, Median, Remainder, DigitSum, Remainder, Call ];
+    verify_repro_const(ops, vec![0], vec![7277816997854143870]);
+}

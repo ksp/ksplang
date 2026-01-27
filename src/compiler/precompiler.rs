@@ -4,7 +4,7 @@ use rustc_hash::{FxHashMap as HashMap};
 use num_integer::Integer;
 use smallvec::{SmallVec, smallvec};
 
-use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
+use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{IRange, eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
 
 pub trait TraceProvider {
     // type TracePointer
@@ -501,6 +501,15 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         }
     }
 
+    fn val_range_here(&self, val: ValueId) -> IRange {
+        if val.is_constant() {
+            let c = self.g.get_constant_(val);
+            c..=c
+        } else {
+            self.g.val_range_at(val, self.g.next_instr_id())
+        }
+    }
+
     pub fn step(&mut self) -> PrecompileStepResult {
         use PrecompileStepResult::*;
         let op = self.ops[self.position as usize];
@@ -635,7 +644,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             crate::ops::Op::Universal => {
                 let control = self.g.peek_stack();
-                let mut control_range = self.g.val_range_at(control, self.g.next_instr_id());
+                let mut control_range = self.val_range_here(control);
                 if *control_range.end() != *control_range.start() {
                     // TODO: fucking hack
                     let info = self.g.val_info(control);
@@ -721,8 +730,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
                     (val2, val1)
                 };
 
-                let num_range = self.g.val_range(num);
-                let iters_range = self.g.val_range(iters);
+                let num_range = self.val_range_here(num);
+                let iters_range = self.val_range_here(iters);
 
                 let range = eval_combi(num_range, iters_range, 16, |num, iters| {
                         vm::tetration(num, iters).ok()
@@ -734,7 +743,7 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             }
             crate::ops::Op::Median => {
                 let n = self.g.peek_stack();
-                let n_range = self.g.val_range_at(n, self.g.next_instr_id());
+                let n_range = self.val_range_here(n);
 
                 if *n_range.end() <= 0 {
                     self.g.push_assert(Condition::False, OperationError::NonpositiveLength { value: 0 }, Some(n));
@@ -979,9 +988,9 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             },
             crate::ops::Op::Qeq => {
                 let (a, b, c) = self.g.peek_stack_3();
-                let (a_start, a_end) = self.g.val_range(a).into_inner();
-                let (b_start, b_end) = self.g.val_range(b).into_inner();
-                let (c_start, c_end) = self.g.val_range(c).into_inner();
+                let (a_start, a_end) = self.val_range_here(a).into_inner();
+                let (b_start, b_end) = self.val_range_here(b).into_inner();
+                let (c_start, c_end) = self.val_range_here(c).into_inner();
 
                 if self.g.get_constant(a) == Some(0) {
 
