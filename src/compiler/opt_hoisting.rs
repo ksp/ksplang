@@ -2,8 +2,7 @@ use smallvec::{smallvec, SmallVec};
 use rustc_hash::{FxHashMap as HashMap};
 
 use crate::compiler::{
-    cfg::{BasicBlock, GraphBuilder},
-    ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, utils::{Annotations, union_range},
+    cfg::{BasicBlock, GraphBuilder}, ops::{BeforeOrAfter, BlockId, InstrId, OpEffect, OptInstr, OptOp, ValueId}, osmibytecode::Condition, range_ops::IRange, utils::{Annotations, FULL_RANGE, union_range}
 };
 
 /// Hoists common instructions from following blocks of the specified predecessor block.
@@ -53,15 +52,12 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
             let mut aggregated_effect = OpEffect::None;
             let mut program_position = None;
             let mut ksplang_ops_increment = None;
+            let mut crosses_effect = false;
 
             for iid in instr_ids.iter() {
                 let block = g.block_(iid.0);
                 let instr = &block.instructions[&iid.1];
                 assert_eq!(&instr.op, op);
-
-                if !can_hoist_from_block(g, block, iid.1, instr) {
-                    continue 'candidate;
-                }
 
                 if matches!(op, OptOp::Checkpoint) && (
                     program_position.is_some_and(|p| p != instr.program_position) ||
@@ -70,6 +66,14 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
                     // all checkpoints must point to the same location
                     continue 'candidate;
                 }
+
+                let (prior_effect, prior_checkpoint) = check_prior_effect(block, iid.1);
+                crosses_effect |= prior_effect;
+
+                if !can_hoist_from_block(g, block, iid.1, instr, prior_effect, prior_checkpoint) {
+                    continue 'candidate;
+                }
+
                 aggregated_effect = OpEffect::worse_of(aggregated_effect, instr.effect);
                 program_position = Some(instr.program_position);
                 ksplang_ops_increment = Some(instr.ksp_instr_count);
@@ -83,19 +87,38 @@ pub fn hoist_up(g: &mut GraphBuilder, predecessor: BlockId) -> bool {
             assert!(!g.block_(predecessor).instructions.contains_key(&new_iid.1));
 
             let new_out = if op.has_output() {
-                let output_values: Vec<ValueId> =
-                    instr_ids.iter().map(|id| g.get_instruction_(*id).out).filter(ValueId::is_computed).collect();
+                let output_values: Vec<(ValueId, IRange, InstrId)> =
+                    instr_ids.iter().filter_map(|id| {
+                        let i = g.get_instruction_(*id);
+                        if i.out.is_computed() {
+                            let range = g.val_info_(i.out).range.clone();
+                            Some((i.out, range, i.id))
+                        } else { None }
+                    }).collect();
                 if output_values.is_empty() {
                     ValueId(0)
                 } else {
-                    let range = output_values.iter().map(|val| g.val_info_(*val).range.clone())
-                        .reduce(|a, b| union_range(a, b)).unwrap();
+                    let range = if crosses_effect {
+                        // need to recompute, since we crossed an effectful operation which may have tightened the range
+                        let in_ranges: Vec<IRange> = inputs.iter()
+                            .map(|v| g.val_range_at(*v, new_iid))
+                            .collect();
+                        op.evaluate_range_quick(&in_ranges).unwrap_or(FULL_RANGE)
+                    } else {
+                        output_values.iter().map(|(_, range, _)| range.clone()).reduce(union_range).unwrap()
+                    };
                     let out_info = g.new_value();
-                    out_info.range = range;
+                    out_info.range = range.clone();
                     out_info.set_assigned_at(new_iid, op, inputs);
                     let new_out = out_info.id;
-                    g.replace_values(output_values.iter().map(|v| (*v, new_out)).collect());
+                    g.replace_values(output_values.iter().map(|(v, _, _)| (*v, new_out)).collect());
                     // TODO: copy all assumes or is it invalid?
+                    // preserve original value ranges:
+                    for (val, orig_range, at) in output_values {
+                        if orig_range != range {
+                            g.add_assumption(val, at, Condition::True, orig_range);
+                        }
+                    }
                     new_out
                }
             } else {
@@ -217,22 +240,28 @@ fn choose_insert_position(
     Some(BeforeOrAfter::After(InstrId(predecessor, anchor)))
 }
 
+fn check_prior_effect(block: &BasicBlock, instr_idx: u32) -> (bool, bool) {
+    let mut prior_effect = false;
+    let mut prior_checkpoint = false;
+    for (_, prior) in block.instructions.range(..instr_idx) {
+        prior_effect = prior_effect || prior.effect != OpEffect::None;
+        prior_checkpoint = prior_checkpoint || matches!(prior.op, OptOp::Checkpoint);
+    }
+    (prior_effect, prior_checkpoint)
+}
+
 fn can_hoist_from_block(
     g: &GraphBuilder,
     block: &BasicBlock,
     instr_idx: u32,
     instr: &OptInstr,
+    prior_effect: bool,
+    prior_checkpoint: bool,
 ) -> bool {
     if !matches!(instr.op, OptOp::Checkpoint) && instr.op.worst_case_effect() == OpEffect::None {
         return true
     }
 
-    let mut prior_checkpoint = false;
-    let mut prior_effect = false;
-    for (_, prior) in block.instructions.range(..instr_idx) {
-        prior_effect = prior_effect || prior.effect != OpEffect::None;
-        prior_checkpoint = prior_checkpoint || matches!(prior.op, OptOp::Checkpoint);
-    }
 
     if !prior_effect && !prior_checkpoint {
         return true

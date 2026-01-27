@@ -795,3 +795,9 @@ fn fuzz_i_forgot2() {
     let ops = vec![ DigitSum, Praise, LenSum, DigitSum, Funkcia, LSwap, Modulo, DigitSum, LSwap, Qeq, Max, Max, DigitSum, DigitSum, LSwap, And, DigitSum, LSwap, Remainder, LSwap, Modulo ];
     verify_repro_const(ops, vec![249], vec![305]);
 }
+
+#[test]
+fn fuzz_hoisting_incorrectly_inferred_range() {
+    let ops = vec![ DigitSum, DigitSum, LenSum, Median, LSwap, DigitSum, DigitSum, LenSum, Jump, Increment, Increment, Increment, Increment, Increment, Universal, Increment, BranchIfZero, LSwap, DigitSum, DigitSum, LenSum, Jump, Increment, Increment, Increment, Increment, Increment, Universal, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, Increment, LenSum, Max, Call ];
+    verify_repro_const(ops, vec![-1, 1728868984595756287, 172], vec![-703790791006338, -2359904895711778879]);
+}
