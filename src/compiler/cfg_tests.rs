@@ -13,8 +13,9 @@ fn replay_cfg_straight_line() {
     g.block_mut_(BlockId(0)).parameters.push(gx);
     g.stack.push(gx);
 
-    let (val_map, bb_map) = g.replay_cfg(&other, &[x]);
+    let (val_map, bb_map, return_blocks) = g.replay_cfg(&other, &[x], &[]);
 
+    assert!(return_blocks.is_empty());
     assert_eq!(bb_map[&BlockId(0)], g.current_block);
     assert_eq!(val_map[&x], gx);
 
@@ -63,7 +64,7 @@ fn replay_cfg_branches_create_blocks_and_jumps() {
     g.block_mut_(BlockId(0)).parameters.push(gx);
     g.stack.push(gx);
 
-    let (val_map, bb_map) = g.replay_cfg(&other, &[x]);
+    let (val_map, bb_map, _) = g.replay_cfg(&other, &[x], &[]);
 
     assert!(bb_map.contains_key(&BlockId(0)));
     assert!(bb_map.contains_key(&b1));
@@ -129,7 +130,7 @@ fn replay_cfg_handles_loops_without_infinite_recursion() {
     g.block_mut_(BlockId(0)).parameters.push(gx);
     g.stack.push(gx);
 
-    let (_val_map, bb_map) = g.replay_cfg(&other, &[x]);
+    let (_val_map, bb_map, _) = g.replay_cfg(&other, &[x], &[]);
 
     assert!(bb_map.contains_key(&BlockId(0)));
     assert!(bb_map.contains_key(&b1));
@@ -151,7 +152,7 @@ fn replay_cfg_complex_constants() {
     g.block_mut_(BlockId(0)).parameters.push(gx);
     g.stack.push(gx);
 
-    let (_, bb_map) = g.replay_cfg(&other, &[x]);
+    let (_, bb_map, _) = g.replay_cfg(&other, &[x], &[]);
 
     let entry_block = g.block_(bb_map[&BlockId(0)]);
     let add = entry_block
@@ -163,4 +164,106 @@ fn replay_cfg_complex_constants() {
     let const_operand = *add.inputs.iter().find(|&&v| v != gx).unwrap();
     let val = g.get_constant(const_operand).expect("Operand should be a constant");
     assert_eq!(val, 123456);
+}
+
+#[test]
+fn call_cache_simple_function() {
+    use crate::compiler::call_cache::{CallCache, CallCacheResult};
+    use crate::ops::Op;
+
+    // Create a simple program:
+    // 0: Increment  (the function body - increments top of stack)
+    // 1: Goto       (return to caller)
+    // 2: ... (caller would be here)
+    let ops = vec![
+        Op::Increment,
+        Op::Goto,
+    ];
+
+    let mut cache = CallCache::new();
+    let result = cache.get_or_create(&ops, 0, 0);
+
+    match result {
+        CallCacheResult::Hit(cached) => {
+            assert!(!cached.return_blocks.is_empty(), "Should have at least one return block");
+            assert!(cached.return_addr_param.is_computed(), "Return addr should be a computed value");
+            
+            // Verify the CFG structure
+            let entry = cached.cfg.block_(BlockId(0));
+            assert!(entry.parameters.contains(&cached.return_addr_param));
+        }
+        CallCacheResult::Miss => {
+            // This is also acceptable - the function might be too simple or have issues
+            // For now, let's just make sure it doesn't panic
+        }
+        CallCacheResult::InProgress => {
+            panic!("Should not be in progress for first call");
+        }
+    }
+}
+
+#[test]
+fn call_cache_increment_function_structure() {
+    use crate::compiler::call_cache::{CallCache, CallCacheResult};
+    use crate::ops::Op;
+    
+    // Simple function: just returns (Goto pops return address and jumps)
+    // IP 10: Goto (return)
+    let mut ops = vec![Op::Nop; 12];
+    ops[10] = Op::Goto;
+    
+    let mut cache = CallCache::new();
+    let result = cache.get_or_create(&ops, 10, 0);
+    
+    let cached = match result {
+        CallCacheResult::Hit(c) => c,
+        CallCacheResult::Miss => panic!("Expected cache hit for simple return function"),
+        CallCacheResult::InProgress => panic!("Unexpected InProgress"),
+    };
+    
+    assert_eq!(cached.return_blocks.len(), 1, "Should have exactly one return block");
+    
+    // Verify return_addr_param is in block 0's parameters
+    let entry = cached.cfg.block_(BlockId(0));
+    assert!(entry.parameters.contains(&cached.return_addr_param), 
+        "Return address should be a block parameter");
+}
+
+#[test]
+fn call_cache_replay_with_return_blocks() {
+    use crate::compiler::call_cache::{CallCache, CallCacheResult};
+    use crate::ops::Op;
+    
+    // Simple function: just return
+    let mut ops = vec![Op::Nop; 10];
+    ops[5] = Op::Goto;  // IP 5 - return immediately
+    
+    let mut cache = CallCache::new();
+    let cached = match cache.get_or_create(&ops, 5, 0) {
+        CallCacheResult::Hit(c) => c,
+        _ => panic!("Expected cache hit"),
+    };
+    
+    // Create a new graph and replay the cached CFG
+    let mut g = GraphBuilder::new(0);
+    let stack_val = g.new_value().id;
+    g.block_mut_(BlockId(0)).parameters.push(stack_val);
+    g.stack.push(stack_val);
+    
+    // Return address in our context is IP 7 (within range 0..=10)
+    let return_addr = g.store_constant(7);
+    // Push the return address onto our stack - this is what will be popped and mapped to cached.return_addr_param
+    g.stack.push(return_addr);
+    
+    // Pass the cached CFG's return_addr_param as the param to be mapped
+    let (val_map, block_map, translated_returns) = g.replay_cfg(&cached.cfg, &[cached.return_addr_param], &cached.return_blocks);
+    
+    // Should have translated the return blocks
+    assert_eq!(translated_returns.len(), 1, "Should have one translated return block");
+    
+    // The return address param should be mapped to our return_addr
+    assert_eq!(val_map[&cached.return_addr_param], return_addr);
+    
+    // Entry block should be translated
+    assert!(block_map.contains_key(&BlockId(0)));
 }

@@ -14,6 +14,7 @@ pub struct JitConfig {
     pub callcache_interpret_limit: u32,
     pub callcache_branch_limit: u32,
     pub callcache_instr_limit: u32,
+    pub callcache_max_recursion: u32,
 
     pub allow_pruning: bool,
     pub allow_uphoisting: bool,
@@ -92,6 +93,7 @@ fn create_config() -> JitConfig {
         callcache_interpret_limit: parse_env("KSPLANGJIT_CALLCACHE_INTERPRET_LIMIT", 20_000),
         callcache_branch_limit: parse_env("KSPLANGJIT_CALLCACHE_BRANCH_LIMIT", 70),
         callcache_instr_limit: parse_env("KSPLANGJIT_CALLCACHE_INSTR_LIMIT", 200),
+        callcache_max_recursion: parse_env("KSPLANGJIT_CALLCACHE_MAX_RECURSION", 3),
 
         allow_pruning: parse_env("KSPLANGJIT_PRUNING", true),
         allow_uphoisting: parse_env("KSPLANGJIT_ALLOW_UPHOISTING", true),

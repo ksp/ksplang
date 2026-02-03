@@ -1496,7 +1496,11 @@ impl GraphBuilder {
         }
     }
 
-    pub fn replay_cfg(&mut self, other: &GraphBuilder, params: &[ValueId]) -> (Map<ValueId, ValueId>, Map<BlockId, BlockId>) {
+    /// Replays a cached CFG into the current graph.
+    /// `params` are the parameters of the cached CFG that will be popped from our stack.
+    /// `return_blocks` are blocks in the cached CFG that represent function returns - they will be skipped
+    /// and their corresponding blocks in our CFG will be returned for the caller to handle continuation.
+    pub fn replay_cfg(&mut self, other: &GraphBuilder, params: &[ValueId], return_blocks: &[BlockId]) -> (Map<ValueId, ValueId>, Map<BlockId, BlockId>, Vec<BlockId>) {
         let mut val_mapping: Map<ValueId, ValueId> = Map::default();
         for &param in params {
             let argument = self.pop_stack();
@@ -1524,11 +1528,20 @@ impl GraphBuilder {
 
         assert_eq!(other.block_(BlockId(0)).incoming_jumps, []);
         let mut visited_blocks: BTreeSet<BlockId> = BTreeSet::new();
+        let mut translated_return_blocks: Vec<BlockId> = Vec::new();
         let mut bb_queue: VecDeque<BlockId> = [BlockId(0)].into();
         while let Some(other_bb) = bb_queue.pop_front() {
             if !visited_blocks.insert(other_bb) {
                 continue;
             }
+
+            // Skip return blocks - they will be handled by the caller
+            if return_blocks.contains(&other_bb) {
+                let this_bb = bb_mapping[&other_bb];
+                translated_return_blocks.push(this_bb);
+                continue;
+            }
+
             let block = other.block_(other_bb);
             let this_bb = bb_mapping[&other_bb];
             self.current_block = this_bb;
@@ -1616,7 +1629,7 @@ impl GraphBuilder {
             }
         }
 
-        (val_mapping, bb_mapping)
+        (val_mapping, bb_mapping, translated_return_blocks)
     }
 
     pub fn clean_poped_values(&mut self) {

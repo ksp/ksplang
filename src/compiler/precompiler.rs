@@ -4,7 +4,7 @@ use rustc_hash::{FxHashMap as HashMap};
 use num_integer::Integer;
 use smallvec::{SmallVec, smallvec};
 
-use crate::{compiler::{cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{IRange, eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
+use crate::{compiler::{call_cache::CallCache, cfg::{GraphBuilder, StackState}, config::{JitConfig, get_config}, ops::{BlockId, InstrId, OpEffect, OptOp, ValueId}, opt_hoisting::hoist_up, osmibytecode::Condition, range_ops::{IRange, eval_combi, range_div, range_num_digits}, simplifier::{self, simplify_cond}, utils::{FULL_RANGE, abs_range, add_range, eval_combi_u64, intersect_range, range_2_i64, sort_tuple, sub_range}}, digit_sum::digit_sum, funkcia::funkcia, ops::Op, vm::{self, OperationError, QuadraticEquationResult, solve_quadratic_equation}};
 
 pub trait TraceProvider {
     // type TracePointer
@@ -45,7 +45,13 @@ pub struct PendingBranchInfo {
 #[derive(Debug, Clone, Default)]
 pub struct VisitedIpStats {
     pub visits: usize,
-    pub branches: HashMap<usize, usize>, // from IP -> count
+    pub branches: HashMap<usize, usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct CallCacheContext {
+    pub return_addr: Option<ValueId>,
+    pub return_blocks: Vec<BlockId>,
 }
 
 #[derive(Debug)]
@@ -55,7 +61,6 @@ pub struct Precompiler<'a, TP: TraceProvider> {
     pub reversed_direction: bool,
     pub initial_position: usize,
     pub g: GraphBuilder,
-    // deopt_info: HashMap<u32, DeoptInfo<u32>>,
     pub position: usize,
     pub instr_interpreted_count: usize,
     pub interpretation_limit: usize,
@@ -66,7 +71,8 @@ pub struct Precompiler<'a, TP: TraceProvider> {
     pub visited_ips: HashMap<usize, VisitedIpStats>,
     pub pending_branches: VecDeque<PendingBranchInfo>,
     pub conf: JitConfig,
-    pub tracer: TP
+    pub tracer: TP,
+    pub callcache_ctx: Option<CallCacheContext>,
 }
 
 #[derive(Debug, Clone)]
@@ -114,7 +120,8 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
             visited_ips: HashMap::default(),
             pending_branches: VecDeque::new(),
             conf: get_config().clone(),
-            tracer
+            tracer,
+            callcache_ctx: None,
         }
     }
 
@@ -136,6 +143,22 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         let condition = simplifier::simplify_cond(&mut self.g, condition, at);
         if condition == Condition::False {
             return PrecompileStepResult::Continue;
+        }
+
+        // In call cache mode, detect return (unconditional goto to return address)
+        if !is_call && !is_relative && condition == Condition::True {
+            if let Some(ref mut ctx) = self.callcache_ctx {
+                if Some(target) == ctx.return_addr {
+                    if self.conf.should_log(3) {
+                        println!("CallCache: return at IP {} in block {}", self.position, self.g.current_block);
+                    }
+                    self.g.pop_stack();
+                    self.g.push_checkpoint();
+                    ctx.return_blocks.push(self.g.current_block);
+                    self.g.push_instr(OptOp::deopt_always(), &[], false, None, None);
+                    return PrecompileStepResult::Continue;
+                }
+            }
         }
     
         if let Some(target_const) = self.g.get_constant(target) {
@@ -191,6 +214,67 @@ impl<'a, TP: TraceProvider> Precompiler<'a, TP> {
         }
 
         PrecompileStepResult::NevimJakChteloByToKonstantu(vec![target])
+    }
+
+    /// Try to inline a call using the call cache. Returns None if cache miss or not applicable.
+    pub fn try_inline_call(&mut self, target: ValueId, cache: &mut CallCache, recursion_depth: u32) -> Option<PrecompileStepResult> {
+        let target_ip: usize = self.g.get_constant(target)?.try_into().ok()?;
+
+        if target_ip >= self.ops.len() {
+            return None;
+        }
+
+        let cached = match cache.get_or_create(self.ops, target_ip, recursion_depth) {
+            crate::compiler::call_cache::CallCacheResult::Hit(c) => c,
+            _ => return None,
+        };
+
+        if self.conf.should_log(2) {
+            println!("CallCache: inlining call to IP {} at position {}", target_ip, self.position);
+        }
+
+        // Pop target address (consumed by Call)
+        self.g.pop_stack();
+        
+        // Return address is the next position after Call - push it for the function to use
+        let return_addr = self.g.store_constant(self.next_position() as i64);
+        self.g.stack.push(return_addr);
+
+        // Replay the cached CFG, mapping the cached return_addr_param to our return_addr
+        let (val_map, block_map, translated_return_blocks) = self.g.replay_cfg(&cached.cfg, &[cached.return_addr_param], &cached.return_blocks);
+        let _ = (val_map, block_map);
+
+        if translated_return_blocks.is_empty() {
+            // No returns - function doesn't return normally
+            return Some(PrecompileStepResult::Continue);
+        }
+
+        // For each return block, create a continuation branch to next_position
+        let branches: Vec<_> = translated_return_blocks.iter().map(|_| {
+            PrecompileStepResultBranch {
+                target: self.next_position(),
+                condition: Condition::True,
+                stack: (0, vec![]),  // Return blocks should have done their stack manipulation
+                call_ret: None,
+                additional_instr: vec![],
+            }
+        }).collect();
+
+        // Handle return blocks by switching to them and creating jumps to continuation
+        // Since replay_cfg leaves us at some block, we need to handle each return block
+        if branches.len() == 1 {
+            // Single return - simpler case, just continue from there
+            self.g.switch_to_block(translated_return_blocks[0], self.next_position() as u32, vec![]);
+            return Some(PrecompileStepResult::Branching(branches));
+        }
+
+        // Multiple returns - need to create continuation block
+        // For now, fall back to non-cached behavior for multiple returns
+        // TODO: handle multiple return blocks properly
+        if self.conf.should_log(3) {
+            println!("CallCache: multiple return blocks ({}), falling back", translated_return_blocks.len());
+        }
+        None
     }
 
     fn resolve_constants(&mut self, needed: &[ValueId]) -> Option<Vec<PrecompileStepResultBranch>> {
